@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waste POI Dash - INEOS OXIDE</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+  <script src="https://unpkg.com/@tmcw/togeojson@5.0.0/dist/togeojson.umd.js"></script>
+  <style>
+    body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f8; }
+    .container { height: 100vh; position: relative; }
+    .sidebar {
+      position: absolute; top: 0; left: 0; width: 260px; max-width: 300px; height: 100%;
+      background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+      border-right: 2px solid #00953b;
+      padding: 18px 10px 10px 10px;
+      box-sizing: border-box; z-index: 2;
+      box-shadow: 2px 0 12px 0 rgba(0,0,0,0.07);
+      transition: transform 0.3s cubic-bezier(.4,2,.6,1), box-shadow 0.3s;
+      display: flex; flex-direction: column;
+    }
+    #hamburger {
+      position: absolute; top: 18px; left: 18px; font-size: 32px; cursor: pointer; z-index: 3;
+      background: #fff; padding: 8px 14px; border-radius: 8px; user-select: none;
+      box-shadow: 0 2px 8px 0 rgba(0,0,0,0.08);
+      border: 1px solid #c8e6c9;
+      display: none;
+    }
+    .sidebar h2 {
+      margin-top: 0; color: #00953b; font-size: 1.7em; letter-spacing: 1px; font-weight: 700;
+    }
+    .sidebar details {
+      margin-bottom: 12px;
+      background: #fff;
+      border: 1px solid #b2dfdb;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .sidebar summary {
+      cursor: pointer;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sidebar summary::-webkit-details-marker {
+      display: none;
+    }
+    .sidebar ul { list-style-type: none; padding: 0; margin: 0; }
+    .sidebar button {
+      width: 100%; padding: 10px 0; border: none; background: #00953b; color: #fff;
+      cursor: pointer; font-size: 1em; border-radius: 6px; font-weight: 600;
+      box-shadow: 0 2px 8px 0 rgba(0,0,0,0.06);
+      transition: background 0.2s, box-shadow 0.2s;
+      margin-bottom: 10px;
+    }
+    .sidebar button:hover {
+      background: #007a2f;
+      box-shadow: 0 4px 16px 0 rgba(0,149,59,0.10);
+    }
+    #map { width: 100%; height: 100%; border-radius: 0 12px 12px 0; }
+    .container { padding-left: 260px; }
+    label, select, input {
+      font-size: 1em; color: #222; font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    select, input[type="text"] {
+      border: 1px solid #b2dfdb; border-radius: 4px; padding: 6px 8px; margin-top: 2px; margin-bottom: 8px; width: 100%;
+      background: #fff;
+    }
+    select:focus, input[type="text"]:focus {
+      outline: 2px solid #00953b;
+    }
+    #sidebarOverlay {
+      display: none;
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.18); z-index: 1;
+      transition: opacity 0.3s;
+    }
+    .filter-content {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .filter-content input[type="text"],
+    .filter-content select {
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 6px;
+    }
+    .filter-content label {
+      margin-bottom: 2px;
+    }
+    .filter-content div {
+      margin: 10px 0 0 0;
+    }
+    @media (max-width: 768px) {
+      .sidebar {
+        transform: translateX(-100%);
+        width: 85vw; max-width: 320px;
+        border-radius: 0 18px 18px 0;
+        box-shadow: 2px 0 16px 0 rgba(0,0,0,0.13);
+        padding: 24px 10px 18px 10px;
+      }
+      .sidebar.show { transform: translateX(0); }
+      #sidebarOverlay.show { display: block; opacity: 1; }
+      #hamburger { display: block; }
+      .container { padding-left: 0; }
+      .sidebar button { font-size: 1.1em; padding: 14px 0; }
+      .sidebar h2 { font-size: 1.3em; }
+    }
+    .edit-popup {
+      background: #f8f9fa;
+      border-radius: 14px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.10);
+      padding: 18px 16px 12px 16px;
+      min-width: 260px;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    .edit-popup label {
+      font-weight: 500;
+      margin-bottom: 4px;
+      display: block;
+      color: #00953b;
+    }
+    .edit-popup input[type="text"], .edit-popup select {
+      width: 100%;
+      padding: 7px 10px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      border: 1px solid #b2dfdb;
+      background: #fff;
+      font-size: 1em;
+      box-sizing: border-box;
+    }
+    .edit-popup input[type="checkbox"] {
+      margin-right: 6px;
+    }
+    .edit-popup button {
+      width: 100%;
+      padding: 12px 0;
+      border: none;
+      border-radius: 8px;
+      font-size: 1em;
+      font-weight: 600;
+      margin-bottom: 8px;
+      background: #00953b;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      transition: background 0.2s;
+      cursor: pointer;
+    }
+    .edit-popup button:hover {
+      background: #007a2f;
+    }
+    .edit-popup .delete-btn {
+      background: #e74c3c;
+      color: #fff;
+      margin-top: 4px;
+    }
+    .edit-popup .delete-btn:hover {
+      background: #c0392b;
+    }
+    /* Mapbox GL popup overwrites */
+    .mapboxgl-popup-content {
+      background: transparent !important;
+      box-shadow: none !important;
+      padding: 0 !important;
+      border-radius: 0 !important;
+    }
+    .mapboxgl-popup-close-button {
+      position: absolute !important;
+      top: 4px !important;
+      right: -40px !important;
+      background: #e74c3c !important;
+      color: #fff !important;
+      border-radius: 50% !important;
+      font-size: 1.3em !important;
+      width: 32px !important;
+      height: 32px !important;
+      border: none !important;
+      opacity: 0.85 !important;
+      z-index: 10 !important;
+      transform: none !important;
+    }
+    .mapboxgl-popup-close-button:hover {
+      background: #c0392b !important;
+      opacity: 1 !important;
+    }
+    .details-popup {
+      background: #f8f9fa;
+      border-radius: 14px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.10);
+      padding: 18px 16px 12px 16px;
+      min-width: 220px;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #222;
+      font-size: 1em;
+    }
+    .details-popup b {
+      color: #00953b;
+      font-size: 1.1em;
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: block;
+    }
+    .details-popup br {
+      line-height: 2.2;
+    }
+    .add-marker-popup {
+      background: #f8f9fa;
+      border-radius: 14px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.10);
+      padding: 18px 16px 12px 16px;
+      min-width: 220px;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    .add-marker-popup b {
+      color: #00953b;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: block;
+    }
+    .add-marker-popup label {
+      display: block;
+      margin-bottom: 8px;
+    }
+    .add-marker-popup button {
+      width: 100%; padding: 10px 0; border: none; background: #00953b; color: #fff; cursor: pointer; font-size: 1em; border-radius: 6px; font-weight: 600; margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="hamburger">&#9776;</div>
+  <div class="container">
+    <div class="sidebar">
+      <h2>Menu</h2>
+      <!-- Accordion secties voor sidebar -->
+      <details open>
+        <summary><b>Kaart acties</b></summary>
+        <ul>
+          <li><button onclick="goToFixed(); closeSidebarOnMobile();">Vaste locatie</button></li>
+          <li><button onclick="goToUser(); closeSidebarOnMobile();">Mijn locatie</button></li>
+          <li><button onclick="switchMapStyle('standard'); closeSidebarOnMobile();">Standaard kaart</button></li>
+          <li><button onclick="switchMapStyle('satellite'); closeSidebarOnMobile();">Satelliet kaart</button></li>
+        </ul>
+      </details>
+      <details>
+        <summary><b>Marker acties</b></summary>
+        <ul>
+          <li><button id="addMarkerBtn">Voeg marker toe</button></li>
+        </ul>
+      </details>
+      <details>
+        <summary><b>Lijn acties</b></summary>
+        <ul>
+          <li><button id="drawLineBtn">Lijn tekenen</button></li>
+        </ul>
+      </details>
+      <details open>
+        <summary><b>Filter markers</b></summary>
+        <div class="filter-content">
+          <input type="text" id="searchMarkerInput" placeholder="Zoek op naam...">
+          <label for="filterTitel"><b>Filter op afvalstof:</b></label>
+          <input type="text" id="filterTitel" placeholder="Typ om te filteren..." list="filterTitelList">
+          <datalist id="filterTitelList"></datalist>
+          <div>
+            <b>Filter op type:</b><br>
+            <button type="button" id="filterTypeAll">Alles</button>
+            <button type="button" id="filterTypeContainer">Container</button>
+            <button type="button" id="filterTypeEcopark">Ecopark container</button>
+          </div>
+        </div>
+      </details>
+    </div>
+    <div id="sidebarOverlay"></div>
+    <div id="map"></div>
+  </div>
+  <!-- FIREBASE MODULE SCRIPT -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
+
+    // Firebase config en initialisatie
+    const firebaseConfig = {
+      apiKey: "AIzaSyA3RNFv3C8A3YfjAGIlKj-h6c70fvdxNbI",
+      authDomain: "wastedashboardineosoxide.firebaseapp.com",
+      projectId: "wastedashboardineosoxide",
+      storageBucket: "wastedashboardineosoxide.appspot.com",
+      messagingSenderId: "839327240911",
+      appId: "1:839327240911:web:10bbb3dedb228bd4341dba",
+      measurementId: "G-S4YKF9VJG7"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    mapboxgl.accessToken = 'pk.eyJ1IjoidmFuZGVub3N0ZW5kZWsiLCJhIjoiY203eWl6NGtnMDhueTJpcjY2dnlpc2Z5NSJ9.udMeaVqcH38IfX0ME1wbAQ';
+
+    // Vaste locatie (INEOS OXIDE, Nieuwe Weg 1, 2070 Zwijndrecht, België)
+    const fixedLocation = [4.320766559400446, 51.23725244647049];
+
+    // Haal laatst gebruikte stijl op uit localStorage of standaard
+    const defaultStyle = localStorage.getItem('mapStyle') || 'mapbox://styles/mapbox/standard';
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: defaultStyle,
+      center: fixedLocation,
+      zoom: 15
+    });
+
+    map.addControl(new mapboxgl.NavigationControl());
+    map.on('style.load', () => map.setFog({}));
+
+    // Marker vaste locatie
+    const fixedMarker = new mapboxgl.Marker({ color: '#61BB46' })
+      .setLngLat(fixedLocation)
+      .setPopup(new mapboxgl.Popup().setText('Nieuwe Weg 1, 2070 Zwijndrecht, België'))
+      .addTo(map);
+
+    // Geolocate Control
+    const geolocate = new mapboxgl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
+      showAccuracyCircle: true
+    });
+    map.addControl(geolocate);
+
+    geolocate.on('geolocate', (event) => {
+      const lng = event.coords.longitude;
+      const lat = event.coords.latitude;
+      map.flyTo({ center: [lng, lat], zoom: 16 });
+    });
+
+    // --- Sidebar ---
+    const hamburger = document.getElementById('hamburger');
+    const sidebar = document.querySelector('.sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+    function closeSidebarOnMobile() {
+      if (window.innerWidth <= 768) {
+        sidebar.classList.remove('show');
+        sidebarOverlay.classList.remove('show');
+      }
+    }
+
+    // Sidebar-knoppen
+    window.goToFixed = function() { // Exposed to window for onclick
+      map.flyTo({ center: fixedLocation, zoom: 15 });
+      closeSidebarOnMobile();
+    }
+    window.goToUser = function() { // Exposed to window for onclick
+      geolocate.trigger();
+      closeSidebarOnMobile();
+    }
+    window.switchMapStyle = function(type) { // Exposed to window for onclick
+      let styleUrl = 'mapbox://styles/mapbox/standard';
+      if (type === 'satellite') {
+        styleUrl = 'mapbox://styles/mapbox/satellite-streets-v12';
+      }
+      map.setStyle(styleUrl);
+      localStorage.setItem('mapStyle', styleUrl);
+      closeSidebarOnMobile();
+    }
+
+    hamburger.addEventListener('click', () => {
+      sidebar.classList.toggle('show');
+      sidebarOverlay.classList.toggle('show');
+    });
+    sidebarOverlay.addEventListener('click', () => {
+      sidebar.classList.remove('show');
+      sidebarOverlay.classList.remove('show');
+    });
+    map.getContainer().addEventListener('click', () => {
+      if (window.innerWidth <= 768) {
+        sidebar.classList.remove('show');
+        sidebarOverlay.classList.remove('show');
+      }
+    });
+    
+    function updateSidebarVisibility() {
+      if (window.innerWidth > 768) {
+        sidebar.classList.add('show');
+        sidebarOverlay.classList.remove('show');
+      } else {
+        sidebar.classList.remove('show');
+        sidebarOverlay.classList.remove('show');
+      }
+    }
+    window.addEventListener('resize', updateSidebarVisibility);
+    updateSidebarVisibility();
+
+    sidebar.querySelectorAll('button').forEach(btn => {
+      if (!btn.onclick) { // Avoid overwriting existing onclick handlers
+        btn.addEventListener('click', closeSidebarOnMobile);
+      }
+    });
+
+    // Popup management: altijd maar één open
+    let lastOpenedPopup = null;
+
+    // Helper to change marker color
+    function setMarkerSvgColor(marker, color) {
+        const el = marker.getElement();
+        const svg = el.getElementsByTagName('svg')[0];
+        if (svg) {
+            const path = svg.getElementsByTagName('path')[0];
+            if (path) {
+                path.setAttribute('fill', color);
+            }
+        }
+    }
+
+    // Toon markers uit Firestore op de kaart
+    function laadMarkersUitFirestore() {
+      getDocs(collection(db, "kml_markers")).then(querySnapshot => {
+        querySnapshot.forEach((docSnap, idx) => {
+        const markerData = docSnap.data();
+        markerData.firestoreId = docSnap.id;
+
+        const markerColor = markerData.type === "Ecopark container" ? "#0074D9" : (markerData.tijdelijk ? "#FFA500" : "#e74c3c");
+        const marker = new mapboxgl.Marker({ color: markerColor })
+          .setLngLat(markerData.coordinates)
+          .addTo(map);
+        window.allMarkers.push(marker);
+        window.allMarkerData.push(markerData);
+        updateFilterDropdown();
+
+        // Details popup (alleen-lezen)
+        function showDetailsPopup() {
+          const detailsContent = document.createElement('div');
+          detailsContent.innerHTML = `
+            <div class="details-popup">
+              <b>${markerData.name}</b>
+              Volume: ${markerData.volume}<br>
+              Type: ${markerData.type}<br>
+              Eigendom: ${markerData.eigendom}<br>
+              Kostenplaats: ${markerData.kostenplaats}<br>
+              Tijdelijk: ${markerData.tijdelijk ? "Ja" : "Nee"}
+            </div>
+          `;
+          const detailsPopup = new mapboxgl.Popup().setDOMContent(detailsContent);
+          if (lastOpenedPopup) lastOpenedPopup.remove();
+          marker.setPopup(detailsPopup);
+          marker.togglePopup();
+          lastOpenedPopup = detailsPopup;
+        }
+
+        // Bewerk-popup
+        function showEditPopup() {
+          const popupContent = document.createElement('div');
+          popupContent.innerHTML = `
+            <div class="edit-popup">
+              <label>Titel:<br><input type="text" id="titel_db${idx}" value="${markerData.name}"></label>
+              <label>Volume:<br><input type="text" id="volume_db${idx}" value="${markerData.volume || ""}"></label>
+              <label>Type:<br>
+                <select id="type_db${idx}">
+                  <option value="Container" ${markerData.type === 'Container' ? 'selected' : ''}>Container</option>
+                  <option value="Ecopark container" ${markerData.type === 'Ecopark container' ? 'selected' : ''}>Ecopark container</option>
+                </select>
+              </label>
+              <label>Eigendom:<br><input type="text" id="eigendom_db${idx}" value="${markerData.eigendom || ""}"></label>
+              <label>Kostenplaats:<br><input type="text" id="kostenplaats_db${idx}" value="${markerData.kostenplaats || ""}"></label>
+              <label><input type="checkbox" id="tijdelijk_db${idx}" ${markerData.tijdelijk ? "checked" : ""}> Tijdelijk</label>
+              <button id="saveMarker_db${idx}">Opslaan</button>
+              <button id="deleteMarker_db${idx}" class="delete-btn">Verwijder</button>
+            </div>
+          `;
+          const editPopup = new mapboxgl.Popup().setDOMContent(popupContent);
+          if (lastOpenedPopup) lastOpenedPopup.remove();
+          marker.setPopup(editPopup);
+          marker.togglePopup();
+          lastOpenedPopup = editPopup;
+
+          // Opslaan-knop event
+          popupContent.querySelector(`#saveMarker_db${idx}`).addEventListener('click', async function() {
+            markerData.name = popupContent.querySelector(`#titel_db${idx}`).value;
+            markerData.volume = popupContent.querySelector(`#volume_db${idx}`).value;
+            markerData.type = popupContent.querySelector(`#type_db${idx}`).value;
+            markerData.eigendom = popupContent.querySelector(`#eigendom_db${idx}`).value;
+            markerData.kostenplaats = popupContent.querySelector(`#kostenplaats_db${idx}`).value;
+            markerData.tijdelijk = popupContent.querySelector(`#tijdelijk_db${idx}`).checked;
+            // Kleur bepalen op basis van type en tijdelijk
+            const newColor = markerData.type === "Ecopark container" ? "#0074D9" : (markerData.tijdelijk ? "#FFA500" : "#e74c3c");
+            setMarkerSvgColor(marker, newColor);
+            updateFilterDropdown();
+            if (markerData.firestoreId) {
+              const docRef = doc(db, "kml_markers", markerData.firestoreId);
+              await updateDoc(docRef, {
+                name: markerData.name,
+                coordinates: markerData.coordinates,
+                volume: markerData.volume,
+                type: markerData.type,
+                eigendom: markerData.eigendom,
+                kostenplaats: markerData.kostenplaats,
+                tijdelijk: markerData.tijdelijk
+              });
+            }
+            // Popup automatisch sluiten
+            editPopup.remove();
+            lastOpenedPopup = null;
+          });
+
+          // Verwijderen
+          popupContent.querySelector(`#deleteMarker_db${idx}`).addEventListener('click', async function() {
+            if (confirm('Weet je zeker dat je deze marker wilt verwijderen?')) {
+              marker.remove();
+              const i = window.allMarkers.indexOf(marker);
+              if (i > -1) {
+                window.allMarkers.splice(i, 1);
+                window.allMarkerData.splice(i, 1);
+              }
+              updateFilterDropdown();
+              if (markerData.firestoreId) {
+                const docRef = doc(db, "kml_markers", markerData.firestoreId);
+                await deleteDoc(docRef);
+              }
+              if (lastOpenedPopup) lastOpenedPopup.remove();
+            }
+          });
+        }
+
+        // Enkelklik: details tonen
+        marker.getElement().addEventListener('click', (e) => {
+          e.stopPropagation();
+          showDetailsPopup();
+        });
+
+        // Dubbelklik: bewerken
+        marker.getElement().addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          showEditPopup();
+        });
+      });
+      });
+    }
+    map.on('load', laadMarkersUitFirestore);
+
+    // Verzamel alle markers voor filtering
+    window.allMarkers = [];
+    window.allMarkerData = [];
+
+    // Helper om dropdown te vullen
+    function updateFilterDropdown() {
+      const input = document.getElementById('filterTitel');
+      const datalist = document.getElementById('filterTitelList');
+      if (!input || !datalist) return;
+      const titels = new Set();
+      window.allMarkerData.forEach(md => titels.add(md.name));
+      datalist.innerHTML = Array.from(titels).sort().map(t => `<option value="${t}"></option>`).join('');
+    }
+
+    // Filter markers op titel
+    function filterMarkersByTitel(titel) {
+      window.allMarkers.forEach((m, i) => {
+        const md = window.allMarkerData[i];
+        if (!titel || md.name === titel) {
+          m.getElement().style.display = '';
+        } else {
+          m.getElement().style.display = 'none';
+        }
+      });
+    }
+    document.getElementById('filterTitel').addEventListener('input', function() {
+      filterMarkersByTitel(this.value);
+    });
+
+    // Filter markers op type
+    function filterMarkersByType(type) {
+      window.allMarkers.forEach((m, i) => {
+        const md = window.allMarkerData[i];
+        if (!type || md.type === type) {
+          m.getElement().style.display = '';
+        } else {
+          m.getElement().style.display = 'none';
+        }
+      });
+    }
+    document.getElementById('filterTypeAll').onclick = function() { filterMarkersByType(''); };
+    document.getElementById('filterTypeContainer').onclick = function() { filterMarkersByType('Container'); };
+    document.getElementById('filterTypeEcopark').onclick = function() { filterMarkersByType('Ecopark container'); };
+
+    // Marker toevoegen functionaliteit
+    let addMarkerMode = false;
+    document.getElementById('addMarkerBtn').addEventListener('click', function() {
+      addMarkerMode = true;
+      map.getCanvas().style.cursor = 'crosshair';
+    });
+    map.on('click', async function(e) {
+      if (!addMarkerMode) return;
+      addMarkerMode = false;
+      map.getCanvas().style.cursor = '';
+      // Popup voor type keuze
+      const popupContent = document.createElement('div');
+      popupContent.className = 'add-marker-popup';
+      popupContent.innerHTML = `
+        <b>Nieuw marker type:</b><br>
+        <label><input type="radio" name="markertype" value="Container" checked> Container</label><br>
+        <label><input type="radio" name="markertype" value="Ecopark container"> Ecopark container</label><br>
+        <button id="addMarkerSave">Opslaan</button>
+      `;
+      const tempPopup = new mapboxgl.Popup({ closeOnClick: false })
+        .setLngLat(e.lngLat)
+        .setDOMContent(popupContent)
+        .addTo(map);
+      popupContent.querySelector('#addMarkerSave').onclick = async function() {
+        const type = popupContent.querySelector('input[name="markertype"]:checked').value;
+        const markerData = {
+          name: 'Nieuwe marker',
+          coordinates: [e.lngLat.lng, e.lngLat.lat],
+          volume: '',
+          type: type,
+          eigendom: '',
+          kostenplaats: '',
+          tijdelijk: false
+        };
+        // Voeg toe aan Firestore
+        let docRef = null;
+        try {
+          docRef = await addDoc(collection(db, "kml_markers"), markerData);
+          markerData.firestoreId = docRef.id;
+        } catch (error) {
+            console.error("Error adding marker to Firestore:", error);
+            alert("Fout bij het opslaan van de marker. Controleer de console voor details.");
+        }
+        const markerColor = markerData.type === "Ecopark container" ? "#0074D9" : (markerData.tijdelijk ? "#FFA500" : "#e74c3c");
+        const marker = new mapboxgl.Marker({ color: markerColor })
+          .setLngLat([e.lngLat.lng, e.lngLat.lat])
+          .addTo(map);
+        window.allMarkers.push(marker);
+        window.allMarkerData.push(markerData);
+        updateFilterDropdown();
+        // Bewerk-popup direct openen
+        function showEditPopup() {
+          const editContent = document.createElement('div');
+          editContent.className = 'edit-popup'; // Voeg de bestaande CSS-klasse toe
+          editContent.innerHTML = `
+            <label>Titel:<br><input type="text" id="titel_add" value="${markerData.name}"></label><br>
+            <label>Volume:<br><input type="text" id="volume_add" value="${markerData.volume}"></label><br>
+            <label>Type:<br>
+              <select id="type_add">
+                <option value="Container" ${markerData.type === 'Container' ? 'selected' : ''}>Container</option>
+                <option value="Ecopark container" ${markerData.type === 'Ecopark container' ? 'selected' : ''}>Ecopark container</option>
+              </select>
+            </label><br>
+            <label>Eigendom:<br><input type="text" id="eigendom_add" value="${markerData.eigendom}"></label><br>
+            <label>Kostenplaats:<br><input type="text" id="kostenplaats_add" value="${markerData.kostenplaats}"></label><br>
+            <label><input type="checkbox" id="tijdelijk_add" ${markerData.tijdelijk ? "checked" : ""}> Tijdelijk</label><br>
+            <button id="saveMarker_add">Opslaan</button>
+            <button id="deleteMarker_add" style="background:#e74c3c;color:#fff;margin-top:5px;">Verwijder</button>
+          `;
+          const editPopup = new mapboxgl.Popup().setDOMContent(editContent);
+          marker.setPopup(editPopup);
+          marker.togglePopup();
+          // Opslaan
+          editContent.querySelector('#saveMarker_add').onclick = async function() {
+            markerData.name = editContent.querySelector('#titel_add').value;
+            markerData.volume = editContent.querySelector('#volume_add').value;
+            markerData.type = editContent.querySelector('#type_add').value;
+            markerData.eigendom = editContent.querySelector('#eigendom_add').value;
+            markerData.kostenplaats = editContent.querySelector('#kostenplaats_add').value;
+            markerData.tijdelijk = editContent.querySelector('#tijdelijk_add').checked;
+            const newColor = markerData.type === "Ecopark container" ? "#0074D9" : (markerData.tijdelijk ? "#FFA500" : "#e74c3c");
+            setMarkerSvgColor(marker, newColor);
+            updateFilterDropdown();
+            // Update Firestore
+            if (markerData.firestoreId) {
+              const docRef = doc(db, "kml_markers", markerData.firestoreId);
+              await updateDoc(docRef, {
+                name: markerData.name,
+                coordinates: markerData.coordinates,
+                volume: markerData.volume,
+                type: markerData.type,
+                eigendom: markerData.eigendom,
+                kostenplaats: markerData.kostenplaats,
+                tijdelijk: markerData.tijdelijk
+              });
+            }
+            marker.togglePopup();
+          };
+          // Verwijderen
+          editContent.querySelector('#deleteMarker_add').onclick = async function() {
+            marker.remove();
+            const i = window.allMarkers.indexOf(marker);
+            if (i > -1) {
+              window.allMarkers.splice(i, 1);
+              window.allMarkerData.splice(i, 1);
+            }
+            updateFilterDropdown();
+            if (markerData.firestoreId) {
+              const docRef = doc(db, "kml_markers", markerData.firestoreId);
+              await deleteDoc(docRef);
+            }
+            if (lastOpenedPopup) lastOpenedPopup.remove();
+          };
+        }
+        marker.getElement().addEventListener('click', (e) => {
+          e.stopPropagation();
+          showEditPopup();
+        });
+        marker.getElement().addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          showEditPopup();
+        });
+        showEditPopup();
+        tempPopup.remove();
+      };
+    });
+
+    // Globale array voor lijnen
+    window.allLines = [];
+    window.allLineData = [];
+
+    // Lijn opslaan in Firestore
+    async function saveLineToFirestore(lineData) {
+        const docRef = await addDoc(collection(db, "kml_lines"), lineData);
+        lineData.firestoreId = docRef.id;
+    }
+
+    // Lijn verwijderen uit Firestore
+    async function deleteLineFromFirestore(lineData) {
+      if (lineData.firestoreId) {
+        const docRef = doc(db, "kml_lines", lineData.firestoreId);
+        if (docRef) {
+          await deleteDoc(docRef);
+        }
+      }
+    }
+
+    // Lijnen uit Firestore laden en tonen
+    async function laadLijnenUitFirestore() {
+      window.allLines = [];
+      window.allLineData = [];
+      const querySnapshot = await getDocs(collection(db, "kml_lines"));
+      querySnapshot.forEach((docSnap, idx) => {
+        const data = docSnap.data();
+        data.firestoreId = docSnap.id;
+        window.allLineData.push(data);
+        // Voeg toe aan kaart
+        const sourceId = `lijn_${data.firestoreId}`;
+        const layerId = `lijnlaag_${data.firestoreId}`;
+        if (!map.getSource(sourceId)) {
+          map.addSource(sourceId, {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: data.coordinates },
+              properties: { title: data.title }
+            }
+          });
+          map.addLayer({
+            id: layerId,
+            type: 'line',
+            source: sourceId,
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: { 'line-width': 8, 'line-color': '#0074D9' }
+          });
+          // Klik event voor popup
+          map.on('click', layerId, function(e) {
+            const popupContent = document.createElement('div');
+            popupContent.innerHTML = `<b>Lijn: ${data.title || ''}</b><br><button id='deleteLine_${data.firestoreId}' style='background:#e74c3c;color:#fff;margin-top:8px;'>Verwijder lijn</button>`;
+            const popup = new mapboxgl.Popup()
+              .setLngLat(e.lngLat)
+              .setDOMContent(popupContent)
+              .addTo(map);
+            popupContent.querySelector(`#deleteLine_${data.firestoreId}`).onclick = async function() {
+              map.removeLayer(layerId);
+              map.removeSource(sourceId);
+              await deleteLineFromFirestore(data);
+              popup.remove();
+            };
+          });
+        }
+        window.allLines.push({ sourceId, layerId });
+      });
+    }
+
+    // Lijnen laden bij start
+    map.on('load', laadLijnenUitFirestore);
+
+    // Popup tonen na tekenen van een lijn
+    function showLineSavePopup(coords) {
+      const center = coords[Math.floor(coords.length / 2)];
+      const popupContent = document.createElement('div');
+      popupContent.innerHTML = `<label>Titel lijn:<br><input type='text' id='lineTitle'></label><br><button id='saveLineBtn'>Opslaan</button><button id='deleteLineBtn' style='background:#e74c3c;color:#fff;margin-left:8px;'>Verwijder</button>`;
+      const popup = new mapboxgl.Popup()
+        .setLngLat(center)
+        .setDOMContent(popupContent)
+        .addTo(map);
+      popupContent.querySelector('#saveLineBtn').onclick = async function() {
+        const title = popupContent.querySelector('#lineTitle').value;
+        const lineData = { title, coordinates: coords };
+        await saveLineToFirestore(lineData);
+        popup.remove();
+        laadLijnenUitFirestore();
+        // Reset getekende lijn
+        if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+        if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+        drawnLineCoords = [];
+        drawLineMode = false;
+        map.getCanvas().style.cursor = '';
+        if (stopDrawBtn) { stopDrawBtn.remove(); stopDrawBtn = null; }
+      };
+      popupContent.querySelector('#deleteLineBtn').onclick = function() {
+        // Verwijder tijdelijke lijn
+        if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+        if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+        drawnLineCoords = [];
+        drawLineMode = false;
+        map.getCanvas().style.cursor = '';
+        if (stopDrawBtn) { stopDrawBtn.remove(); stopDrawBtn = null; }
+        popup.remove();
+      };
+    }
+
+    let drawLineMode = false;
+    let drawnLineCoords = [];
+    let drawnLineSourceId = 'getekende-lijn';
+    let drawnLineLayerId = 'getekende-lijn-laag';
+    let stopDrawBtn = null;
+
+    function stopDrawLine() {
+      drawLineMode = false;
+      map.getCanvas().style.cursor = '';
+      if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+      if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+      drawnLineCoords = [];
+      if (stopDrawBtn) {
+        stopDrawBtn.remove();
+        stopDrawBtn = null;
+      }
+    }
+
+    // Patroon laden en pas tekenen mogelijk maken als deze klaar is
+    let linePatternLoaded = false;
+    function ensureLinePatternLoaded(cb) {
+      if (map.hasImage && map.hasImage('line-pattern')) {
+        linePatternLoaded = true;
+        if (cb) cb();
+        return;
+      }
+      // Gebruik Mapbox PNG patroon
+      map.loadImage('https://docs.mapbox.com/mapbox-gl-js/assets/pattern-dot.png', function(error, image) {
+        if (error) throw error;
+        if (!map.hasImage('line-pattern')) {
+          map.addImage('line-pattern', image, { pixelRatio: 2 });
+        }
+        linePatternLoaded = true;
+        if (cb) cb();
+      });
+    }
+    map.on('load', function() {
+      ensureLinePatternLoaded(null);
+    });
+
+    document.getElementById('drawLineBtn').addEventListener('click', function() {
+      ensureLinePatternLoaded(function() {
+        drawLineMode = true;
+        drawnLineCoords = [];
+        if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+        if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+        map.getCanvas().style.cursor = 'crosshair';
+        if (!stopDrawBtn) {
+          stopDrawBtn = document.createElement('button');
+          stopDrawBtn.textContent = 'Lijn tekenen stoppen';
+          stopDrawBtn.style = 'width:100%;margin:8px 0 0 0;padding:10px 0;background:#e74c3c;color:#fff;border:none;border-radius:6px;font-weight:600;';
+          stopDrawBtn.onclick = stopDrawLine;
+          document.querySelector('.sidebar').appendChild(stopDrawBtn);
+        }
+      });
+    });
+
+    map.on('click', function(e) {
+      if (drawLineMode) {
+        if (!linePatternLoaded) return;
+        drawnLineCoords.push([e.lngLat.lng, e.lngLat.lat]);
+        if (drawnLineCoords.length < 2) return; // Minimaal 2 punten nodig
+        if (map.getSource(drawnLineSourceId)) {
+          map.getSource(drawnLineSourceId).setData({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: drawnLineCoords }
+          });
+        } else {
+          map.addSource(drawnLineSourceId, {
+            type: 'geojson',
+            data: { type: 'Feature', geometry: { type: 'LineString', coordinates: drawnLineCoords } }
+          });
+          map.addLayer({
+            id: drawnLineLayerId,
+            type: 'line',
+            source: drawnLineSourceId,
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: { 'line-width': 8, 'line-color': '#0074D9' }
+          });
+        }
+      }
+    });
+  </script>
+</body>
+</html>
