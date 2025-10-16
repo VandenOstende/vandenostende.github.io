@@ -526,17 +526,32 @@
           });
         }
 
-        // Enkelklik: details tonen
-        marker.getElement().addEventListener('click', (e) => {
-          e.stopPropagation();
-          showDetailsPopup();
-        });
+        // --- Klik- en touchgedrag voor desktop & mobiel ---
+const markerEl = marker.getElement();
 
-        // Dubbelklik: bewerken
-        marker.getElement().addEventListener('dblclick', (e) => {
-          e.stopPropagation();
-          showEditPopup();
-        });
+// Enkelklik (desktop en mobiel)
+markerEl.addEventListener('click', (e) => {
+  e.stopPropagation();
+  showDetailsPopup();
+});
+
+// Dubbelklik (desktop)
+markerEl.addEventListener('dblclick', (e) => {
+  e.stopPropagation();
+  showEditPopup();
+});
+
+// Lang indrukken (mobiel/touch)
+let pressTimer;
+markerEl.addEventListener('touchstart', (e) => {
+  e.stopPropagation();
+  pressTimer = setTimeout(() => {
+    showEditPopup();
+  }, 600); // 600ms ingedrukt houden = bewerken
+});
+markerEl.addEventListener('touchend', () => clearTimeout(pressTimer));
+markerEl.addEventListener('touchcancel', () => clearTimeout(pressTimer));
+
       });
       });
     }
@@ -904,3 +919,4 @@
   </script>
 </body>
 </html>
+
