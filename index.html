@@ -262,21 +262,21 @@
           <li><button id="drawLineBtn">Lijn tekenen</button></li>
         </ul>
       </details>
-      <details open>
-        <summary><b>Filter markers</b></summary>
-        <div class="filter-content">
-          <input type="text" id="searchMarkerInput" placeholder="Zoek op naam...">
-          <label for="filterTitel"><b>Filter op afvalstof:</b></label>
-          <input type="text" id="filterTitel" placeholder="Typ om te filteren..." list="filterTitelList">
-          <datalist id="filterTitelList"></datalist>
-          <div>
-            <b>Filter op type:</b><br>
-            <button type="button" id="filterTypeAll">Alles</button>
-            <button type="button" id="filterTypeContainer">Container</button>
-            <button type="button" id="filterTypeEcopark">Ecopark container</button>
-          </div>
+        <details open>
+          <summary><b>Filter markers</b></summary>
+          <div class="filter-content">
+            <label for="filterTitel"><b>Filter op afvalstof:</b></label>
+            <input type="text" id="filterTitel" placeholder="Typ of selecteer..." list="filterTitelList">
+            <datalist id="filterTitelList"></datalist>
+         <div>
+           <b>Filter op type:</b><br>
+             <button type="button" id="filterTypeAll">Alles</button>
+          <button type="button" id="filterTypeContainer">Container</button>
+          <button type="button" id="filterTypeEcopark">Ecopark container</button>
         </div>
-      </details>
+      </div>
+    </details>
+ </details>
     </div>
     <div id="sidebarOverlay"></div>
     <div id="map"></div>
@@ -919,4 +919,5 @@ markerEl.addEventListener('touchcancel', () => clearTimeout(pressTimer));
   </script>
 </body>
 </html>
+
 
