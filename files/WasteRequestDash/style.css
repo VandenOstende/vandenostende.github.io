@@ -1,12 +1,22 @@
+/* Indaver huisstijl kleuren */
+:root {
+  --indaver-groen: #61BB46;
+  --indaver-donkergroen: #005634;
+  --lichtgrijs: #f4f4f4;
+  --donkergrijs: #333;
+  --wit: #fff;
+}
+
 body {
   font-family: Arial, sans-serif;
   margin: 0;
   padding: 0;
   height: 100vh;
-  background-color: #f4f4f4;
+  background-color: var(--lichtgrijs);
   display: flex;
   justify-content: center;
   align-items: center;
+  color: var(--donkergrijs);
 }
 
 .container {
@@ -14,17 +24,38 @@ body {
   height: 90vh;
   display: flex;
   flex-direction: column;
-  background: white;
+  background: var(--wit);
   border-radius: 10px;
   padding: 20px;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.logo-titel {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.logo {
+  height: 40px;
+  width: auto;
 }
 
 h1 {
-  margin: 0 0 10px;
-  text-align: center;
+  margin: 0;
+  color: var(--indaver-donkergroen);
+  font-size: 1.8em;
 }
 
+/* Besturingselementen */
 .controls {
   display: flex;
   justify-content: space-between;
@@ -36,39 +67,59 @@ h1 {
 input[type="file"],
 input[type="text"],
 button {
-  padding: 8px;
+  padding: 8px 12px;
   font-size: 14px;
+  border: 1px solid var(--indaver-groen);
+  border-radius: 5px;
+  outline: none;
 }
 
+input[type="text"]:focus {
+  border-color: var(--indaver-donkergroen);
+}
+
+button {
+  background-color: var(--indaver-groen);
+  color: var(--wit);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: var(--indaver-donkergroen);
+}
+
+/* Tabel */
 .table-container {
   flex-grow: 1;
   overflow-x: auto;
   overflow-y: auto;
   border: 1px solid #ddd;
   border-radius: 5px;
+  background-color: var(--wit);
 }
 
 table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 1200px; /* laat horizontaal scrollen toe bij veel kolommen */
+  min-width: 1200px;
 }
 
 th, td {
-  padding: 8px;
+  padding: 8px 12px;
   text-align: left;
   border-bottom: 1px solid #ddd;
   white-space: nowrap;
 }
 
 th {
-  background-color: #0078D7;
-  color: white;
+  background-color: var(--indaver-groen);
+  color: var(--wit);
   position: sticky;
   top: 0;
   z-index: 2;
 }
 
 tr:hover {
-  background-color: #f1f1f1;
+  background-color: rgba(97, 187, 70, 0.1);
 }

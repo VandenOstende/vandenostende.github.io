@@ -26,7 +26,7 @@ function handleFile(event) {
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
     const allRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" });
 
-    // headers starten in rij 3 (index 2)
+    // Headers starten in rij 3 (index 2)
     const headers = allRows[2];
     const dataRows = allRows.slice(3);
 
