@@ -1,0 +1,1 @@
+- mogelijk maken dat men de poi markers kan verplaatsen, dit moet kunnen gebeuren doormiddel van een knop die in de popup staat als men aan het bewerken is. (na de dubbelklik)
