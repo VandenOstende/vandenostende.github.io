@@ -1,1 +1,94 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Vanden Ostende - Hosting platform voor diverse webapplicaties en projecten">
+    <title>Vanden Ostende | App Hosting Platform</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Geanimeerde achtergrond -->
+    <div class="background-animation">
+        <div class="floating-shape shape-1"></div>
+        <div class="floating-shape shape-2"></div>
+        <div class="floating-shape shape-3"></div>
+    </div>
 
+    <!-- Header / Navigatie -->
+    <header>
+        <div class="logo">Vanden Ostende</div>
+        <nav>
+            <a href="#home">Home</a>
+            <a href="#apps">Apps</a>
+            <a href="#about">Over</a>
+        </nav>
+    </header>
+
+    <!-- Hero Sectie -->
+    <section class="hero" id="home">
+        <div class="badge">🚀 App Hosting Platform</div>
+        <h1>Vanden Ostende</h1>
+        <p>Een platform voor het hosten van diverse webapplicaties en projecten. Niets speciaal, gewoon mijn persoonlijk hosting platform.</p>
+        <p>Dit platform is nog in ontwikkeling.</p>
+    </section>
+
+    <!-- Apps Sectie -->
+    <section class="apps-section" id="apps">
+        <h2 class="section-title">Beschikbare Applicaties</h2>
+        <p class="section-subtitle">Enkel toegankelijk voor de personen die er nut aan zouden kunnen hebben.</p>
+        <p class="section-subtitle">Bent u van mening dat u toegevoegd moet worden aan de lijst? Neem dan contact op!</p>
+        
+        <div class="apps-grid" id="apps-grid">
+            <!-- Apps worden dynamisch geladen op basis van gebruikerstoegang -->
+        </div>
+    </section>
+
+    <!-- Over Sectie -->
+    <section class="apps-section" id="about">
+        <h2 class="section-title">Over Dit Platform</h2>
+        <div style="max-width: 800px; margin: 0 auto; text-align: center; color: var(--text-secondary);">
+            <p style="margin-bottom: 1.5rem; font-size: 1.1rem;">
+                Deze website heeft geen specifieke functie als traditionele website. 
+                Het is simpelweg een hosting platform voor verschillende webapplicaties en projecten.
+            </p>
+            <p style="font-size: 1rem;">
+                Elk project wordt gehost in een eigen directory en is toegankelijk via het app-overzicht hierboven. 
+                Dit platform dient als centrale hub voor diverse tools en dashboards.
+            </p>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <p>&copy; 2025 Vanden Ostende.</p>
+        <p style="font-size: 0.9rem; margin-top: 0.5rem;">
+            Geen bedrijfswebsite, gewoon een plek voor apps.
+        </p>
+        <div class="footer-links">
+            <a href="https://github.com/VandenOstende" target="_blank">Bezoek me op GitHub</a>
+        </div>
+    </footer>
+
+    <!-- Cookie Notificatie -->
+    <div id="cookie-banner" class="cookie-banner" style="display: none;">
+        <div class="cookie-content">
+            <div class="cookie-text">
+                <h4>🍪 Cookie Notificatie</h4>
+                <p>Deze website gebruikt lokale opslag (localStorage) om je emailadres te onthouden voor toegangscontrole. We verzamelen geen andere gegevens en delen niets met derden.</p>
+            </div>
+            <div class="cookie-actions">
+                <button class="cookie-btn cookie-btn-accept" onclick="acceptCookies()">
+                    Accepteren
+                </button>
+                <button class="cookie-btn cookie-btn-decline" onclick="declineCookies()">
+                    Weigeren
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="config/access-control.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
