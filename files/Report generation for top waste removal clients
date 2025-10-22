@@ -1,13 +1,16 @@
 # Feature Request — Report Generation for Top Waste Removal Clients
 
-## Summary  
+## Summary
+
 Add a feature to generate a report showing which client submitted the most waste removal requests. This helps identify the most active or high-volume clients.
 
-## Motivation  
-Currently, there is no easy way to see which clients are responsible for the most waste removal activity. This report would support business insights, client relationship management, and operational planning.
+## Motivation
 
-## Proposed behavior  
-- A new report option is added to the dashboard or reporting module: **"Top Waste Removal Clients"**.
+Currently, there is no easy way to see which clients are responsible for the most waste removal activity. This report would support business insights, client relationship management, and operational decision-making.
+
+## Proposed behavior
+
+- A new report option is added to the dashboard or reporting module: "Top Waste Removal Clients".
 - When selected, the system generates a ranked list of clients based on the number of waste removal requests submitted.
 - The report includes:
   - Client name
@@ -16,7 +19,8 @@ Currently, there is no easy way to see which clients are responsible for the mos
 - The report can be filtered by date range and location.
 - Export options: CSV, PDF
 
-## UI details  
+## UI details
+
 - Report title: "Top Waste Removal Clients"
 - Filters:
   - Date range picker
@@ -28,24 +32,28 @@ Currently, there is no easy way to see which clients are responsible for the mos
   - Volume (optional)
 - Export button: "Download report"
 
-## Edge cases & validation  
+## Edge cases & validation
+
 - If no data is available for the selected filters, show a message: "No waste removal requests found for the selected criteria."
 - Handle clients with identical request counts by sorting alphabetically.
 - Ensure performance is acceptable for large datasets.
 
-## Acceptance criteria  
-- [ ] New report option is available in the dashboard or reporting module  
-- [ ] Report shows ranked list of clients by number of waste removal requests  
-- [ ] Filters work correctly and update the report dynamically  
-- [ ] Export to CSV and PDF works as expected  
+## Acceptance criteria
+
+- [ ] New report option is available in the dashboard or reporting module
+- [ ] Report shows ranked list of clients by number of waste removal requests
+- [ ] Filters work correctly and update the report dynamically
+- [ ] Export to CSV and PDF works as expected
 - [ ] Empty states and errors are handled gracefully
 
-## Notes for implementation  
+## Notes for implementation
+
 - Use existing request data from the backend to aggregate by client.
 - Consider caching or pagination for performance if the dataset is large.
 - Ensure client names are consistently formatted to avoid duplicates.
 
-## Original request (translated)  
+## Original request (translated)
+
 "Add feature to generate report for seeing who did the most waste removal requests (biggest client)."
 
 ---
