@@ -9,25 +9,41 @@
 </head>
 <body>
   <div class="container">
+    <!-- Tandwiel -->
+    <div class="settings">
+      <span id="settingsIcon">⚙️</span>
+    </div>
+
+    <!-- Header -->
     <header class="header">
       <div class="logo-titel">
-        <img src="https://www.indaver.com/fileadmin/_processed_/8/7/csm_Indaver_logo_5bf5a79e2b.png" alt="Indaver Logo" class="logo">
-        <h1>Afval Dashboard</h1>
+        <img src="https://upload.wikimedia.org/wikipedia/commons/b/be/Indaver-logo.png" alt="Indaver Logo" class="logo">
+        <h1>Customer Zone Dashboard INEOS Oxide</h1>
       </div>
     </header>
 
+    <!-- Besturingselementen -->
     <div class="controls">
-      <input type="file" id="fileInput" accept=".xls,.xlsx" />
       <input type="text" id="searchInput" placeholder="Zoek in gegevens..." />
-      <button id="clearStorage">Gegevens wissen</button>
+      <input type="file" id="fileInput" accept=".xls,.xlsx" style="display:none;" />
     </div>
 
+    <!-- Tabel -->
     <div class="table-container">
       <table id="dataTable">
         <thead id="tableHead"></thead>
         <tbody id="tableBody"></tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Modal voor opties -->
+  <div class="modal-overlay"></div>
+  <div class="modal">
+    <h3>Dashboard Opties</h3>
+    <button id="openFileBtn">Importeer Excel</button>
+    <button id="clearStorageModal">Gegevens wissen</button>
+    <button id="closeModal">Sluit</button>
   </div>
 
   <script src="script.js"></script>
