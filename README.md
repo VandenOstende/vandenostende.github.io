@@ -1,4 +1,4 @@
-# <a id="english"></a>🇬🇧 Hi there, I'm VandenOstende 👋
+# <a id="english"></a>🇬🇧 Hi there, I'm VandenOstende 👋 
 
 Welcome to my GitHub profile! I'm passionate about coding, open-source contributions, and solving technical challenges. Here's a little bit about me:
 
