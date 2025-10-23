@@ -7,9 +7,9 @@ const ACCESS_CONFIG = {
     // Gebruikers en hun toegewezen tags
     users: {
         'kevin.vanden.ostende@indaver.com': ['Indaver INEOS', 'Admin', 'pre-production'],
-        'geoffrey.janssens@indaver.com': ['Indaver INEOS'],
-        'jane.smith@example.com': ['General Access'],
-        'test.gebruiker@example.com': ['Indaver INEOS'],
+        'geoffrey.janssens@indaver.com': ['Indaver INEOS','TWM Coordinators'],
+        'paul.van.noten@eindaver.com': ['Indaver INEOS'],
+        'alain.van.bouwel@indaver.com': ['Indaver INEOS'],
         // Voeg hier meer gebruikers toe
     },
     
@@ -39,11 +39,11 @@ const ACCESS_CONFIG = {
             color: '#3b82f6'
         },
         'Admin': {
-            description: 'Volledige administratieve toegang',
+            description: 'Volledige toegang',
             color: '#ef4444'
         },
-        'General Access': {
-            description: 'Algemene toegang voor basis functionaliteit',
+        'TWM Coordinators': {
+            description: 'Toegang voor Indaver coordinators en managers',
             color: '#10b981'
         }
     }
@@ -108,3 +108,4 @@ function getAllUsers() {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { ACCESS_CONFIG, hasAccess, getUserApps, getUserTags, getAllUsers };
 }
+
