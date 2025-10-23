@@ -54,6 +54,12 @@ body {
   gap: 15px;
 }
 
+.titel-sectie {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
 .logo {
   height: 40px;
   width: auto;
@@ -63,6 +69,22 @@ h1 {
   margin: 0;
   color: var(--indaver-donkergroen);
   font-size: 1.8em;
+}
+
+.update-info {
+  margin: 5px 0 0 0;
+  color: #666;
+  font-size: 0.9em;
+  font-style: italic;
+  text-align: center;
+}
+
+.instruction-info {
+  margin: 3px 0 0 0;
+  color: var(--indaver-groen);
+  font-size: 0.85em;
+  font-weight: 500;
+  text-align: center;
 }
 
 /* Controls */
@@ -170,4 +192,256 @@ tr:hover {
 
 .modal button:hover {
   background-color: var(--indaver-donkergroen);
+}
+
+.modal hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 15px 0;
+}
+
+.modal p {
+  margin: 10px 0;
+  font-size: 12px;
+  color: #666;
+  font-style: italic;
+}
+
+/* Kolom Modal */
+.column-modal-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(0,0,0,0.3);
+  z-index: 25;
+}
+
+.column-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: var(--wit);
+  border: 1px solid var(--indaver-groen);
+  border-radius: 10px;
+  padding: 20px;
+  z-index: 30;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  max-width: 500px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.column-modal h3 {
+  margin-top: 0;
+  color: var(--indaver-donkergroen);
+}
+
+.column-checkboxes {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 10px;
+  margin: 15px 0;
+}
+
+.column-checkbox-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 5px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: move;
+  user-select: none;
+  transition: background-color 0.2s;
+  border-radius: 3px;
+  margin: 2px 0;
+}
+
+.column-checkbox-item:hover {
+  background-color: rgba(97, 187, 70, 0.1);
+}
+
+.column-checkbox-item.dragging {
+  opacity: 0.5;
+  background-color: rgba(97, 187, 70, 0.2);
+}
+
+.column-checkbox-item.drag-over {
+  border-top: 3px solid var(--indaver-groen);
+}
+
+.column-checkbox-item:last-child {
+  border-bottom: none;
+}
+
+.drag-handle {
+  margin-right: 10px;
+  color: #666;
+  font-size: 16px;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.column-checkbox-item input[type="checkbox"] {
+  margin-right: 10px;
+  transform: scale(1.2);
+}
+
+.column-checkbox-item label {
+  cursor: pointer;
+  flex-grow: 1;
+  font-size: 14px;
+}
+
+.column-modal-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.column-modal-buttons button {
+  margin-top: 0;
+  flex: 1;
+  min-width: 100px;
+}
+
+/* Verborgen kolommen styling */
+.hidden-column {
+  display: none !important;
+}
+
+/* Rij Detail Modal */
+.row-detail-modal-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(0,0,0,0.4);
+  z-index: 35;
+}
+
+.row-detail-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: var(--wit);
+  border: 1px solid var(--indaver-groen);
+  border-radius: 10px;
+  z-index: 40;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  max-width: 800px;
+  max-height: 80vh;
+  width: 90%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.row-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background-color: var(--indaver-groen);
+  color: var(--wit);
+  border-radius: 10px 10px 0 0;
+}
+
+.row-detail-header h3 {
+  margin: 0;
+  font-size: 1.2em;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: var(--wit);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.2s;
+}
+
+.close-btn:hover {
+  background-color: rgba(255,255,255,0.2);
+}
+
+.row-detail-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex-grow: 1;
+  max-height: 60vh;
+}
+
+.detail-item {
+  display: flex;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+  align-items: flex-start;
+}
+
+.detail-item:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-weight: bold;
+  color: var(--indaver-donkergroen);
+  min-width: 200px;
+  margin-right: 15px;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  flex-grow: 1;
+  word-wrap: break-word;
+  color: var(--donkergrijs);
+}
+
+.detail-value.empty {
+  color: #999;
+  font-style: italic;
+}
+
+.row-detail-footer {
+  padding: 15px 20px;
+  border-top: 1px solid #f0f0f0;
+  background-color: #f9f9f9;
+  text-align: right;
+}
+
+.row-detail-footer button {
+  padding: 10px 20px;
+  font-size: 14px;
+  border: 1px solid var(--indaver-groen);
+  border-radius: 5px;
+  background-color: var(--indaver-groen);
+  color: var(--wit);
+  cursor: pointer;
+}
+
+.row-detail-footer button:hover {
+  background-color: var(--indaver-donkergroen);
+}
+
+/* Tabel rij hover effect voor klikbaarheid */
+table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+table tbody tr:hover {
+  background-color: rgba(97, 187, 70, 0.15) !important;
 }
