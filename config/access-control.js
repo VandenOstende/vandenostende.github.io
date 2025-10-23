@@ -18,7 +18,7 @@ const ACCESS_CONFIG = {
         'waste-request-dashboard': {
             name: 'Waste Request Dashboard',
             description: 'Dashboard voor het beheren en monitoren van afvalverzoeken en ophaaladministratie.',
-            requiredTags: ['pre-production', 'Admin'],
+            requiredTags: ['Indaver INEOS', 'Admin'],
             url: '/files/WasteRequestDash/',
             icon: '🗑️'
         },
@@ -108,4 +108,5 @@ function getAllUsers() {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { ACCESS_CONFIG, hasAccess, getUserApps, getUserTags, getAllUsers };
 }
+
 
