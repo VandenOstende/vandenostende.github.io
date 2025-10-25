@@ -445,3 +445,237 @@ table tbody tr {
 table tbody tr:hover {
   background-color: rgba(97, 187, 70, 0.15) !important;
 }
+
+/* Mobile responsiveness - alle modals volledig scherm op mobiel */
+@media (max-width: 768px) {
+  /* Hoofd modal volledig scherm */
+  .modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: 100%;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+
+  .modal h3 {
+    font-size: 1.4em;
+    margin-bottom: 20px;
+    text-align: center;
+    color: var(--indaver-donkergroen);
+  }
+
+  .modal button {
+    padding: 14px 16px;
+    font-size: 16px;
+    margin: 8px 0;
+    min-height: 48px;
+    touch-action: manipulation;
+  }
+
+  /* Kolom modal volledig scherm */
+  .column-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: 100%;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  .column-modal h3 {
+    font-size: 1.4em;
+    margin-bottom: 15px;
+    text-align: center;
+    color: var(--indaver-donkergroen);
+  }
+
+  .column-checkboxes {
+    flex: 1;
+    max-height: none;
+    margin: 15px 0;
+    overflow-y: auto;
+  }
+
+  .column-checkbox-item {
+    padding: 12px 8px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  .column-checkbox-item input[type="checkbox"] {
+    transform: scale(1.4);
+    margin-right: 15px;
+  }
+
+  .column-checkbox-item label {
+    font-size: 16px;
+    line-height: 1.3;
+  }
+
+  .drag-handle {
+    font-size: 18px;
+    margin-right: 15px;
+    padding: 5px;
+  }
+
+  .column-modal-buttons {
+    margin-top: 15px;
+    gap: 10px;
+  }
+
+  .column-modal-buttons button {
+    padding: 14px 12px;
+    font-size: 16px;
+    min-height: 48px;
+    touch-action: manipulation;
+  }
+
+  /* Rij detail modal volledig scherm */
+  .row-detail-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: 100%;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    overflow: hidden;
+  }
+
+  .row-detail-header {
+    padding: 20px;
+    border-radius: 0;
+  }
+
+  .row-detail-header h3 {
+    font-size: 1.3em;
+  }
+
+  .close-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 28px;
+  }
+
+  .row-detail-content {
+    padding: 20px;
+    max-height: none;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .detail-item {
+    padding: 15px 0;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .detail-label {
+    min-width: auto;
+    margin-right: 0;
+    margin-bottom: 8px;
+    font-size: 16px;
+  }
+
+  .detail-value {
+    font-size: 16px;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+
+  .row-detail-footer {
+    padding: 20px;
+  }
+
+  .row-detail-footer button {
+    padding: 14px 20px;
+    font-size: 16px;
+    min-height: 48px;
+    width: 100%;
+    touch-action: manipulation;
+  }
+
+  /* Verbeterde table responsiveness */
+  .table-container {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    font-size: 14px;
+  }
+
+  th, td {
+    padding: 10px 8px;
+    min-width: 100px;
+  }
+
+  /* Input fields betere touch targets */
+  input[type="text"] {
+    padding: 12px 16px;
+    font-size: 16px;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  /* Tandwiel groter maken voor betere touch */
+  .settings {
+    font-size: 32px;
+    padding: 10px;
+    top: 15px;
+    left: 15px;
+  }
+
+  /* Logo en titel aanpassingen */
+  .header {
+    flex-direction: column;
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  .logo-titel {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .titel-sectie h1 {
+    font-size: 1.4em;
+  }
+
+  /* Controls verbetering */
+  .controls {
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 15px;
+  }
+
+  .controls input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+  }
+}

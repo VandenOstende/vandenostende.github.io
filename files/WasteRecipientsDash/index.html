@@ -8,7 +8,8 @@
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
   <script src="https://unpkg.com/@tmcw/togeojson@5.0.0/dist/togeojson.umd.js"></script>
   <style>
-    body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f8; }
+  body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f8; }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
     .container { height: 100vh; position: relative; }
     .sidebar {
       position: absolute; top: 0; left: 0; width: 260px; max-width: 300px; height: 100%;
@@ -212,6 +213,112 @@
     .details-popup br {
       line-height: 2.2;
     }
+    .details-popup button {
+      width: 100%;
+      padding: 12px 0;
+      border: none;
+      border-radius: 8px;
+      background: #00953b;
+      color: #fff;
+      font-size: 1em;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      transition: background 0.2s ease, box-shadow 0.2s ease;
+    }
+    .details-popup button:hover {
+      background: #007a2f;
+      box-shadow: 0 4px 16px rgba(0,149,59,0.18);
+    }
+    .move-controls {
+      margin-top: 14px;
+      border-top: 1px solid #e0f2f1;
+      padding-top: 12px;
+    }
+    .move-controls .move-marker-btn {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 2px dashed #00953b;
+      background: rgba(0,149,59,0.08);
+      color: #005b2a;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .move-controls .move-marker-btn:hover {
+      background: rgba(0,149,59,0.18);
+      border-color: #007a2f;
+      box-shadow: 0 4px 12px rgba(0,149,59,0.18);
+    }
+    .move-controls .move-marker-btn.hidden { display: none; }
+    .move-actions {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .move-actions.active { display: flex; }
+    .move-actions .move-hint {
+      font-size: 0.9em;
+      color: #00693b;
+      background: #e8f5e9;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 0;
+      border: 1px dashed rgba(0,149,59,0.35);
+    }
+    .move-actions .move-save-btn,
+    .move-actions .move-cancel-btn {
+      width: 100%;
+      padding: 12px 0;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      transition: background 0.2s ease, box-shadow 0.2s ease;
+    }
+    .move-actions .move-save-btn {
+      background: #00953b;
+      color: #fff;
+    }
+    .move-actions .move-save-btn:hover {
+      background: #007a2f;
+      box-shadow: 0 4px 16px rgba(0,149,59,0.18);
+    }
+    .move-actions .move-cancel-btn {
+      background: #e74c3c;
+      color: #fff;
+    }
+    .move-actions .move-cancel-btn:hover {
+      background: #c0392b;
+      box-shadow: 0 4px 16px rgba(231,76,60,0.18);
+    }
+    .toast-message {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translate(-50%, -20px);
+      background: #00953b;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      font-weight: 600;
+      z-index: 12000;
+      opacity: 0;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      pointer-events: none;
+    }
+    .toast-message.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    .toast-message.toast-error {
+      background: #e74c3c;
+    }
     .add-marker-popup {
       background: #f8f9fa;
       border-radius: 14px;
@@ -234,7 +341,7 @@
       width: 100%; padding: 10px 0; border: none; background: #00953b; color: #fff; cursor: pointer; font-size: 1em; border-radius: 6px; font-weight: 600; margin-top: 8px;
     }
 
-    /* --- Nieuwe styles voor mobiele full-screen add marker modal --- */
+    /* --- Styles voor mobiele full-screen popups --- */
     .mobile-fullscreen-popup {
       position: fixed;
       inset: 0;
@@ -271,7 +378,10 @@
       font-size: 1.2rem;
       font-weight: 700;
     }
-    .mobile-fullscreen-popup .mobile-popup-body { flex: 1 1 auto; overflow: auto; }
+    .mobile-fullscreen-popup .mobile-popup-body { 
+      flex: 1 1 auto; 
+      overflow: auto; 
+    }
     .mobile-fullscreen-popup .mobile-popup-footer {
       display: flex;
       gap: 8px;
@@ -297,8 +407,333 @@
       font-weight: 700;
       cursor: pointer;
     }
-    @media (min-width: 769px) {
-      .mobile-fullscreen-popup { display: none; }
+    .mobile-fullscreen-popup button.fullclose {
+      background: transparent;
+      border: none;
+      font-size: 1.4rem;
+      color: #666;
+      cursor: pointer;
+      padding: 8px;
+      line-height: 1;
+    }
+
+    /* Mobile volledig scherm voor alle popups */
+    @media (max-width: 768px) {
+      /* Mapbox popup content override voor mobiel */
+      .mapboxgl-popup-content {
+        display: none !important;
+      }
+      
+      /* Details popup mobile override */
+      .details-popup-mobile {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: rgba(0,0,0,0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      
+      .details-popup-mobile .mobile-popup-inner {
+        width: 100%;
+        max-width: 600px;
+        height: auto;
+        max-height: 90%;
+        background: #fff;
+        border-radius: 12px;
+        overflow: auto;
+        box-shadow: 0 6px 32px rgba(0,0,0,0.35);
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      
+      .details-popup-mobile header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #e8f5e9;
+      }
+      
+      .details-popup-mobile h3 {
+        margin: 0;
+        color: #00953b;
+        font-size: 1.3rem;
+        font-weight: 700;
+      }
+      
+      .details-popup-mobile .mobile-popup-body {
+        flex: 1;
+        overflow: auto;
+        line-height: 1.6;
+        font-size: 1.1rem;
+      }
+      
+      .details-popup-mobile .mobile-popup-body b {
+        color: #00953b;
+        font-size: 1.2rem;
+        display: block;
+        margin-bottom: 8px;
+      }
+      
+      .details-popup-mobile .mobile-popup-footer {
+        margin-top: 15px;
+        text-align: center;
+      }
+      
+      .details-popup-mobile .move-controls {
+        border-top: 1px solid #e0f2f1;
+        padding-top: 14px;
+        margin-top: 16px;
+      }
+      .details-popup-mobile .move-controls .move-marker-btn {
+        width: 100%;
+        padding: 16px 14px;
+        font-size: 1.1rem;
+        border-radius: 10px;
+      }
+      .details-popup-mobile .move-actions .move-hint {
+        font-size: 1rem;
+      }
+      .details-popup-mobile .move-actions .move-save-btn,
+      .details-popup-mobile .move-actions .move-cancel-btn {
+        font-size: 1.1rem;
+        min-height: 48px;
+      }
+      .details-popup-mobile button.fullsave {
+        width: 100%;
+        padding: 14px;
+        background: #00953b;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+        margin-bottom: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        transition: background 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .details-popup-mobile button.fullsave:active,
+      .details-popup-mobile button.fullsave:hover {
+        background: #007a2f;
+        box-shadow: 0 4px 16px rgba(0,149,59,0.18);
+      }
+
+      .details-popup-mobile button.fullclose {
+        width: 100%;
+        padding: 14px;
+        background: #00953b;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      
+      /* Edit popup mobile override */
+      .edit-popup-mobile {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: rgba(0,0,0,0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      
+      .edit-popup-mobile .mobile-popup-inner {
+        width: 100%;
+        max-width: 600px;
+        height: 100%;
+        max-height: 100%;
+        background: #fff;
+        border-radius: 12px;
+        overflow: auto;
+        box-shadow: 0 6px 32px rgba(0,0,0,0.35);
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      
+      .edit-popup-mobile header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #e8f5e9;
+      }
+      
+      .edit-popup-mobile h3 {
+        margin: 0;
+        color: #00953b;
+        font-size: 1.3rem;
+        font-weight: 700;
+      }
+      
+      .edit-popup-mobile .mobile-popup-body {
+        flex: 1;
+        overflow: auto;
+      }
+      
+      .edit-popup-mobile .mobile-popup-body label {
+        display: block;
+        margin-bottom: 12px;
+        font-weight: 600;
+        color: #00953b;
+        font-size: 1.1rem;
+      }
+      
+      .edit-popup-mobile .mobile-popup-body input,
+      .edit-popup-mobile .mobile-popup-body select {
+        width: 100%;
+        padding: 12px;
+        font-size: 1.1rem;
+        border: 2px solid #b2dfdb;
+        border-radius: 8px;
+        margin-top: 5px;
+        box-sizing: border-box;
+        min-height: 48px;
+      }
+      
+      .edit-popup-mobile .mobile-popup-body input[type="checkbox"] {
+        width: auto;
+        transform: scale(1.3);
+        margin-right: 10px;
+      }
+      
+      .edit-popup-mobile .mobile-popup-footer {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+      }
+      
+      .edit-popup-mobile button.fullsave,
+      .edit-popup-mobile button.fulldelete {
+        flex: 1;
+        padding: 14px;
+        border: none;
+        border-radius: 8px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+        min-height: 48px;
+      }
+      
+      .edit-popup-mobile button.fullsave {
+        background: #00953b;
+        color: #fff;
+      }
+      
+      .edit-popup-mobile button.fulldelete {
+        background: #e74c3c;
+        color: #fff;
+      }
+      
+      /* Line save popup mobile override */
+      .line-popup-mobile {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: rgba(0,0,0,0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      
+      .line-popup-mobile .mobile-popup-inner {
+        width: 100%;
+        max-width: 500px;
+        height: auto;
+        max-height: 80%;
+        background: #fff;
+        border-radius: 12px;
+        overflow: auto;
+        box-shadow: 0 6px 32px rgba(0,0,0,0.35);
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      
+      .line-popup-mobile header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #e8f5e9;
+      }
+      
+      .line-popup-mobile h3 {
+        margin: 0;
+        color: #00953b;
+        font-size: 1.3rem;
+        font-weight: 700;
+      }
+      
+      .line-popup-mobile .mobile-popup-body {
+        flex: 1;
+        overflow: auto;
+      }
+      
+      .line-popup-mobile .mobile-popup-body label {
+        display: block;
+        margin-bottom: 12px;
+        font-weight: 600;
+        color: #00953b;
+        font-size: 1.1rem;
+      }
+      
+      .line-popup-mobile .mobile-popup-body input {
+        width: 100%;
+        padding: 12px;
+        font-size: 1.1rem;
+        border: 2px solid #b2dfdb;
+        border-radius: 8px;
+        margin-top: 5px;
+        box-sizing: border-box;
+        min-height: 48px;
+      }
+      
+      .line-popup-mobile .mobile-popup-footer {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+      }
+      
+      .line-popup-mobile button.fullsave,
+      .line-popup-mobile button.fulldelete {
+        flex: 1;
+        padding: 14px;
+        border: none;
+        border-radius: 8px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+        min-height: 48px;
+      }
+      
+      .line-popup-mobile button.fullsave {
+        background: #00953b;
+        color: #fff;
+      }
+      
+      .line-popup-mobile button.fulldelete {
+        background: #e74c3c;
+        color: #fff;
+      }
     }
   </style>
 </head>
@@ -483,6 +918,145 @@
       }
     }
 
+    // Bepaal de standaardkleur voor een marker op basis van de metadata
+    function deriveMarkerColor(data) {
+      return data.type === "Ecopark container" ? "#0074D9" : (data.tijdelijk ? "#FFA500" : "#e74c3c");
+    }
+
+    // Toon een korte toast melding bovenaan het scherm
+    function showToast(message, type = 'success') {
+      const toast = document.createElement('div');
+      toast.className = `toast-message toast-${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('visible'));
+      setTimeout(() => {
+        toast.classList.remove('visible');
+        setTimeout(() => toast.remove(), 320);
+      }, 2600);
+    }
+
+    // Voegt verplaats-functionaliteit toe aan een marker vanuit een editformulier
+    function setupMoveMarkerControls({
+      marker,
+      markerData,
+      moveButton,
+      actionsWrapper,
+      saveButton,
+      cancelButton,
+      hintElement,
+      lockButtons = []
+    }) {
+      if (!marker || !markerData || !moveButton || !actionsWrapper || !saveButton || !cancelButton) return null;
+
+      let moveActive = false;
+      let originalLngLat = null;
+      let originalCoordinates = markerData.coordinates ? [...markerData.coordinates] : null;
+
+      const updateGlobalCoordinates = (coords) => {
+        const idx = window.allMarkers.indexOf(marker);
+        if (idx > -1) {
+          window.allMarkerData[idx].coordinates = coords;
+        }
+      };
+
+      const toggleLockedButtons = (disabled) => {
+        lockButtons.forEach(btn => {
+          if (!btn) return;
+          btn.disabled = disabled;
+        });
+      };
+
+      const exitMoveMode = ({ revertPosition }) => {
+        if (!moveActive) return;
+        moveActive = false;
+        marker.setDraggable(false);
+        if (revertPosition && originalLngLat) {
+          marker.setLngLat(originalLngLat);
+          if (originalCoordinates) {
+            markerData.coordinates = [...originalCoordinates];
+            updateGlobalCoordinates([...originalCoordinates]);
+          }
+        }
+        setMarkerSvgColor(marker, deriveMarkerColor(markerData));
+        actionsWrapper.classList.remove('active');
+        moveButton.classList.remove('hidden');
+        toggleLockedButtons(false);
+      };
+
+      moveButton.addEventListener('click', () => {
+        if (moveActive) return;
+        moveActive = true;
+        originalLngLat = marker.getLngLat();
+        originalCoordinates = markerData.coordinates ? [...markerData.coordinates] : [originalLngLat.lng, originalLngLat.lat];
+        setMarkerSvgColor(marker, '#FFB400');
+        marker.setDraggable(true);
+        moveButton.classList.add('hidden');
+        actionsWrapper.classList.add('active');
+        toggleLockedButtons(true);
+        if (hintElement) {
+          hintElement.textContent = 'Sleep de marker naar de juiste locatie en klik op "Positie opslaan".';
+        }
+      });
+
+      saveButton.addEventListener('click', async () => {
+        if (!moveActive) return;
+        const newPosition = marker.getLngLat();
+        const newCoordinates = [newPosition.lng, newPosition.lat];
+        try {
+          markerData.coordinates = newCoordinates;
+          updateGlobalCoordinates(newCoordinates);
+          if (markerData.firestoreId) {
+            const docRef = doc(db, 'kml_markers', markerData.firestoreId);
+            await updateDoc(docRef, { coordinates: newCoordinates });
+          }
+          exitMoveMode({ revertPosition: false });
+          setMarkerSvgColor(marker, deriveMarkerColor(markerData));
+          showToast('Markerpositie opgeslagen.');
+        } catch (error) {
+          console.error('Fout bij het opslaan van de markerpositie:', error);
+          exitMoveMode({ revertPosition: true });
+          showToast('Opslaan van de markerpositie is mislukt.', 'error');
+        }
+      });
+
+      cancelButton.addEventListener('click', () => {
+        if (!moveActive) return;
+        exitMoveMode({ revertPosition: true });
+      });
+
+      return {
+        cancel: () => exitMoveMode({ revertPosition: true }),
+        isActive: () => moveActive
+      };
+    }
+
+    // Helper functie om event listeners toe te voegen aan marker
+    function addMarkerEventListeners(marker, detailsFunction, editFunction) {
+      const markerEl = marker.getElement();
+      
+      // Enkelklik voor details
+      markerEl.addEventListener('click', (e) => { 
+        e.stopPropagation(); 
+        detailsFunction(); 
+      });
+      
+      // Dubbelklik voor edit
+      markerEl.addEventListener('dblclick', (e) => { 
+        e.stopPropagation(); 
+        editFunction(); 
+      });
+      
+      // Lang indrukken (mobiel/touch) voor edit
+      let pressTimer;
+      markerEl.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+        pressTimer = setTimeout(() => { editFunction(); }, 600);
+      });
+      markerEl.addEventListener('touchend', () => clearTimeout(pressTimer));
+      markerEl.addEventListener('touchcancel', () => clearTimeout(pressTimer));
+    }
+
     // Toon markers uit Firestore op de kaart
     function laadMarkersUitFirestore() {
       getDocs(collection(db, "kml_markers")).then(querySnapshot => {
@@ -500,6 +1074,52 @@
 
           // Details popup (alleen-lezen)
           function showDetailsPopup() {
+            // Mobiel: full-screen overlay
+            if (window.innerWidth <= 768) {
+              const mobileOverlay = document.createElement('div');
+              mobileOverlay.className = 'details-popup-mobile';
+              mobileOverlay.innerHTML = `
+                <div class="mobile-popup-inner" role="dialog" aria-modal="true">
+                  <header>
+                    <h3>${markerData.name}</h3>
+                    <button class="fullclose">✕</button>
+                  </header>
+                  <div class="mobile-popup-body">
+                    <b>${markerData.name}</b><br><br>
+                    <strong>Volume:</strong> ${markerData.volume}<br><br>
+                    <strong>Type:</strong> ${markerData.type}<br><br>
+                    <strong>Eigendom:</strong> ${markerData.eigendom}<br><br>
+                    <strong>Kostenplaats:</strong> ${markerData.kostenplaats}<br><br>
+                    <strong>Tijdelijk:</strong> ${markerData.tijdelijk ? "Ja" : "Nee"}
+                  </div>
+                  <div class="mobile-popup-footer">
+                    <button class="fullsave" id="editFromDetails">Bewerken</button>
+                    <button class="fullclose">Sluiten</button>
+                  </div>
+                </div>
+              `;
+              document.body.appendChild(mobileOverlay);
+              
+              // Edit button handler
+              mobileOverlay.querySelector('#editFromDetails').addEventListener('click', () => {
+                mobileOverlay.remove();
+                showEditPopup();
+              });
+              
+              // Close handlers
+              mobileOverlay.querySelectorAll('.fullclose').forEach(btn => 
+                btn.addEventListener('click', () => mobileOverlay.remove())
+              );
+              
+              // Click outside to close
+              mobileOverlay.addEventListener('click', (e) => {
+                if (e.target === mobileOverlay) mobileOverlay.remove();
+              });
+              
+              return; // Exit early for mobile
+            }
+
+            // Desktop: original popup
             const detailsContent = document.createElement('div');
             detailsContent.innerHTML = `
               <div class="details-popup">
@@ -508,7 +1128,8 @@
                 Type: ${markerData.type}<br>
                 Eigendom: ${markerData.eigendom}<br>
                 Kostenplaats: ${markerData.kostenplaats}<br>
-                Tijdelijk: ${markerData.tijdelijk ? "Ja" : "Nee"}
+                Tijdelijk: ${markerData.tijdelijk ? "Ja" : "Nee"}<br><br>
+                <button id="editFromDetailsDesktop">Bewerken</button>
               </div>
             `;
             const detailsPopup = new mapboxgl.Popup().setDOMContent(detailsContent);
@@ -516,6 +1137,13 @@
             marker.setPopup(detailsPopup);
             marker.togglePopup();
             lastOpenedPopup = detailsPopup;
+            
+            // Add event handler for edit button
+            detailsContent.querySelector('#editFromDetailsDesktop').addEventListener('click', () => {
+              detailsPopup.remove();
+              lastOpenedPopup = null;
+              showEditPopup();
+            });
           }
 
           // Helper: render dynamische titel/volume velden (edit)
@@ -570,6 +1198,216 @@
 
           // Bewerk-popup
           function showEditPopup() {
+            // Mobiel: full-screen overlay
+            if (window.innerWidth <= 768) {
+              const mobileOverlay = document.createElement('div');
+              mobileOverlay.className = 'edit-popup-mobile';
+              mobileOverlay.innerHTML = `
+                <div class="mobile-popup-inner" role="dialog" aria-modal="true">
+                  <header>
+                    <h3>Marker bewerken</h3>
+                    <button class="fullclose" type="button">✕</button>
+                  </header>
+                  <div class="mobile-popup-body" id="mobileEditBody_db${idx}">
+                    <label>Type:
+                      <select id="type_mobile_db${idx}">
+                        <option value="Container" ${markerData.type === 'Container' ? 'selected' : ''}>Container</option>
+                        <option value="Ecopark container" ${markerData.type === 'Ecopark container' ? 'selected' : ''}>Ecopark container</option>
+                      </select>
+                    </label>
+                    <div id="titleField_mobile_db${idx}"></div>
+                    <div id="volumeField_mobile_db${idx}"></div>
+                    <label>Eigendom:
+                      <input type="text" id="eigendom_mobile_db${idx}" value="${markerData.eigendom || ""}">
+                    </label>
+                    <label>Kostenplaats:
+                      <input type="text" id="kostenplaats_mobile_db${idx}" value="${markerData.kostenplaats || ""}">
+                    </label>
+                    <label>
+                      <input type="checkbox" id="tijdelijk_mobile_db${idx}" ${markerData.tijdelijk ? "checked" : ""}> Tijdelijk
+                    </label>
+                  </div>
+                  <div class="move-controls" id="moveControls_mobile_db${idx}">
+                    <button type="button" class="move-marker-btn" id="moveMarker_mobile_db${idx}">Marker verplaatsen</button>
+                    <div class="move-actions" id="moveActions_mobile_db${idx}">
+                      <p class="move-hint" id="moveHint_mobile_db${idx}">Sleep de marker naar de juiste locatie en klik op "Positie opslaan".</p>
+                      <button type="button" class="move-save-btn fullsave" id="saveMove_mobile_db${idx}">Positie opslaan</button>
+                      <button type="button" class="move-cancel-btn fullcancel" id="cancelMove_mobile_db${idx}">Annuleren</button>
+                    </div>
+                  </div>
+                  <div class="mobile-popup-footer">
+                    <button class="fullsave" id="saveMobile_db${idx}">Opslaan</button>
+                    <button class="fulldelete" id="deleteMobile_db${idx}">Verwijder</button>
+                  </div>
+                </div>
+              `;
+              document.body.appendChild(mobileOverlay);
+              
+              const mobileContainer = mobileOverlay.querySelector(`#mobileEditBody_db${idx}`);
+              const mobileTypeSel = mobileContainer.querySelector(`#type_mobile_db${idx}`);
+              const saveMobileBtn = mobileOverlay.querySelector(`#saveMobile_db${idx}`);
+              const deleteMobileBtn = mobileOverlay.querySelector(`#deleteMobile_db${idx}`);
+
+              const moveController = setupMoveMarkerControls({
+                marker,
+                markerData,
+                moveButton: mobileOverlay.querySelector(`#moveMarker_mobile_db${idx}`),
+                actionsWrapper: mobileOverlay.querySelector(`#moveActions_mobile_db${idx}`),
+                saveButton: mobileOverlay.querySelector(`#saveMove_mobile_db${idx}`),
+                cancelButton: mobileOverlay.querySelector(`#cancelMove_mobile_db${idx}`),
+                hintElement: mobileOverlay.querySelector(`#moveHint_mobile_db${idx}`),
+                lockButtons: [saveMobileBtn, deleteMobileBtn]
+              });
+              
+              // Mobile render function
+              function renderMobileEditFields(container, typeValue, currentTitle, currentVolume, idSuffix) {
+                const isEco = typeValue === 'Ecopark container';
+                const inTitles = ECO_TITLES.includes(currentTitle);
+                const inVolumes = VOLUME_CHOICES.includes(currentVolume);
+                const titleSelected = inTitles ? currentTitle : 'ANDERE';
+                const titleOtherVal = inTitles ? '' : (currentTitle || '');
+                const volumeSelected = inVolumes ? currentVolume : 'ANDERE';
+                const volumeOtherVal = inVolumes ? '' : (currentVolume || '');
+
+                container.querySelector(`#titleField_${idSuffix}`).innerHTML = isEco
+                  ? `
+                    <label>Titel:
+                      <select id="titel_select_${idSuffix}">${optionHtml(ECO_TITLES, titleSelected)}</select>
+                    </label>
+                    <div id="titel_other_wrap_${idSuffix}" style="margin-top:8px; display:${titleSelected==='ANDERE'?'block':'none'};">
+                      <input type="text" id="titel_other_${idSuffix}" value="${titleOtherVal}" placeholder="Andere titel">
+                    </div>
+                  `
+                  : `
+                    <label>Titel:
+                      <input type="text" id="titel_text_${idSuffix}" value="${currentTitle || ''}">
+                    </label>
+                  `;
+
+                container.querySelector(`#volumeField_${idSuffix}`).innerHTML = isEco
+                  ? `
+                    <label>Volume:
+                      <select id="volume_select_${idSuffix}">${optionHtml(VOLUME_CHOICES, volumeSelected)}</select>
+                    </label>
+                    <div id="volume_other_wrap_${idSuffix}" style="margin-top:8px; display:${volumeSelected==='ANDERE'?'block':'none'};">
+                      <input type="text" id="volume_other_${idSuffix}" value="${volumeOtherVal}" placeholder="Ander volume">
+                    </div>
+                  `
+                  : `
+                    <label>Volume:
+                      <input type="text" id="volume_text_${idSuffix}" value="${currentVolume || ''}">
+                    </label>
+                  `;
+
+                if (isEco) {
+                  const selTitle = container.querySelector(`#titel_select_${idSuffix}`);
+                  const otherTitleWrap = container.querySelector(`#titel_other_wrap_${idSuffix}`);
+                  selTitle.addEventListener('change', () => {
+                    otherTitleWrap.style.display = selTitle.value === 'ANDERE' ? 'block' : 'none';
+                  });
+                  const selVol = container.querySelector(`#volume_select_${idSuffix}`);
+                  const otherVolWrap = container.querySelector(`#volume_other_wrap_${idSuffix}`);
+                  selVol.addEventListener('change', () => {
+                    otherVolWrap.style.display = selVol.value === 'ANDERE' ? 'block' : 'none';
+                  });
+                }
+              }
+              
+              // Init mobile render
+              renderMobileEditFields(mobileContainer, mobileTypeSel.value, markerData.name, markerData.volume, `mobile_db${idx}`);
+              
+              // Mobile type change
+              mobileTypeSel.addEventListener('change', () => {
+                renderMobileEditFields(mobileContainer, mobileTypeSel.value, markerData.name, markerData.volume, `mobile_db${idx}`);
+              });
+              
+              // Mobile save handler
+              saveMobileBtn.addEventListener('click', async function() {
+                if (moveController?.isActive()) {
+                  showToast('Sla eerst de nieuwe markerpositie op of annuleer het verplaatsen.', 'error');
+                  return;
+                }
+                const typeVal = mobileTypeSel.value;
+                let nameVal = '';
+                let volVal = '';
+                if (typeVal === 'Ecopark container') {
+                  const tSel = mobileContainer.querySelector(`#titel_select_mobile_db${idx}`);
+                  const vSel = mobileContainer.querySelector(`#volume_select_mobile_db${idx}`);
+                  nameVal = tSel.value === 'ANDERE' ? (mobileContainer.querySelector(`#titel_other_mobile_db${idx}`).value || '') : tSel.value;
+                  volVal = vSel.value === 'ANDERE' ? (mobileContainer.querySelector(`#volume_other_mobile_db${idx}`).value || '') : vSel.value;
+                } else {
+                  nameVal = mobileContainer.querySelector(`#titel_text_mobile_db${idx}`).value || '';
+                  volVal = mobileContainer.querySelector(`#volume_text_mobile_db${idx}`).value || '';
+                }
+                markerData.name = nameVal;
+                markerData.volume = volVal;
+                markerData.type = typeVal;
+                markerData.eigendom = mobileContainer.querySelector(`#eigendom_mobile_db${idx}`).value;
+                markerData.kostenplaats = mobileContainer.querySelector(`#kostenplaats_mobile_db${idx}`).value;
+                markerData.tijdelijk = mobileContainer.querySelector(`#tijdelijk_mobile_db${idx}`).checked;
+
+                const newColor = deriveMarkerColor(markerData);
+                setMarkerSvgColor(marker, newColor);
+                updateFilterDropdown();
+
+                if (markerData.firestoreId) {
+                  const docRef = doc(db, "kml_markers", markerData.firestoreId);
+                  await updateDoc(docRef, {
+                    name: markerData.name,
+                    coordinates: markerData.coordinates,
+                    volume: markerData.volume,
+                    type: markerData.type,
+                    eigendom: markerData.eigendom,
+                    kostenplaats: markerData.kostenplaats,
+                    tijdelijk: markerData.tijdelijk
+                  });
+                }
+                moveController?.cancel();
+                mobileOverlay.remove();
+              });
+
+              // Mobile delete handler
+              deleteMobileBtn.addEventListener('click', async function() {
+                if (moveController?.isActive()) {
+                  showToast('Annuleer eerst het verplaatsen van de marker voor je verwijdert.', 'error');
+                  return;
+                }
+                if (confirm('Weet je zeker dat je deze marker wilt verwijderen?')) {
+                  marker.remove();
+                  const i = window.allMarkers.indexOf(marker);
+                  if (i > -1) {
+                    window.allMarkers.splice(i, 1);
+                    window.allMarkerData.splice(i, 1);
+                  }
+                  updateFilterDropdown();
+                  if (markerData.firestoreId) {
+                    const docRef = doc(db, "kml_markers", markerData.firestoreId);
+                    await deleteDoc(docRef);
+                  }
+                  moveController?.cancel();
+                  mobileOverlay.remove();
+                }
+              });
+
+              // Mobile close handlers
+              mobileOverlay.querySelectorAll('.fullclose').forEach(btn => 
+                btn.addEventListener('click', () => {
+                  moveController?.cancel();
+                  mobileOverlay.remove();
+                })
+              );
+              
+              mobileOverlay.addEventListener('click', (e) => {
+                if (e.target === mobileOverlay) {
+                  moveController?.cancel();
+                  mobileOverlay.remove();
+                }
+              });
+              
+              return; // Exit early for mobile
+            }
+
+            // Desktop: original popup
             const popupContent = document.createElement('div');
             popupContent.innerHTML = `
               <div class="edit-popup" id="editContainer_db${idx}">
@@ -664,20 +1502,7 @@
           }
 
           // --- Klik- en touchgedrag voor desktop & mobiel ---
-          const markerEl = marker.getElement();
-
-          // Enkelklik
-          markerEl.addEventListener('click', (e) => { e.stopPropagation(); showDetailsPopup(); });
-          // Dubbelklik
-          markerEl.addEventListener('dblclick', (e) => { e.stopPropagation(); showEditPopup(); });
-          // Lang indrukken (mobiel/touch)
-          let pressTimer;
-          markerEl.addEventListener('touchstart', (e) => {
-            e.stopPropagation();
-            pressTimer = setTimeout(() => { showEditPopup(); }, 600);
-          });
-          markerEl.addEventListener('touchend', () => clearTimeout(pressTimer));
-          markerEl.addEventListener('touchcancel', () => clearTimeout(pressTimer));
+          addMarkerEventListeners(marker, showDetailsPopup, showEditPopup);
         });
       });
     }
@@ -867,6 +1692,178 @@
 
           // Bewerk-popup met dynamische velden
           function showEditPopupNew() {
+            // Mobiel: full-screen overlay
+            if (window.innerWidth <= 768) {
+              const mobileOverlay = document.createElement('div');
+              mobileOverlay.className = 'edit-popup-mobile';
+              mobileOverlay.innerHTML = `
+                <div class="mobile-popup-inner" role="dialog" aria-modal="true">
+                  <header>
+                    <h3>Marker bewerken</h3>
+                    <button class="fullclose" type="button">✕</button>
+                  </header>
+                  <div class="mobile-popup-body" id="mobileEditBodyNew_add">
+                    <label>Type:
+                      <select id="type_mobile_add">
+                        <option value="Container" ${markerData.type === 'Container' ? 'selected' : ''}>Container</option>
+                        <option value="Ecopark container" ${markerData.type === 'Ecopark container' ? 'selected' : ''}>Ecopark container</option>
+                      </select>
+                    </label>
+                    <div id="titleField_mobile_add"></div>
+                    <div id="volumeField_mobile_add"></div>
+                    <label>Eigendom:
+                      <input type="text" id="eigendom_mobile_add" value="${markerData.eigendom}">
+                    </label>
+                    <label>Kostenplaats:
+                      <input type="text" id="kostenplaats_mobile_add" value="${markerData.kostenplaats}">
+                    </label>
+                    <label>
+                      <input type="checkbox" id="tijdelijk_mobile_add" ${markerData.tijdelijk ? "checked" : ""}> Tijdelijk
+                    </label>
+                  </div>
+                  <div class="mobile-popup-footer">
+                    <button class="fullsave" id="saveMobileNew_add">Opslaan</button>
+                    <button class="fulldelete" id="deleteMobileNew_add">Verwijder</button>
+                  </div>
+                </div>
+              `;
+              document.body.appendChild(mobileOverlay);
+              
+              const mobileContainer = mobileOverlay.querySelector('#mobileEditBodyNew_add');
+              const mobileTypeSel = mobileContainer.querySelector('#type_mobile_add');
+              
+              // Mobile render function
+              function renderMobileEditFieldsNew(container, typeValue, currentTitle, currentVolume, idSuffix) {
+                const isEco = typeValue === 'Ecopark container';
+                const inTitles = ECO_TITLES.includes(currentTitle);
+                const inVolumes = VOLUME_CHOICES.includes(currentVolume);
+                const titleSelected = inTitles ? currentTitle : 'ANDERE';
+                const titleOtherVal = inTitles ? '' : (currentTitle || '');
+                const volumeSelected = inVolumes ? currentVolume : 'ANDERE';
+                const volumeOtherVal = inVolumes ? '' : (currentVolume || '');
+
+                container.querySelector(`#titleField_${idSuffix}`).innerHTML = isEco
+                  ? `
+                    <label>Titel:
+                      <select id="titel_select_${idSuffix}">${optionHtml(ECO_TITLES, titleSelected)}</select>
+                    </label>
+                    <div id="titel_other_wrap_${idSuffix}" style="margin-top:8px; display:${titleSelected==='ANDERE'?'block':'none'};">
+                      <input type="text" id="titel_other_${idSuffix}" value="${titleOtherVal}" placeholder="Andere titel">
+                    </div>
+                  `
+                  : `
+                    <label>Titel:
+                      <input type="text" id="titel_text_${idSuffix}" value="${currentTitle || ''}">
+                    </label>
+                  `;
+
+                container.querySelector(`#volumeField_${idSuffix}`).innerHTML = isEco
+                  ? `
+                    <label>Volume:
+                      <select id="volume_select_${idSuffix}">${optionHtml(VOLUME_CHOICES, volumeSelected)}</select>
+                    </label>
+                    <div id="volume_other_wrap_${idSuffix}" style="margin-top:8px; display:${volumeSelected==='ANDERE'?'block':'none'};">
+                      <input type="text" id="volume_other_${idSuffix}" value="${volumeOtherVal}" placeholder="Ander volume">
+                    </div>
+                  `
+                  : `
+                    <label>Volume:
+                      <input type="text" id="volume_text_${idSuffix}" value="${currentVolume || ''}">
+                    </label>
+                  `;
+
+                if (isEco) {
+                  const selTitle = container.querySelector(`#titel_select_${idSuffix}`);
+                  const otherTitleWrap = container.querySelector(`#titel_other_wrap_${idSuffix}`);
+                  selTitle.addEventListener('change', () => {
+                    otherTitleWrap.style.display = selTitle.value === 'ANDERE' ? 'block' : 'none';
+                  });
+                  const selVol = container.querySelector(`#volume_select_${idSuffix}`);
+                  const otherVolWrap = container.querySelector(`#volume_other_wrap_${idSuffix}`);
+                  selVol.addEventListener('change', () => {
+                    otherVolWrap.style.display = selVol.value === 'ANDERE' ? 'block' : 'none';
+                  });
+                }
+              }
+              
+              // Init mobile render
+              renderMobileEditFieldsNew(mobileContainer, mobileTypeSel.value, markerData.name, markerData.volume, 'mobile_add');
+              
+              // Mobile type change
+              mobileTypeSel.addEventListener('change', () => {
+                renderMobileEditFieldsNew(mobileContainer, mobileTypeSel.value, markerData.name, markerData.volume, 'mobile_add');
+              });
+              
+              // Mobile save handler
+              mobileOverlay.querySelector('#saveMobileNew_add').addEventListener('click', async function() {
+                const typeVal = mobileTypeSel.value;
+                let nameVal = '';
+                let volVal = '';
+                if (typeVal === 'Ecopark container') {
+                  const tSel = mobileContainer.querySelector('#titel_select_mobile_add');
+                  const vSel = mobileContainer.querySelector('#volume_select_mobile_add');
+                  nameVal = tSel.value === 'ANDERE' ? (mobileContainer.querySelector('#titel_other_mobile_add').value || '') : tSel.value;
+                  volVal = vSel.value === 'ANDERE' ? (mobileContainer.querySelector('#volume_other_mobile_add').value || '') : vSel.value;
+                } else {
+                  nameVal = mobileContainer.querySelector('#titel_text_mobile_add').value || '';
+                  volVal = mobileContainer.querySelector('#volume_text_mobile_add').value || '';
+                }
+                markerData.name = nameVal;
+                markerData.volume = volVal;
+                markerData.type = typeVal;
+                markerData.eigendom = mobileContainer.querySelector('#eigendom_mobile_add').value;
+                markerData.kostenplaats = mobileContainer.querySelector('#kostenplaats_mobile_add').value;
+                markerData.tijdelijk = mobileContainer.querySelector('#tijdelijk_mobile_add').checked;
+
+                const newColor = markerData.type === "Ecopark container" ? "#0074D9" : (markerData.tijdelijk ? "#FFA500" : "#e74c3c");
+                setMarkerSvgColor(marker, newColor);
+                updateFilterDropdown();
+                if (markerData.firestoreId) {
+                  const docRef = doc(db, "kml_markers", markerData.firestoreId);
+                  await updateDoc(docRef, {
+                    name: markerData.name,
+                    coordinates: markerData.coordinates,
+                    volume: markerData.volume,
+                    type: markerData.type,
+                    eigendom: markerData.eigendom,
+                    kostenplaats: markerData.kostenplaats,
+                    tijdelijk: markerData.tijdelijk
+                  });
+                }
+                mobileOverlay.remove();
+              });
+
+              // Mobile delete handler
+              mobileOverlay.querySelector('#deleteMobileNew_add').addEventListener('click', async function() {
+                if (confirm('Weet je zeker dat je deze marker wilt verwijderen?')) {
+                  marker.remove();
+                  const i = window.allMarkers.indexOf(marker);
+                  if (i > -1) {
+                    window.allMarkers.splice(i, 1);
+                    window.allMarkerData.splice(i, 1);
+                  }
+                  updateFilterDropdown();
+                  if (markerData.firestoreId) {
+                    const docRef = doc(db, "kml_markers", markerData.firestoreId);
+                    await deleteDoc(docRef);
+                  }
+                  mobileOverlay.remove();
+                }
+              });
+
+              // Mobile close handlers
+              mobileOverlay.querySelectorAll('.fullclose').forEach(btn => 
+                btn.addEventListener('click', () => mobileOverlay.remove())
+              );
+              
+              mobileOverlay.addEventListener('click', (e) => {
+                if (e.target === mobileOverlay) mobileOverlay.remove();
+              });
+              
+              return; // Exit early for mobile
+            }
+
+            // Desktop: original popup
             const editContent = document.createElement('div');
             editContent.className = 'edit-popup';
             editContent.innerHTML = `
@@ -954,10 +1951,15 @@
             };
           }
 
-          marker.getElement().addEventListener('click', (e) => { e.stopPropagation(); showEditPopupNew(); });
-          marker.getElement().addEventListener('dblclick', (e) => { e.stopPropagation(); showEditPopupNew(); });
-          showEditPopupNew();
+          // Voeg event listeners toe aan nieuwe marker
+          addMarkerEventListeners(marker, () => {
+            // Details functie - doe niets voor nieuwe markers, ga direct naar edit
+            showEditPopupNew();
+          }, showEditPopupNew);
+          
+          // Geen automatische edit popup op mobiel - marker is succesvol toegevoegd
           overlay.remove();
+          showToast('Marker succesvol toegevoegd!');
         });
 
         return; // mobile handled
@@ -1143,8 +2145,12 @@
           };
         }
 
-        marker.getElement().addEventListener('click', (e) => { e.stopPropagation(); showEditPopupNewDesktop(); });
-        marker.getElement().addEventListener('dblclick', (e) => { e.stopPropagation(); showEditPopupNewDesktop(); });
+        // Voeg event listeners toe aan nieuwe marker (desktop)
+        addMarkerEventListeners(marker, () => {
+          // Details functie - doe niets voor nieuwe markers, ga direct naar edit
+          showEditPopupNewDesktop();
+        }, showEditPopupNewDesktop);
+        
         showEditPopupNewDesktop();
         tempPopup.remove();
       };
@@ -1223,6 +2229,85 @@
 
     // Popup tonen na tekenen van een lijn
     function showLineSavePopup(coords) {
+      // Mobiel: full-screen overlay
+      if (window.innerWidth <= 768) {
+        const mobileOverlay = document.createElement('div');
+        mobileOverlay.className = 'line-popup-mobile';
+        mobileOverlay.innerHTML = `
+          <div class="mobile-popup-inner" role="dialog" aria-modal="true">
+            <header>
+              <h3>Lijn opslaan</h3>
+              <button class="fullclose" type="button">✕</button>
+            </header>
+            <div class="mobile-popup-body">
+              <label>Titel lijn:
+                <input type="text" id="lineTitleMobile" placeholder="Voer een titel in...">
+              </label>
+            </div>
+            <div class="mobile-popup-footer">
+              <button class="fullsave" id="saveLineMobile">Opslaan</button>
+              <button class="fulldelete" id="deleteLineMobile">Verwijder</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(mobileOverlay);
+        
+        // Mobile save handler
+        mobileOverlay.querySelector('#saveLineMobile').addEventListener('click', async function() {
+          const title = mobileOverlay.querySelector('#lineTitleMobile').value;
+          const lineData = { title, coordinates: coords };
+          await saveLineToFirestore(lineData);
+          mobileOverlay.remove();
+          laadLijnenUitFirestore();
+          // Reset getekende lijn
+          if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+          if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+          drawnLineCoords = [];
+          drawLineMode = false;
+          map.getCanvas().style.cursor = '';
+          if (stopDrawBtn) { stopDrawBtn.remove(); stopDrawBtn = null; }
+        });
+        
+        // Mobile delete handler
+        mobileOverlay.querySelector('#deleteLineMobile').addEventListener('click', function() {
+          if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+          if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+          drawnLineCoords = [];
+          drawLineMode = false;
+          map.getCanvas().style.cursor = '';
+          if (stopDrawBtn) { stopDrawBtn.remove(); stopDrawBtn = null; }
+          mobileOverlay.remove();
+        });
+        
+        // Mobile close handlers
+        mobileOverlay.querySelectorAll('.fullclose').forEach(btn => 
+          btn.addEventListener('click', () => {
+            if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+            if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+            drawnLineCoords = [];
+            drawLineMode = false;
+            map.getCanvas().style.cursor = '';
+            if (stopDrawBtn) { stopDrawBtn.remove(); stopDrawBtn = null; }
+            mobileOverlay.remove();
+          })
+        );
+        
+        mobileOverlay.addEventListener('click', (e) => {
+          if (e.target === mobileOverlay) {
+            if (map.getLayer(drawnLineLayerId)) map.removeLayer(drawnLineLayerId);
+            if (map.getSource(drawnLineSourceId)) map.removeSource(drawnLineSourceId);
+            drawnLineCoords = [];
+            drawLineMode = false;
+            map.getCanvas().style.cursor = '';
+            if (stopDrawBtn) { stopDrawBtn.remove(); stopDrawBtn = null; }
+            mobileOverlay.remove();
+          }
+        });
+        
+        return; // Exit early for mobile
+      }
+
+      // Desktop: original popup
       const center = coords[Math.floor(coords.length / 2)];
       const popupContent = document.createElement('div');
       popupContent.innerHTML = `<label>Titel lijn:<br><input type='text' id='lineTitle'></label><br><button id='saveLineBtn'>Opslaan</button><button id='deleteLineBtn' style='background:#e74c3c;color:#fff;margin-left:8px;'>Verwijder</button>`;
