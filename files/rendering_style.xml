@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<renderingStyles version="1">
+    <renderingStyle name="Custom OsmAnd" version="1.0" description="Custom mapstyle for OsmAnd" author="Kevin Vanden Ostende" email="kevin@vandenostende.net">
+        <!-- Definieer herbruikbare kleuren en breedtes -->
+        <renderingConstant name="landColor" value="#f5f2eb" />
+        <renderingConstant name="waterColor" value="#a6d4f2" />
+        <renderingConstant name="greenColor" value="#cfe8b4" />
+        <renderingConstant name="roadOutline" value="#fefefe" />
+        <renderingConstant name="roadFill" value="#d07d43" />
+        <renderingConstant name="secondaryRoadFill" value="#f2b36f" />
+        <renderingConstant name="pathFill" value="#c6b29b" />
+        <renderingConstant name="buildingFill" value="#e4d0c3" />
+        <renderingConstant name="railwayFill" value="#555555" />
+        <renderingConstant name="cityText" value="#2d2d2d" />
+        <renderingConstant name="poiText" value="#3b3b3b" />
+        <renderingConstant name="shieldFill" value="#ffffff" />
+        <renderingConstant name="shieldStroke" value="#696969" />
+
+        <!-- Globale parameters voor teksten en lijnen -->
+        <renderingAttribute name="fontRegular" value="Roboto" />
+        <renderingAttribute name="fontBold" value="Roboto Bold" />
+        <renderingAttribute name="cityTextSize" value="16" />
+        <renderingAttribute name="townTextSize" value="14" />
+        <renderingAttribute name="villageTextSize" value="12" />
+        <renderingAttribute name="poiTextSize" value="10" />
+        <renderingAttribute name="defaultStroke" value="1.2" />
+
+        <!-- Stel basisorders in zodat polygonen onder lijnen en teksten liggen -->
+        <orders>
+            <order type="polygon" value="0" />
+            <order type="line" value="1" />
+            <order type="text" value="2" />
+        </orders>
+
+        <renderingRules baseZoom="5">
+            <!-- Algemene achtergrond -->
+            <renderingRule type="polygon" tag="layer" value="background" zoom-min="0" zoom-max="22">
+                <apply areaColor="@landColor" />
+            </renderingRule>
+
+            <!-- Waterlichamen -->
+            <renderingRule type="polygon" tag="natural" value="water">
+                <apply areaColor="@waterColor" />
+            </renderingRule>
+            <renderingRule type="polygon" tag="waterway" value="riverbank">
+                <apply areaColor="@waterColor" />
+            </renderingRule>
+            <renderingRule type="line" tag="waterway" value="river">
+                <apply strokeColor="@waterColor" strokeWidth="3.5" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="waterway" value="stream">
+                <apply strokeColor="@waterColor" strokeWidth="2.0" cap="round" join="round" />
+            </renderingRule>
+
+            <!-- Groene gebieden -->
+            <renderingRule type="polygon" tag="landuse" value="forest">
+                <apply areaColor="@greenColor" />
+            </renderingRule>
+            <renderingRule type="polygon" tag="leisure" value="park">
+                <apply areaColor="#d9eac8" />
+            </renderingRule>
+            <renderingRule type="polygon" tag="natural" value="grassland">
+                <apply areaColor="#e3f0cf" />
+            </renderingRule>
+
+            <!-- Gebouwen -->
+            <renderingRule type="polygon" tag="building" zoom-min="15">
+                <apply areaColor="@buildingFill" strokeColor="#d0b8a6" strokeWidth="0.8" />
+            </renderingRule>
+
+            <!-- Hauptwegen -->
+            <renderingRule type="line" tag="highway" value="motorway">
+                <apply strokeColor="@roadFill" strokeWidth="5.5" outlineColor="@roadOutline" outlineWidth="1.6" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="trunk">
+                <apply strokeColor="@roadFill" strokeWidth="4.6" outlineColor="@roadOutline" outlineWidth="1.4" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="primary">
+                <apply strokeColor="@secondaryRoadFill" strokeWidth="3.8" outlineColor="@roadOutline" outlineWidth="1.2" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="secondary">
+                <apply strokeColor="#f8c67d" strokeWidth="3.0" outlineColor="@roadOutline" outlineWidth="1.0" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="tertiary">
+                <apply strokeColor="#fbe2b6" strokeWidth="2.4" outlineColor="@roadOutline" outlineWidth="0.8" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="residential">
+                <apply strokeColor="#ffffff" strokeWidth="1.8" outlineColor="#d9d4cf" outlineWidth="0.5" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="service">
+                <apply strokeColor="#ffffff" strokeWidth="1.4" outlineColor="#d9d4cf" outlineWidth="0.4" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="cycleway">
+                <apply strokeColor="#5f9ea0" strokeWidth="1.6" outlineColor="#ffffff" outlineWidth="0.6" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="footway">
+                <apply strokeColor="@pathFill" strokeWidth="1.2" outlineColor="#ffffff" outlineWidth="0.4" cap="round" join="round" />
+            </renderingRule>
+            <renderingRule type="line" tag="highway" value="track">
+                <apply strokeColor="#bda285" strokeWidth="1.4" strokeDasharray="6,4" cap="round" join="round" />
+            </renderingRule>
+
+            <!-- Spoorwegen -->
+            <renderingRule type="line" tag="railway" value="rail">
+                <apply strokeColor="@railwayFill" strokeWidth="2.2" strokeDasharray="6,4" cap="butt" />
+            </renderingRule>
+            <renderingRule type="line" tag="railway" value="light_rail">
+                <apply strokeColor="#888888" strokeWidth="1.8" strokeDasharray="4,4" cap="butt" />
+            </renderingRule>
+            <renderingRule type="line" tag="railway" value="tram">
+                <apply strokeColor="#777777" strokeWidth="1.6" strokeDasharray="2,3" cap="butt" />
+            </renderingRule>
+
+            <!-- Grenzen -->
+            <renderingRule type="line" tag="boundary" value="administrative">
+                <apply strokeColor="#9f9f9f" strokeWidth="1.0" strokeDasharray="8,4" />
+            </renderingRule>
+
+            <!-- Labels voor plaatsen -->
+            <renderingRule type="text" tag="place" value="city" zoom-min="9">
+                <apply textColor="@cityText" textSize="@cityTextSize" font="@fontBold" textWrapWidth="120" textHaloColor="#ffffff" textHaloRadius="2" />
+            </renderingRule>
+            <renderingRule type="text" tag="place" value="town" zoom-min="10">
+                <apply textColor="@cityText" textSize="@townTextSize" font="@fontBold" textWrapWidth="110" textHaloColor="#ffffff" textHaloRadius="2" />
+            </renderingRule>
+            <renderingRule type="text" tag="place" value="village" zoom-min="11">
+                <apply textColor="@cityText" textSize="@villageTextSize" font="@fontRegular" textWrapWidth="90" textHaloColor="#ffffff" textHaloRadius="2" />
+            </renderingRule>
+            <renderingRule type="text" tag="place" value="hamlet" zoom-min="12">
+                <apply textColor="#4a4a4a" textSize="11" font="@fontRegular" textWrapWidth="80" textHaloColor="#ffffff" textHaloRadius="1.5" />
+            </renderingRule>
+
+            <!-- Straatnamen -->
+            <renderingRule type="text" tag="name" cat="highway" zoom-min="14">
+                <apply textColor="#4a4a4a" textSize="11" font="@fontRegular" textWrapWidth="60" textHaloColor="#ffffff" textHaloRadius="1.2" />
+            </renderingRule>
+
+            <!-- POI labels -->
+            <renderingRule type="text" tag="amenity" value="restaurant" zoom-min="16">
+                <apply textColor="@poiText" textSize="@poiTextSize" font="@fontRegular" icon="special_restaurant" iconSize="18" textHaloColor="#ffffff" textHaloRadius="1.2" />
+            </renderingRule>
+            <!-- Toon laadinfrastructuur met hetzelfde tekstprofiel -->
+            <renderingRule type="text" tag="amenity" value="charging_station" zoom-min="15">
+                <apply textColor="@poiText" textSize="@poiTextSize" font="@fontRegular" icon="transport_charge_point" iconSize="18" textHaloColor="#ffffff" textHaloRadius="1.2" />
+            </renderingRule>
+            <renderingRule type="text" tag="tourism" value="attraction" zoom-min="15">
+                <apply textColor="@poiText" textSize="@poiTextSize" font="@fontRegular" icon="tourism_monument" iconSize="18" textHaloColor="#ffffff" textHaloRadius="1.2" />
+            </renderingRule>
+
+            <!-- Wegschilden -->
+            <renderingRule type="shield" tag="ref" cat="highway" zoom-min="13">
+                <apply textColor="#333333" textSize="12" shieldColor="@shieldFill" shieldStrokeColor="@shieldStroke" shieldStrokeWidth="1.0" />
+            </renderingRule>
+        </renderingRules>
+    </renderingStyle>
+</renderingStyles>
