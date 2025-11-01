@@ -108,7 +108,7 @@ The site uses a tag-based access control system defined in `config/access-contro
 
 ## Security Considerations
 
-- **Never commit real user emails in public repositories** (this is a private repo, but be cautious)
+- **Be cautious with user emails and personal data** - Verify repository visibility before committing any sensitive information
 - Don't expose sensitive URLs or internal endpoints
 - Validate all user inputs
 - Use HTTPS for any external resources
@@ -127,7 +127,7 @@ The site uses a tag-based access control system defined in `config/access-contro
 - This is a static site (no backend/server-side processing)
 - Access control is client-side only (not suitable for highly sensitive data)
 - GitHub Pages limitations apply (no server-side logic, no databases)
-- Site uses CRLF line endings (Windows-style)
+- Files may have mixed line endings (CRLF and LF) - maintain consistency within each file
 
 ## Language Guidelines
 
