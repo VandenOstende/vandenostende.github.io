@@ -57,14 +57,38 @@ function displayGpxDetails(gpx) {
 
 function displayGpxStats(gpx) {
     var statsDiv = document.getElementById('gpx-stats');
-    var distance = (gpx.get_distance() / 1000).toFixed(2); // in km
-    var elevationGain = gpx.get_elevation_gain().toFixed(2); // in m
-    var elevationLoss = gpx.get_elevation_loss().toFixed(2); // in m
+
+    // Totale afstand in km
+    var distance = (gpx.get_distance() / 1000).toFixed(2);
+
+    // Elevatie in meters (veilig ophalen)
+    var elevationGain = (typeof gpx.get_elevation_gain === 'function' && gpx.get_elevation_gain() !== undefined)
+        ? gpx.get_elevation_gain().toFixed(2)
+        : '0.00';
+    var elevationLoss = (typeof gpx.get_elevation_loss === 'function' && gpx.get_elevation_loss() !== undefined)
+        ? gpx.get_elevation_loss().toFixed(2)
+        : '0.00';
+
+    // Start / eindtijd
     var startTime = gpx.get_start_time();
     var endTime = gpx.get_end_time();
 
+    // Snelheden: leaflet-gpx levert snelheid in m/s; zet om naar km/h (x 3.6)
+    // Controleer of functies bestaan (sommige GPX-bestanden/plugins geven mogelijk undefined)
+    var movingSpeedMs = (typeof gpx.get_moving_speed === 'function') ? gpx.get_moving_speed() : null;
+    var maxSpeedMs = (typeof gpx.get_max_speed === 'function') ? gpx.get_max_speed() : null;
+
+    var avgSpeedKmh = (movingSpeedMs !== null && !isNaN(movingSpeedMs))
+        ? (movingSpeedMs * 3.6).toFixed(2)
+        : 'N.v.t.';
+    var maxSpeedKmh = (maxSpeedMs !== null && !isNaN(maxSpeedMs))
+        ? (maxSpeedMs * 3.6).toFixed(2)
+        : 'N.v.t.';
+
     statsDiv.innerHTML = `
         <p><strong>Totale afstand:</strong> ${distance} km</p>
+        <p><strong>Gemiddelde snelheid (bewegend):</strong> ${avgSpeedKmh} km/u</p>
+        <p><strong>Maximale snelheid:</strong> ${maxSpeedKmh} km/u</p>
         <p><strong>Hoogtewinst:</strong> ${elevationGain} m</p>
         <p><strong>Hoogteverlies:</strong> ${elevationLoss} m</p>
         <p><strong>Starttijd:</strong> ${startTime ? startTime.toLocaleString() : 'N.v.t.'}</p>
