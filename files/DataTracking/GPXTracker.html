@@ -17,36 +17,43 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/1.5.1/gpx.min.js"></script>
 </head>
 <body>
+    <!-- Navigation Header -->
+    <header class="app-header">
+        <div class="header-content">
+            <a href="/" class="back-link">← Terug naar Platform</a>
+            <h1 class="header-title">GPX Tracker Dashboard</h1>
+        </div>
+    </header>
 
-    <h1>GPX Tracker Dashboard</h1>
+    <div class="container">
+        <div class="file-importer">
+            <h2>Importeer GPX-bestand</h2>
+            <p>Selecteer een .gpx-bestand van je apparaat om de gegevens te visualiseren.</p>
+            <input type="file" id="gpx-file" accept=".gpx">
+        </div>
 
-    <div class="file-importer">
-        <h2>Importeer GPX-bestand</h2>
-        <p>Selecteer een .gpx-bestand van je apparaat om de gegevens te visualiseren.</p>
-        <input type="file" id="gpx-file" accept=".gpx">
-    </div>
+        <div id="map"></div>
 
-    <div id="map"></div>
-
-    <div class="dashboard-container">
-        <div class="info-card">
-            <h2>Trackdetails</h2>
-            <div id="gpx-details">
-                <p>Upload een bestand om details te zien.</p>
+        <div class="dashboard-container">
+            <div class="info-card">
+                <h2>Trackdetails</h2>
+                <div id="gpx-details">
+                    <p>Upload een bestand om details te zien.</p>
+                </div>
+            </div>
+            <div class="info-card">
+                <h2>Statistieken</h2>
+                <div id="gpx-stats">
+                     <p>Upload een bestand om statistieken te zien.</p>
+                </div>
             </div>
         </div>
-        <div class="info-card">
-            <h2>Statistieken</h2>
-            <div id="gpx-stats">
-                 <p>Upload een bestand om statistieken te zien.</p>
+        
+        <div class="info-card" style="margin-top:20px;">
+            <h2>Trackpunten</h2>
+            <div id="gpx-points">
+                <p>Upload een bestand om de lijst met trackpunten te zien.</p>
             </div>
-        </div>
-    </div>
-    
-    <div class="info-card" style="margin-top:20px;">
-        <h2>Trackpunten</h2>
-        <div id="gpx-points">
-            <p>Upload een bestand om de lijst met trackpunten te zien.</p>
         </div>
     </div>
 
