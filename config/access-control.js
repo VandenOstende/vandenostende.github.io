@@ -29,6 +29,13 @@ const ACCESS_CONFIG = {
             url: '/files/WasteRecipientsDash/',
             icon: '📊'
         },
+        'gpx-tracker-dashboard': {
+            name: 'GPX Tracker Dashboard',
+            description: 'Visualiseer en analyseer GPX-bestanden met interactieve kaarten en statistieken.',
+            requiredTags: ['Admin', 'pre-production'],
+            url: '/files/DataTracking/GPXTracker.html',
+            icon: '🗺️'
+        },
         // Voeg hier meer apps toe
     },
     
@@ -45,6 +52,10 @@ const ACCESS_CONFIG = {
         'TWM Coordinators': {
             description: 'Toegang voor Indaver coordinators en managers',
             color: '#10b981'
+        },
+        'pre-production': {
+            description: 'Toegang tot apps in ontwikkeling en test',
+            color: '#f59e0b'
         }
     }
 };
