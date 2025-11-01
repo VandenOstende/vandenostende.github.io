@@ -1,1 +1,57 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <title>GPX Tracker Dashboard</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- Leaflet Map Library CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A==" crossorigin=""/>
+    
+    <!-- Custom Stylesheet -->
+    <link rel="stylesheet" href="style.css">
 
+    <!-- Leaflet Map Library JS -->
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
+    <!-- Leaflet GPX Plugin -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/1.5.1/gpx.min.js"></script>
+</head>
+<body>
+
+    <h1>GPX Tracker Dashboard</h1>
+
+    <div class="file-importer">
+        <h2>Importeer GPX-bestand</h2>
+        <p>Selecteer een .gpx-bestand van je apparaat om de gegevens te visualiseren.</p>
+        <input type="file" id="gpx-file" accept=".gpx">
+    </div>
+
+    <div id="map"></div>
+
+    <div class="dashboard-container">
+        <div class="info-card">
+            <h2>Trackdetails</h2>
+            <div id="gpx-details">
+                <p>Upload een bestand om details te zien.</p>
+            </div>
+        </div>
+        <div class="info-card">
+            <h2>Statistieken</h2>
+            <div id="gpx-stats">
+                 <p>Upload een bestand om statistieken te zien.</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="info-card" style="margin-top:20px;">
+        <h2>Trackpunten</h2>
+        <div id="gpx-points">
+            <p>Upload een bestand om de lijst met trackpunten te zien.</p>
+        </div>
+    </div>
+
+    <!-- Custom JavaScript -->
+    <script src="script.js"></script>
+
+</body>
+</html>
