@@ -3,62 +3,130 @@
 <head>
     <title>GPX Tracker Dashboard</title>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     
-    <!-- Leaflet Map Library CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A==" crossorigin=""/>
+    <!-- Mapbox GL Stylesheet -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
     
     <!-- Custom Stylesheet -->
     <link rel="stylesheet" href="style.css">
 
-    <!-- Leaflet Map Library JS -->
-    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
-    <!-- Leaflet GPX Plugin -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/1.5.1/gpx.min.js"></script>
+    <!-- Mapbox GL Bibliotheek -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
+    <!-- GPX naar GeoJSON Helper -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
+    <script>
+        window.MAPBOX_ACCESS_TOKEN = 'pk.eyJ1IjoidmFuZGVub3N0ZW5kZWsiLCJhIjoiY203eWl6NGtnMDhueTJpcjY2dnlpc2Z5NSJ9.udMeaVqcH38IfX0ME1wbAQ';
+        // Vul je Firebase-config hieronder in of verplaats dit naar een apart config-bestand.
+        // Je vindt deze in de Firebase Console > Projectinstellingen > Algemene instellingen.
+        window.FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBLJyOGvw5m-yJl28YUjsAUzwVvcWLBT2M",
+            authDomain: "gpxtrackingapp.firebaseapp.com",
+            projectId: "gpxtrackingapp",
+            storageBucket: "gpxtrackingapp.firebasestorage.app",
+            messagingSenderId: "714787098101",
+            appId: "1:714787098101:web:e6e5fd7b75dabafcd424bc"
+        };
+    </script>
+    <!-- Firebase (compat) SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
-    <!-- Navigation Header -->
     <header class="app-header">
         <div class="header-content">
-            <a href="/" class="back-link">← Terug naar Platform</a>
-            <h1 class="header-title">GPX Tracker Dashboard</h1>
+            <div class="header-group">
+                <a href="dashboard.html" class="back-link">← Terug naar Dashboard</a>
+                <h1 class="header-title">GPX Tracker Dashboard</h1>
+            </div>
+            <div class="header-actions" style="display:flex;gap:12px;align-items:center;">
+                <div id="active-ride" class="header-active-ride" style="display:none;white-space:nowrap;">
+                    <span style="opacity:.8;">Actieve rit:</span>
+                    <strong id="active-ride-label" style="margin-left:6px;"></strong>
+                </div>
+                <button type="button" id="delete-ride-btn" class="secondary-btn hidden" disabled title="Selecteer eerst een rit uit de lijst">Verwijderen</button>
+                <button type="button" id="add-ride-btn" class="primary-btn">Fietsrit toevoegen</button>
+            </div>
         </div>
     </header>
 
-    <div class="container">
-        <div class="file-importer">
-            <h2>Importeer GPX-bestand</h2>
-            <p>Selecteer een .gpx-bestand van je apparaat om de gegevens te visualiseren.</p>
-            <input type="file" id="gpx-file" accept=".gpx">
-        </div>
-
-        <div id="map"></div>
-
-        <div class="dashboard-container">
-            <div class="info-card">
+    <main class="dashboard">
+        <section class="map-panel">
+            <div id="map"></div>
+        </section>
+        <section class="info-grid">
+            <article class="info-card">
+                <h2>Ritten</h2>
+                <div class="rides-controls" style="display:flex;gap:12px;align-items:center;">
+                    <label for="rides-sort" style="color:#cbd5e1;">Sorteren op</label>
+                    <select id="rides-sort" class="rides-sort" aria-label="Sorteren op" style="background:rgba(15,23,42,.6);color:#e2e8f0;border:1px solid rgba(148,163,184,.4);border-radius:8px;padding:8px 12px;">
+                        <option value="date-desc">Datum (nieuwste eerst)</option>
+                        <option value="date-asc">Datum (oudste eerst)</option>
+                        <option value="weather-asc">Weer (A-Z)</option>
+                        <option value="maxspeed-desc">Max snelheid (hoog-laag)</option>
+                        <option value="maxspeed-asc">Max snelheid (laag-hoog)</option>
+                    </select>
+                </div>
+                <div id="rides-list" style="margin-top:12px;">
+                    <p>Er zijn nog geen ritten opgeslagen.</p>
+                </div>
+            </article>
+            <article class="info-card">
                 <h2>Trackdetails</h2>
                 <div id="gpx-details">
-                    <p>Upload een bestand om details te zien.</p>
+                    <p>Voeg een fietsrit toe om details te zien.</p>
                 </div>
-            </div>
-            <div class="info-card">
+            </article>
+            <article class="info-card">
                 <h2>Statistieken</h2>
                 <div id="gpx-stats">
-                     <p>Upload een bestand om statistieken te zien.</p>
+                    <p>Voeg een fietsrit toe om statistieken te zien.</p>
                 </div>
+            </article>
+        </section>
+    </main>
+
+    <div id="modal-backdrop" class="modal-backdrop hidden" aria-hidden="true"></div>
+    <div id="ride-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ride-modal-title">
+        <div class="modal__content">
+            <div class="modal__header">
+                <h2 id="ride-modal-title">Nieuwe fietsrit</h2>
+                <button type="button" class="icon-btn" id="ride-modal-close" aria-label="Sluiten">×</button>
             </div>
-        </div>
-        
-        <div class="info-card" style="margin-top:20px;">
-            <h2>Trackpunten</h2>
-            <div id="gpx-points">
-                <p>Upload een bestand om de lijst met trackpunten te zien.</p>
-            </div>
+            <form id="ride-form" novalidate>
+                <fieldset class="form-field">
+                    <label for="ride-gpx-file">GPX-bestand</label>
+                    <input type="file" id="ride-gpx-file" accept=".gpx" required>
+                    <p class="field-hint">Selecteer een GPX-bestand van je rit. De datum wordt automatisch ingevuld.</p>
+                </fieldset>
+                <fieldset class="form-field">
+                    <label for="ride-date">Datum van de rit</label>
+                    <input type="date" id="ride-date" name="ride-date" required>
+                </fieldset>
+                <fieldset class="form-field">
+                    <legend>Weersomstandigheden</legend>
+                    <div class="weather-toggle" role="radiogroup" aria-label="Weersomstandigheden">
+                        <input type="radio" id="weather-rain" name="ride-weather" value="rain" required>
+                        <label for="weather-rain">Regen</label>
+                        <input type="radio" id="weather-snow" name="ride-weather" value="snow">
+                        <label for="weather-snow">Sneeuw</label>
+                        <input type="radio" id="weather-sun" name="ride-weather" value="sun">
+                        <label for="weather-sun">Zon</label>
+                        <span class="weather-toggle__slider" aria-hidden="true"></span>
+                    </div>
+                </fieldset>
+                <div id="ride-form-error" class="form-error" aria-live="polite"></div>
+                <div class="modal__actions">
+                    <button type="button" class="secondary-btn" id="ride-cancel-btn">Annuleren</button>
+                    <button type="submit" class="primary-btn">Opslaan</button>
+                </div>
+            </form>
         </div>
     </div>
 
-    <!-- Custom JavaScript -->
-    <script src="script.js"></script>
+    <!-- Schone, herschreven logica -->
+    <script src="main.js"></script>
 
 </body>
 </html>
