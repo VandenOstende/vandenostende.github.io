@@ -33,7 +33,7 @@ const ACCESS_CONFIG = {
             name: 'GPX Tracker Dashboard',
             description: 'Visualiseer en analyseer GPX-bestanden met interactieve kaarten en statistieken.',
             requiredTags: ['Admin', 'pre-production'],
-            url: '/files/DataTracking/GPXTracker.html',
+            url: '/files/DataTracking/dashboard.html',
             icon: '🗺️'
         },
         // Voeg hier meer apps toe
@@ -119,5 +119,6 @@ function getAllUsers() {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { ACCESS_CONFIG, hasAccess, getUserApps, getUserTags, getAllUsers };
 }
+
 
 
