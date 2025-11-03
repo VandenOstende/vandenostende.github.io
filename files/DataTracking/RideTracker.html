@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Rit Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; padding: 0; background: #0b1220; }
+    .tracker-root { position: relative; min-height: 100dvh; }
+    #ride-map { position: absolute; inset: 0; }
+    .hud {
+      position: absolute; left: env(safe-area-inset-left); right: env(safe-area-inset-right);
+      top: calc(12px + env(safe-area-inset-top)); display: flex; justify-content: space-between; align-items: center;
+      gap: 10px; padding: 0 12px; pointer-events: none;
+    }
+    .metrics { display:flex; gap: 10px; pointer-events: auto; }
+    .metric {
+      background: rgba(15,23,42,0.7); border: 1px solid rgba(148,163,184,0.3); color: #e2e8f0;
+      border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(6px);
+      font-weight: 700; min-width: 110px; text-align: center;
+    }
+    .metric small { display:block; color:#94a3b8; font-weight:600; }
+    .controls { position: absolute; left: 0; right: 0; bottom: calc(14px + env(safe-area-inset-bottom)); display:flex; justify-content:center; pointer-events: none; }
+    .controls .btns { display:flex; gap: 10px; pointer-events: auto; }
+    .btn {
+      font: inherit; font-weight: 700; border: none; border-radius: 999px; cursor: pointer; min-height: 44px;
+      padding: 10px 18px; color: #fff; box-shadow: 0 8px 24px rgba(2,6,23,0.35);
+    }
+    .btn-primary { background: linear-gradient(135deg, #22c55e, #15803d); }
+    .btn-danger { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+    .status { position:absolute; left:12px; right:12px; top: calc(60px + env(safe-area-inset-top)); text-align:center; color:#e2e8f0; pointer-events:none; }
+    .status.status--error {
+      background: linear-gradient(180deg, rgba(239,68,68,0.98), rgba(220,38,38,0.95));
+      color: #fff; padding: 10px 14px; border-radius: 12px; box-shadow: 0 8px 30px rgba(220,38,38,0.22);
+      font-weight: 800; font-size: 15px; text-shadow: 0 1px 0 rgba(0,0,0,0.25);
+      transform: translateY(0); transition: transform .28s ease, opacity .28s ease;
+      opacity: 1; z-index: 30; pointer-events: auto;
+    }
+    /* kleine transitie voor het verschijnen/verdwijnen */
+    .status.hidden { opacity: 0; transform: translateY(-6px); }
+    .import-dialog {
+      position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 16px;
+      background: rgba(2,6,23,0.55); backdrop-filter: blur(3px);
+    }
+    .import-dialog.active { display:flex; }
+    .dialog-card {
+      background: rgba(15,23,42,0.95); border:1px solid rgba(148,163,184,0.25); border-radius: 14px; padding: 18px; max-width: 520px; width: 100%;
+      color: #e2e8f0;
+    }
+    .dialog-actions { display:flex; gap:10px; justify-content:flex-end; margin-top: 14px; }
+    .primary-btn, .secondary-btn { border-radius: 10px; min-height: 40px; padding: 8px 14px; font-weight: 700; cursor: pointer; border: none; }
+    .primary-btn { background: linear-gradient(135deg, #22c55e, #15803d); color: #fff; }
+    .secondary-btn { background: rgba(148,163,184,0.15); color: #e2e8f0; border:1px solid rgba(148,163,184,0.25); }
+    /* Pulse marker voor huidige positie */
+  .pulse-marker { width: 24px; height: 24px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 8px rgba(34,197,94,0.12); position: relative; }
+  .pulse-marker::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 24px; height: 24px; border-radius: 50%; background: rgba(34,197,94,0.32); animation: pulse 1.6s ease-out infinite; }
+    @keyframes pulse { 0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.9 } 70% { transform: translate(-50%, -50%) scale(2.2); opacity: 0 } 100% { opacity: 0 } }
+
+    /* Mobielvriendelijke aanpassingen (iOS focus) */
+    @media (max-width: 600px) {
+      .hud { top: calc(8px + env(safe-area-inset-top)); padding: 0 8px; }
+      .metrics { gap: 8px; }
+      .metric { padding: 10px 14px; min-width: 88px; font-size: 14px; border-radius: 12px; }
+      .metric strong { font-size: 1.05rem; }
+      .controls { bottom: calc(12px + env(safe-area-inset-bottom)); }
+      .btn { min-height: 48px; padding: 12px 18px; border-radius: 999px; }
+      .status { top: calc(64px + env(safe-area-inset-top)); font-size: 14px; }
+    }
+  </style>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
+  <script>
+    window.MAPBOX_ACCESS_TOKEN = 'pk.eyJ1IjoidmFuZGVub3N0ZW5kZWsiLCJhIjoiY203eWl6NGtnMDhueTJpcjY2dnlpc2Z5NSJ9.udMeaVqcH38IfX0ME1wbAQ';
+  </script>
+</head>
+<body>
+  <div class="tracker-root">
+    <div id="ride-map"></div>
+
+    <div class="hud" aria-live="polite">
+      <div class="metrics">
+        <div class="metric" id="m-distance"><strong>0.00 km</strong><small>Afstand</small></div>
+        <div class="metric" id="m-speed"><strong>0.0 km/u</strong><small>Snelheid</small></div>
+        <div class="metric" id="m-avg"><strong>0.0 km/u</strong><small>Gem.</small></div>
+        <div class="metric" id="m-ele"><strong>– m</strong><small>Hoogte</small></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="btns">
+        <button class="btn btn-primary" id="start-btn">Start rit</button>
+        <button class="btn btn-danger" id="stop-btn" style="display:none">Stop rit</button>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="import-dialog" id="import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <div class="dialog-card">
+        <h3 id="import-title" style="margin:0 0 8px;">Rit voltooid</h3>
+        <p style="margin:0 0 12px; color:#cbd5e1;">Kies wat je wil doen met je rit:</p>
+        <div class="dialog-actions">
+          <button class="secondary-btn" id="download-gpx">Download GPX</button>
+          <button class="primary-btn" id="import-gpx">Importeer in GPXTracker</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="ride-tracker.js"></script>
+</body>
+</html>

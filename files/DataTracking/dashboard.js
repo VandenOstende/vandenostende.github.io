@@ -5,8 +5,23 @@
 
   function logStatus(msg, isError){
     if (!STATUS) return;
-    STATUS.textContent = msg || '';
-    STATUS.style.color = isError ? '#ef4444' : '#94a3b8';
+    // Harmoniseer met RideTracker status styling: gebruik classes
+    try {
+      STATUS.textContent = msg || '';
+      STATUS.classList.remove('status--error');
+      if (!msg) {
+        STATUS.classList.add('hidden');
+      } else {
+        STATUS.classList.remove('hidden');
+      }
+      if (isError) {
+        STATUS.classList.add('status--error');
+      }
+    } catch (_) {
+      // Fallback: inline color
+      STATUS.textContent = msg || '';
+      STATUS.style.color = isError ? '#ef4444' : '#94a3b8';
+    }
   }
 
   function initFirebase(){

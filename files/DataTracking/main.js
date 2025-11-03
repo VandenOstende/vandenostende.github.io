@@ -1135,6 +1135,35 @@
         // kleine delay zodat event listeners en modal klaar zijn
         setTimeout(() => { try { addRideBtn.click(); } catch(_){} }, 80);
       }
+      // Directe import vanuit RitTracker: ?rideImport=1 en payload in localStorage
+      const wantsRideImport = url.searchParams.get('rideImport') === '1';
+      if (wantsRideImport && tracker) {
+        try {
+          const raw = localStorage.getItem('GPX_RIDE_IMPORT');
+          if (raw) {
+            const payload = JSON.parse(raw);
+            const gpxText = payload && payload.gpxText;
+            const suggestedName = (payload && payload.suggestedName) || 'Rit.gpx';
+            if (typeof gpxText === 'string' && gpxText.length > 0) {
+              // Parse en render zonder modaal; datum uit GPX gebruiken
+              const parsed = parseGpxFile(gpxText);
+              const startTime = parsed && parsed.stats && parsed.stats.startTime;
+              const rideDate = (startTime instanceof Date && !Number.isNaN(startTime.getTime()))
+                ? new Date(startTime.getFullYear(), startTime.getMonth(), startTime.getDate())
+                : new Date();
+              const weather = null; // gebruiker kan later in UI aanpassen indien gewenst
+              tracker.renderRide({ fileName: suggestedName, parsed, rideDate, weather });
+              // opruimen zodat herladen niet opnieuw importeert
+              localStorage.removeItem('GPX_RIDE_IMPORT');
+              // Active label instellen
+              const label = [rideDate.toLocaleDateString('nl-BE'), 'Rit vanuit tracker', suggestedName].join(' • ');
+              setActiveRideLabel(label);
+            }
+          }
+        } catch (e) {
+          console.warn('Automatische rit-import mislukt:', e);
+        }
+      }
     } catch(_) {}
 
     // Firestore UI initialisatie en sorteren
