@@ -1,6 +1,6 @@
 # DataTracking - GPX Fietsrit Tracker
 
-DataTracking is een complete webtoepassingssuite voor het bijhouden, analyseren en visualiseren van fietsritten. De applicatie bestaat uit drie hoofdcomponenten die samen een krachtig platform vormen voor fietsers om hun routes en prestaties te volgen.
+DataTracking is een complete webtoepassing suite voor het bijhouden, analyseren en visualiseren van fietsritten. De applicatie bestaat uit drie hoofdcomponenten die samen een krachtig platform vormen voor fietsers om hun routes en prestaties te volgen.
 
 ## 📋 Overzicht
 
