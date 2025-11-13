@@ -9,8 +9,10 @@ window.addEventListener('load', async () => {
   }
   db = window.firebaseDb;
   
-  // Laad verborgen kolommen instellingen
+  // Laad verborgen kolommen instellingen en opgeslagen kolom volgorde
   loadHiddenColumns();
+  loadOriginalColumnOrder();
+  loadColumnOrder();
   
   // Laad opgeslagen gegevens uit Firestore
   await loadDataFromFirestore();
@@ -48,8 +50,8 @@ const closeColumnModal = document.getElementById('closeColumnModal');
 // Kolom zichtbaarheid en volgorde state
 let hiddenColumns = new Set();
 let availableColumns = [];
-let columnOrder = []; // Nieuwe array om kolom volgorde bij te houden
-let originalColumnOrder = []; // Oorspronkelijke volgorde voor reset functie
+let columnOrder = []; // Gebruiker aangepaste volgorde
+let originalColumnOrder = []; // Oorspronkelijke volgorde (komt van eerste import of opgeslagen state)
 
 // Rij detail modal elementen
 const rowDetailModal = document.querySelector('.row-detail-modal');
@@ -184,7 +186,9 @@ applyColumnChanges.addEventListener('click', () => {
 
 resetColumnOrder.addEventListener('click', () => {
   if (confirm('Weet je zeker dat je de kolom volgorde wilt resetten naar de oorspronkelijke volgorde?')) {
+    // Reset columnOrder to the stored originalColumnOrder
     columnOrder = [...originalColumnOrder];
+    localStorage.setItem('columnOrder', JSON.stringify(columnOrder));
     showColumnManagementModal(); // Ververs de modal om de nieuwe volgorde te tonen
   }
 });
@@ -419,15 +423,20 @@ function handleFile(event) {
           }
         });
         
-        // Update originalColumnOrder met nieuwe kolommen
+        // Update originalColumnOrder met nieuwe kolommen (maar verander columnOrder alleen als user niet customized it yet)
         if (originalColumnOrder.length === 0) {
           originalColumnOrder = [...newHeaders];
+          // Persist original column order so refresh keeps the same order
+          localStorage.setItem('originalColumnOrder', JSON.stringify(originalColumnOrder));
         } else {
+          // Append any new headers to the originalColumnOrder deterministically
           newHeaders.forEach(header => {
             if (!originalColumnOrder.includes(header)) {
               originalColumnOrder.push(header);
             }
           });
+          // Persist any additions to originalColumnOrder
+          localStorage.setItem('originalColumnOrder', JSON.stringify(originalColumnOrder));
         }
       }
       
@@ -633,6 +642,25 @@ async function mergeData(newRows) {
 
     allData = combined;
     
+    // Update originalColumnOrder deterministically when new data arrives
+    try {
+      const dataHeaders = allData.length > 0 ? Object.keys(allData[0]) : [];
+      if (originalColumnOrder.length === 0 && dataHeaders.length > 0) {
+        originalColumnOrder = [...dataHeaders];
+        localStorage.setItem('originalColumnOrder', JSON.stringify(originalColumnOrder));
+      } else if (dataHeaders.length > 0) {
+        // Append any new headers in a deterministic way
+        dataHeaders.forEach(h => {
+          if (!originalColumnOrder.includes(h)) {
+            originalColumnOrder.push(h);
+          }
+        });
+        localStorage.setItem('originalColumnOrder', JSON.stringify(originalColumnOrder));
+      }
+    } catch (err) {
+      console.warn('Kon originalColumnOrder niet bijwerken:', err);
+    }
+    
     // Sla op naar Firestore in plaats van localStorage
     await saveDataToFirestore(allData);
     
@@ -658,21 +686,29 @@ function renderTable(data) {
   // Update beschikbare kolommen voor kolom beheer
   if (availableColumns.length === 0) {
     availableColumns = [...originalHeaders];
-    originalColumnOrder = [...originalHeaders]; // Sla oorspronkelijke volgorde op
-    loadHiddenColumns(); // Laad opgeslagen verborgen kolommen en volgorde
+    // Sla oorspronkelijke volgorde op als deze nog niet bestaat
+    if (originalColumnOrder.length === 0) {
+      originalColumnOrder = [...originalHeaders];
+      localStorage.setItem('originalColumnOrder', JSON.stringify(originalColumnOrder));
+    }
   }
   
-  // Gebruik aangepaste volgorde of val terug op originele volgorde
-  let headers;
+  // Bepaal de basis volgorde: eerst user-defined columnOrder (als set), anders originalColumnOrder, anders 
+  // de headers uit de data zelf. Hiermee voorkomen we dat de volgorde bij elke refresh verandert.
+  let baseOrder;
   if (columnOrder.length > 0) {
-    // Filter columnOrder om alleen bestaande kolommen te behouden en voeg nieuwe toe
-    const existingOrderedCols = columnOrder.filter(col => originalHeaders.includes(col));
-    const newCols = originalHeaders.filter(col => !columnOrder.includes(col));
-    headers = [...existingOrderedCols, ...newCols];
+    baseOrder = columnOrder;
+  } else if (originalColumnOrder.length > 0) {
+    baseOrder = originalColumnOrder;
   } else {
-    headers = originalHeaders;
+    baseOrder = originalHeaders;
   }
   
+  // Bouw de uiteindelijke headers: behoud volgorde van baseOrder maar filter op bestaande kolommen, en voeg nieuwe kolommen toe aan het einde in de volgorde van originalHeaders
+  const orderedFromBase = baseOrder.filter(col => originalHeaders.includes(col));
+  const remaining = originalHeaders.filter(col => !orderedFromBase.includes(col));
+  const headers = [...orderedFromBase, ...remaining];
+
   const headerRow = document.createElement('tr');
 
   const alphaColumns = ["Afvalstof"];
@@ -821,7 +857,7 @@ function showColumnManagementModal() {
   columnCheckboxes.innerHTML = '';
   
   // Gebruik de opgeslagen volgorde of de beschikbare kolommen als fallback
-  const orderedColumns = columnOrder.length > 0 ? columnOrder : availableColumns;
+  const orderedColumns = columnOrder.length > 0 ? columnOrder : (originalColumnOrder.length > 0 ? originalColumnOrder : availableColumns);
   
   orderedColumns.forEach((column, index) => {
     const checkboxItem = document.createElement('div');
@@ -982,6 +1018,19 @@ function loadHiddenColumns() {
   
   // Laad ook de kolom volgorde
   loadColumnOrder();
+}
+
+function loadOriginalColumnOrder() {
+  try {
+    const saved = localStorage.getItem('originalColumnOrder');
+    if (saved) {
+      originalColumnOrder = JSON.parse(saved);
+      console.log('Original column order geladen:', originalColumnOrder);
+    }
+  } catch (error) {
+    console.error('Fout bij laden original column order:', error);
+    originalColumnOrder = [];
+  }
 }
 
 // RIJ DETAIL FUNCTIES
