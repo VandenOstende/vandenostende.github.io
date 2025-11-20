@@ -36,6 +36,13 @@ const ACCESS_CONFIG = {
             url: '/files/DataTracking/dashboard.html',
             icon: '🗺️'
         },
+        'gpx-viewer': {
+            name: 'GPX Viewer',
+            description: 'Importeer GPX-bestanden en bekijk alle details inclusief kaart, statistieken en elevatieprofiel.',
+            requiredTags: ['Admin', 'pre-production'],
+            url: '/files/GPXViewer/',
+            icon: '📂'
+        },
         // Voeg hier meer apps toe
     },
     
