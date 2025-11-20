@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPX Viewer - Importeer en bekijk GPX bestanden</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Mapbox GL voor kaartweergave -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
+    
+    <!-- Chart.js voor elevatieprofiel -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <h1>🗺️ GPX Viewer</h1>
+            <p class="subtitle">Importeer GPX-bestanden en bekijk alle details</p>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <!-- Upload sectie -->
+        <section class="upload-section" id="upload-section">
+            <div class="upload-card">
+                <div class="upload-icon">📁</div>
+                <h2>GPX-bestand importeren</h2>
+                <p>Sleep een GPX-bestand hierheen of klik om te bladeren</p>
+                <input type="file" id="gpx-file-input" accept=".gpx" hidden>
+                <button class="btn-primary" id="upload-btn">Bestand kiezen</button>
+                <div class="file-info" id="file-info" style="display: none;">
+                    <span class="file-name" id="file-name"></span>
+                    <button class="btn-clear" id="clear-btn">✕</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Details sectie (verborgen totdat bestand is geladen) -->
+        <section class="details-section" id="details-section" style="display: none;">
+            <!-- Terug knop -->
+            <div class="back-button">
+                <button class="btn-secondary" id="back-btn">← Nieuw bestand laden</button>
+            </div>
+
+            <!-- Overzicht kaart -->
+            <div class="section-card">
+                <h2>📍 Kaart</h2>
+                <div id="map" class="map-container"></div>
+            </div>
+
+            <!-- Metadata -->
+            <div class="section-card">
+                <h2>ℹ️ Metadata</h2>
+                <div id="metadata-content" class="info-grid"></div>
+            </div>
+
+            <!-- Statistieken -->
+            <div class="section-card">
+                <h2>📊 Statistieken</h2>
+                <div id="stats-content" class="stats-grid"></div>
+            </div>
+
+            <!-- Elevatieprofiel -->
+            <div class="section-card">
+                <h2>📈 Elevatieprofiel</h2>
+                <div class="chart-container">
+                    <canvas id="elevation-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Waypoints -->
+            <div class="section-card">
+                <h2>📌 Waypoints</h2>
+                <div id="waypoints-content" class="waypoints-list"></div>
+            </div>
+
+            <!-- Track Points -->
+            <div class="section-card collapsible">
+                <div class="section-header" id="trackpoints-header">
+                    <h2>🎯 Track Points</h2>
+                    <span class="collapse-icon">▼</span>
+                </div>
+                <div id="trackpoints-content" class="trackpoints-list" style="display: none;"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>© 2025 Vanden Ostende - GPX Viewer</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
