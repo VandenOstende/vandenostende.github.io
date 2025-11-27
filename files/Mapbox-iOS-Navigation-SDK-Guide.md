@@ -1026,8 +1026,8 @@ class NavigationManager {
 
 | Model | Best For | Description |
 |-------|----------|-------------|
-| **Metered Trips** | Apps with &lt;50 trips/user/month | Pay per trip + small MAU fee |
-| **Unlimited Trips** | Apps with &gt;200 trips/user/month | Fixed monthly fee per MAU |
+| **Metered Trips** | Apps with <50 trips/user/month | Pay per trip + small MAU fee |
+| **Unlimited Trips** | Apps with >200 trips/user/month | Fixed monthly fee per MAU |
 
 > **MAU** = Monthly Active User
 
