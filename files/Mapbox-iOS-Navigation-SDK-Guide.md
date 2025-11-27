@@ -7,6 +7,14 @@
 
 ---
 
+## 📚 Gerelateerde Documentatie (Related Documentation)
+
+| Document | Beschrijving |
+|----------|--------------|
+| [🔍 Mapbox iOS Search SDK Guide](Mapbox-iOS-Search-SDK-Guide.md) | Zoekfunctionaliteit, geocoding, plaats autocomplete, categorie zoeken |
+
+---
+
 ## 🔗 Snelkoppelingen (Quick Navigation)
 
 | 📚 Basis | 🛠️ Implementatie | 🎨 Aanpassing | 🔧 Geavanceerd | 📖 Referentie |
