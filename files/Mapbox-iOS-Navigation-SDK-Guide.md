@@ -7,27 +7,41 @@
 
 ---
 
-## Table of Contents
+## 🔗 Snelkoppelingen (Quick Navigation)
 
-1. [Overview](#overview)
-2. [Features](#features)
-3. [Requirements](#requirements)
-4. [Installation](#installation)
-5. [Configuration](#configuration)
-6. [Quick Start Guide](#quick-start-guide)
-7. [Turn-by-Turn Navigation](#turn-by-turn-navigation)
-8. [Free-Drive Mode (Passive Navigation)](#free-drive-mode-passive-navigation)
-9. [Route Customization](#route-customization)
-10. [Voice Instructions](#voice-instructions)
-11. [Camera Controls](#camera-controls)
-12. [CarPlay Integration](#carplay-integration)
-13. [Offline Navigation](#offline-navigation)
-14. [Rerouting](#rerouting)
-15. [Migration Guide (v2 to v3)](#migration-guide-v2-to-v3)
-16. [Pricing](#pricing)
-17. [API Reference](#api-reference)
-18. [Troubleshooting](#troubleshooting)
-19. [Resources](#resources)
+| 📚 Basis | 🛠️ Implementatie | 🎨 Aanpassing | 🔧 Geavanceerd | 📖 Referentie |
+|----------|------------------|---------------|----------------|---------------|
+| [Overview](#overview) | [Quick Start](#quick-start-guide) | [Route Customization](#route-customization) | [CarPlay](#carplay-integration) | [API Reference](#api-reference) |
+| [Features](#features) | [Turn-by-Turn](#turn-by-turn-navigation) | [Voice Instructions](#voice-instructions) | [Offline Navigation](#offline-navigation) | [Troubleshooting](#troubleshooting) |
+| [Requirements](#requirements) | [Free-Drive Mode](#free-drive-mode-passive-navigation) | [Camera Controls](#camera-controls) | [Rerouting](#rerouting) | [Resources](#resources) |
+| [Installation](#installation) | | | [Migration v2→v3](#migration-guide-v2-to-v3) | [Pricing](#pricing) |
+| [Configuration](#configuration) | | | | |
+
+---
+
+## 📑 Inhoudsopgave (Table of Contents)
+
+| # | Hoofdstuk | Beschrijving |
+|---|-----------|--------------|
+| 1 | [Overview](#overview) | Introductie tot de SDK en belangrijkste kenmerken |
+| 2 | [Features](#features) | Navigatiemodi en kernfunctionaliteiten |
+| 3 | [Requirements](#requirements) | SDK v3 vereisten (Swift, Xcode, iOS) |
+| 4 | [Installation](#installation) | Swift Package Manager en CocoaPods setup |
+| 5 | [Configuration](#configuration) | Info.plist, locatiepermissies, achtergrondmodi |
+| 6 | [Quick Start Guide](#quick-start-guide) | Snelle start met code voorbeelden |
+| 7 | [Turn-by-Turn Navigation](#turn-by-turn-navigation) | Route aanvraag en navigatie events |
+| 8 | [Free-Drive Mode](#free-drive-mode-passive-navigation) | Passieve navigatie zonder bestemming |
+| 9 | [Route Customization](#route-customization) | Route lijn weergave en kaart stijlen |
+| 10 | [Voice Instructions](#voice-instructions) | Stem instructies en SSML ondersteuning |
+| 11 | [Camera Controls](#camera-controls) | Camera staten en configuratie |
+| 12 | [CarPlay Integration](#carplay-integration) | CarPlay setup en implementatie |
+| 13 | [Offline Navigation](#offline-navigation) | Predictive caching en offline regio's |
+| 14 | [Rerouting](#rerouting) | Automatische en handmatige herrouting |
+| 15 | [Migration Guide (v2 to v3)](#migration-guide-v2-to-v3) | Breaking changes en migratie stappen |
+| 16 | [Pricing](#pricing) | Prijsmodellen en kostenbeheer |
+| 17 | [API Reference](#api-reference) | Core klassen en publishers |
+| 18 | [Troubleshooting](#troubleshooting) | Veelvoorkomende problemen en oplossingen |
+| 19 | [Resources](#resources) | Officiële documentatie en community links |
 
 ---
 
