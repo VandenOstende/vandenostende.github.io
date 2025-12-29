@@ -1,22 +1,39 @@
-# SPAR Belgium Locations Dataset
+# Supermarket Locations Datasets
 
 ## Overview
 
-This directory contains a comprehensive JSON dataset of SPAR supermarket locations across Belgium.
+This directory contains comprehensive JSON datasets of supermarket locations across Belgium.
+
+## Available Datasets
+
+1. **SPAR Belgium** - SPAR and SPAR Express locations across Belgium
+2. **ALDI Flanders** - ALDI supermarket locations in Flanders (Vlaanderen)
 
 ## Files
 
-- `spar-belgium-locations.json` - Main dataset file containing SPAR store locations
+- `spar-belgium-locations.json` - SPAR store locations across Belgium (28 stores)
+- `aldi-flanders-locations.json` - ALDI store locations in Flanders (30 stores)
 
 ## Dataset Information
 
-### Coverage
+### SPAR Belgium Dataset
 - **Total SPAR stores in Belgium**: 335 (as of 2025)
 - **Stores in this dataset**: 28 representative locations
 - **Regions covered**: 
   - Flanders: 15 stores
   - Wallonia: 12 stores
   - Brussels: 1 store
+
+### ALDI Flanders Dataset
+- **Total ALDI stores in Belgium**: 450+ (as of 2025)
+- **Total ALDI stores in Flanders**: 289
+- **Stores in this dataset**: 30 representative locations
+- **Provinces covered**:
+  - East Flanders: 14 stores
+  - West Flanders: 6 stores
+  - Flemish Brabant: 4 stores
+  - Antwerp: 3 stores
+  - Limburg: 3 stores
 
 ### Data Structure
 
@@ -71,13 +88,26 @@ Each store includes:
 
 ## Usage Examples
 
-### JavaScript
+### JavaScript - SPAR Dataset
 ```javascript
-// Fetch and use the data
+// Fetch and use the SPAR data
 fetch('/files/data/spar-belgium-locations.json')
   .then(response => response.json())
   .then(data => {
     console.log(`Total stores: ${data.metadata.total_stores}`);
+    data.stores.forEach(store => {
+      console.log(`${store.name} - ${store.address.city}`);
+    });
+  });
+```
+
+### JavaScript - ALDI Dataset
+```javascript
+// Fetch and use the ALDI data
+fetch('/files/data/aldi-flanders-locations.json')
+  .then(response => response.json())
+  .then(data => {
+    console.log(`Total stores in Flanders: ${data.metadata.total_stores_flanders}`);
     data.stores.forEach(store => {
       console.log(`${store.name} - ${store.address.city}`);
     });
@@ -121,24 +151,33 @@ const accessibleStores = data.stores.filter(
 
 ## Data Sources
 
-This dataset was compiled from publicly available information including:
+### SPAR Dataset
+Compiled from publicly available information including:
 - SPAR Belgium official website (spar.be, mijnspar.be, monspar.be)
 - Tiendeo store directories
 - Various Belgian retail directories
 - Store opening hours websites
 
-## Complete Dataset
+### ALDI Dataset
+Compiled from publicly available information including:
+- ALDI Belgium official website (aldi.be)
+- Hours.be and Openingsuren.Vlaanderen
+- Various Belgian retail directories
+- Store locator services
 
-This file contains 28 representative SPAR locations across Belgium. For the complete dataset with all 335 SPAR locations including:
-- All store addresses
-- Detailed opening hours
-- Additional store features
-- Business ratings
+## Complete Datasets
 
-Consider purchasing comprehensive datasets from:
-- [Geolocet](https://geolocet.com/products/belgium-spar-grocery)
-- [POIdata.io](https://poidata.io/brand-report/spar/belgium)
-- [RetailStat](https://store.retailstat.com/)
+These files contain representative locations. For complete datasets:
+
+### SPAR (all 335 locations in Belgium)
+- [Geolocet - SPAR Belgium](https://geolocet.com/products/belgium-spar-grocery)
+- [POIdata.io - SPAR Belgium](https://poidata.io/brand-report/spar/belgium)
+- [RetailStat - SPAR Belgium](https://store.retailstat.com/)
+
+### ALDI (all 450+ locations in Belgium)
+- [Geolocet - ALDI Belgium](https://geolocet.com/products/belgium-aldi-grocery)
+- [FranchiseData - ALDI Belgium](https://www.franchisedata.org/aldi/BE)
+- [RetailStat - ALDI Belgium](https://store.retailstat.com/)
 
 ## License
 
@@ -149,6 +188,11 @@ This dataset is provided for informational purposes. Please verify store informa
 Last updated: December 29, 2025
 
 For the most current store information, visit:
+
+**SPAR:**
 - [SPAR Belgium Store Locator](https://www.spar.be/winkels)
 - [Mijn SPAR](https://www.mijnspar.be/winkels)
 - [Mon SPAR](https://www.monspar.be/magasins)
+
+**ALDI:**
+- [ALDI Belgium Store Locator](https://www.aldi.be/nl/informatie/supermarkten.html)
