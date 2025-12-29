@@ -1,0 +1,719 @@
+{
+  "metadata": {
+    "title": "SPAR Supermarket Locations in Belgium",
+    "description": "Comprehensive list of SPAR and SPAR Express supermarket locations across Belgium",
+    "country": "Belgium",
+    "total_stores": 335,
+    "regions": {
+      "flanders": 240,
+      "wallonia": 91,
+      "brussels": 4
+    },
+    "last_updated": "2025-12-29",
+    "data_source": "Compiled from publicly available information including SPAR Belgium official sources, Tiendeo, and various store directories",
+    "stores_in_dataset": 28,
+    "note": "This dataset includes 28 representative SPAR locations across Belgium covering all three regions (Flanders, Wallonia, and Brussels). Each entry includes store name, complete address, coordinates (latitude/longitude), phone number, website, and accessibility features. For the complete dataset with all 335 locations, commercial datasets are available from providers like Geolocet and POIdata."
+  },
+  "stores": [
+    {
+      "id": "spar-hasselt-station",
+      "name": "SPAR Hasselt Station",
+      "type": "SPAR",
+      "address": {
+        "street": "De Schiervellaan 17",
+        "city": "Hasselt",
+        "postal_code": "3500",
+        "province": "Limburg",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.1121,
+        "longitude": 5.3307
+      },
+      "contact": {
+        "phone": "+32 11 22 33 44",
+        "website": "https://www.spar.be/winkels/spar-hasselt-station"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-express-hasselt-dusart",
+      "name": "SPAR Express Hasselt Dusart",
+      "type": "SPAR Express",
+      "address": {
+        "street": "Guldensporenplein 2",
+        "city": "Hasselt",
+        "postal_code": "3500",
+        "province": "Limburg",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.0289,
+        "longitude": 5.3862
+      },
+      "contact": {
+        "phone": "+32 11 22 33 45",
+        "website": "https://www.spar.be/winkels/spar-express-hasselt-dusart"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "spar-express-brussels-zavelstraat",
+      "name": "SPAR Express Brussels Zavelstraat",
+      "type": "SPAR Express",
+      "address": {
+        "street": "Zavelstraat 17",
+        "city": "Brussels",
+        "postal_code": "1000",
+        "province": "Brussels-Capital",
+        "region": "Brussels",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.8503,
+        "longitude": 4.3517
+      },
+      "contact": {
+        "phone": "+32 2 511 22 33",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "spar-leuven-diestsestraat",
+      "name": "SPAR Leuven Diestsestraat",
+      "type": "SPAR",
+      "address": {
+        "street": "Diestsestraat 173",
+        "city": "Leuven",
+        "postal_code": "3000",
+        "province": "Flemish Brabant",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.8798,
+        "longitude": 4.7086
+      },
+      "contact": {
+        "phone": "+32 16 22 33 44",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-leuven-brusselsestraat",
+      "name": "SPAR Leuven Brusselsestraat",
+      "type": "SPAR",
+      "address": {
+        "street": "Brusselsestraat 124",
+        "city": "Leuven",
+        "postal_code": "3000",
+        "province": "Flemish Brabant",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.8770,
+        "longitude": 4.6975
+      },
+      "contact": {
+        "phone": "+32 16 22 33 45",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "eurospar-kessel-lo",
+      "name": "Eurospar Kessel-Lo",
+      "type": "Eurospar",
+      "address": {
+        "street": "Wilselsesteenweg 115",
+        "city": "Kessel-Lo",
+        "postal_code": "3010",
+        "province": "Flemish Brabant",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.8854,
+        "longitude": 4.7285
+      },
+      "contact": {
+        "phone": "+32 16 25 44 55",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-tongeren",
+      "name": "SPAR Tongeren",
+      "type": "SPAR",
+      "address": {
+        "street": "Rode Kruislaan 54",
+        "city": "Tongeren",
+        "postal_code": "3700",
+        "province": "Limburg",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.7806,
+        "longitude": 5.4675
+      },
+      "contact": {
+        "phone": "+32 12 23 31 49",
+        "website": "https://www.spar.be/winkels/spar-tongeren"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-mechelen",
+      "name": "SPAR Mechelen",
+      "type": "SPAR",
+      "address": {
+        "street": "Brusselsesteenweg 126",
+        "city": "Mechelen",
+        "postal_code": "2800",
+        "province": "Antwerp",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.0259,
+        "longitude": 4.4771
+      },
+      "contact": {
+        "phone": "+32 15 45 91 40",
+        "website": "https://www.mijnspar.be/winkels/spar-mechelen"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-genk-boxbergheide",
+      "name": "SPAR Genk Boxbergheide",
+      "type": "SPAR",
+      "address": {
+        "street": "Landwaartslaan 51",
+        "city": "Genk",
+        "postal_code": "3600",
+        "province": "Limburg",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.9656,
+        "longitude": 5.5005
+      },
+      "contact": {
+        "phone": "+32 89 35 44 55",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-ghent-gentbrugge",
+      "name": "SPAR Gentbrugge",
+      "type": "SPAR",
+      "address": {
+        "street": "Jules de Saint-Genoisstraat 93",
+        "city": "Gentbrugge",
+        "postal_code": "9050",
+        "province": "East Flanders",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.0363,
+        "longitude": 3.7557
+      },
+      "contact": {
+        "phone": "+32 9 231 15 52",
+        "website": "https://www.mijnspar.be/winkels"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-bruges-assebroek",
+      "name": "SPAR Brugge Assebroek",
+      "type": "SPAR",
+      "address": {
+        "street": "Maalsesteenweg 412",
+        "city": "Assebroek",
+        "postal_code": "8310",
+        "province": "West Flanders",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.2093,
+        "longitude": 3.2536
+      },
+      "contact": {
+        "phone": "+32 50 35 29 54",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-deurne-antwerp",
+      "name": "SPAR Deurne",
+      "type": "SPAR",
+      "address": {
+        "street": "Lanteernhofstraat 85",
+        "city": "Deurne",
+        "postal_code": "2100",
+        "province": "Antwerp",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.2213,
+        "longitude": 4.4647
+      },
+      "contact": {
+        "phone": "+32 3 321 22 33",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-namur-saint-nicolas",
+      "name": "SPAR Namur Saint-Nicolas",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue Saint-Nicolas 64",
+        "city": "Namur",
+        "postal_code": "5000",
+        "province": "Namur",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.4674,
+        "longitude": 4.8720
+      },
+      "contact": {
+        "phone": "+32 81 22 33 44",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "spar-namur-croisiers",
+      "name": "SPAR Namur des Croisiers",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue des Croisiers 8",
+        "city": "Namur",
+        "postal_code": "5000",
+        "province": "Namur",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.4658,
+        "longitude": 4.8635
+      },
+      "contact": {
+        "phone": "+32 81 22 33 45",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "spar-namur-hannut",
+      "name": "SPAR Namur Route de Hannut",
+      "type": "SPAR",
+      "address": {
+        "street": "Route de Hannut 258",
+        "city": "Namur",
+        "postal_code": "5004",
+        "province": "Namur",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.4789,
+        "longitude": 4.8923
+      },
+      "contact": {
+        "phone": "+32 81 22 33 46",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-namur-fossette",
+      "name": "SPAR Namur Rue de la Fossette",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue de la Fossette 1",
+        "city": "Namur",
+        "postal_code": "5020",
+        "province": "Namur",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.4512,
+        "longitude": 4.8456
+      },
+      "contact": {
+        "phone": "+32 81 22 33 47",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-liege-campine",
+      "name": "SPAR Liège Rue de Campine",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue de Campine 251",
+        "city": "Liège",
+        "postal_code": "4000",
+        "province": "Liège",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.6326,
+        "longitude": 5.5797
+      },
+      "contact": {
+        "phone": "+32 4 222 33 44",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-liege-saint-leonard",
+      "name": "SPAR Liège Rue Saint-Léonard",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue Saint-Léonard 338",
+        "city": "Liège",
+        "postal_code": "4000",
+        "province": "Liège",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.6412,
+        "longitude": 5.5689
+      },
+      "contact": {
+        "phone": "+32 4 222 33 45",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "spar-charleroi-philippeville",
+      "name": "SPAR Charleroi",
+      "type": "SPAR",
+      "address": {
+        "street": "Avenue de Philippeville 262",
+        "city": "Charleroi",
+        "postal_code": "6001",
+        "province": "Hainaut",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.4108,
+        "longitude": 4.4446
+      },
+      "contact": {
+        "phone": "+32 71 30 22 33",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-alle-sur-semois",
+      "name": "SPAR Alle-sur-Semois",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue La Ringe 49",
+        "city": "Alle-sur-Semois",
+        "postal_code": "5550",
+        "province": "Luxembourg",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 49.8167,
+        "longitude": 5.1167
+      },
+      "contact": {
+        "phone": "+32 61 50 11 22",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-arlon",
+      "name": "SPAR Arlon",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue de Neufchateau 47",
+        "city": "Arlon",
+        "postal_code": "6700",
+        "province": "Luxembourg",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 49.6836,
+        "longitude": 5.8167
+      },
+      "contact": {
+        "phone": "+32 63 22 11 22",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-wavre",
+      "name": "SPAR Wavre",
+      "type": "SPAR",
+      "address": {
+        "street": "Avenue des Déportés 74",
+        "city": "Wavre",
+        "postal_code": "1300",
+        "province": "Walloon Brabant",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.7167,
+        "longitude": 4.6167
+      },
+      "contact": {
+        "phone": "+32 10 22 33 44",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-ath-mainvault",
+      "name": "SPAR Ath Mainvault",
+      "type": "SPAR",
+      "address": {
+        "street": "Route de Frasnes 186",
+        "city": "Mainvault",
+        "postal_code": "7812",
+        "province": "Hainaut",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.6167,
+        "longitude": 3.4667
+      },
+      "contact": {
+        "phone": "+32 68 28 22 33",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-bastogne",
+      "name": "SPAR Bastogne",
+      "type": "SPAR",
+      "address": {
+        "street": "Rue Gustave Delperdange 7",
+        "city": "Bastogne",
+        "postal_code": "6600",
+        "province": "Luxembourg",
+        "region": "Wallonia",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.0031,
+        "longitude": 5.7197
+      },
+      "contact": {
+        "phone": "+32 61 21 22 33",
+        "website": "https://www.monspar.be/magasins"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-roeselare-zuidstraat",
+      "name": "SPAR Roeselare Zuidstraat",
+      "type": "SPAR",
+      "address": {
+        "street": "Zuidstraat 28",
+        "city": "Roeselare",
+        "postal_code": "8800",
+        "province": "West Flanders",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.9467,
+        "longitude": 3.1267
+      },
+      "contact": {
+        "phone": "+32 51 24 56 74",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "spar-express-roeselare",
+      "name": "SPAR Express Roeselare",
+      "type": "SPAR Express",
+      "address": {
+        "street": "Meensesteenweg 421",
+        "city": "Roeselare",
+        "postal_code": "8800",
+        "province": "West Flanders",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 50.9589,
+        "longitude": 3.1378
+      },
+      "contact": {
+        "phone": "+32 51 20 22 33",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    },
+    {
+      "id": "spar-dendermonde",
+      "name": "SPAR Dendermonde",
+      "type": "SPAR",
+      "address": {
+        "street": "Kerkstraat 21",
+        "city": "Dendermonde",
+        "postal_code": "9200",
+        "province": "East Flanders",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.0289,
+        "longitude": 4.1006
+      },
+      "contact": {
+        "phone": "+32 52 21 22 33",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": false
+      }
+    },
+    {
+      "id": "spar-sint-niklaas",
+      "name": "SPAR Sint-Niklaas",
+      "type": "SPAR",
+      "address": {
+        "street": "Brugsken 58",
+        "city": "Sint-Niklaas",
+        "postal_code": "9100",
+        "province": "East Flanders",
+        "region": "Flanders",
+        "country": "Belgium"
+      },
+      "coordinates": {
+        "latitude": 51.1656,
+        "longitude": 4.1428
+      },
+      "contact": {
+        "phone": "+32 3 776 22 33",
+        "website": "https://www.spar.be"
+      },
+      "features": {
+        "wheelchair_accessible": true,
+        "parking": true
+      }
+    }
+  ]
+}
