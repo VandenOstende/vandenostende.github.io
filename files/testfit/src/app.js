@@ -4,7 +4,7 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES } from './solver.js';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis } from './solver.js';
 import {
   offsetPolygon, boundingBox, polygonCentroid, dist, pointInPolygon, rectPoly,
 } from './geometry.js';
@@ -41,9 +41,12 @@ const DEFAULT_OBSTACLES = [
 const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 
 // ---------- Document reducer + undo/redo ----------
+// `overrides` are manual, position-keyed marks that persist across
+// re-solves: stall type per stall, one-way + direction per aisle.
 const initialDoc = {
   site: DEFAULT_SITE, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
   params: DEFAULT_PARAMS, orientationIndex: 0,
+  overrides: { stalls: {}, aisles: {} },
 };
 
 // Simple history wrapper: { past[], present, future[] }.
@@ -96,7 +99,8 @@ function fitView(site, width, height, pad = 60) {
 
 // ---------- Rendering ----------
 function draw(ctx, opts) {
-  const { view, doc, result, layers, dpr, drawing, hover, selection, size, basemapStyle } = opts;
+  const { view, doc, result, layers, dpr, drawing, hover, selection, size, basemapStyle,
+          stallSel, aisleSel, marquee } = opts;
   const { w2s } = makeTransform(view);
   ctx.save();
   ctx.scale(dpr, dpr);
@@ -133,10 +137,15 @@ function draw(ctx, opts) {
     }
   }
 
-  // Aisles (drawn under stalls)
+  // Aisles (drawn under stalls) with one-way arrows and selection highlight
   if (layers.parking) {
-    ctx.fillStyle = 'rgba(43,51,64,0.9)';
-    for (const a of result.aisles) { pathPoly(ctx, a, w2s, true); ctx.fill(); }
+    for (const a of result.aisles) {
+      pathPoly(ctx, a.poly, w2s, true);
+      ctx.fillStyle = aisleSel === a.key ? 'rgba(59,130,246,0.32)' : 'rgba(43,51,64,0.9)';
+      ctx.fill();
+      if (aisleSel === a.key) { ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2; ctx.stroke(); }
+      if (a.oneway) drawAisleArrows(ctx, a, w2s, view.scale);
+    }
   }
 
   // Buildings / exclusion zones
@@ -152,19 +161,44 @@ function draw(ctx, opts) {
     });
   }
 
-  // Stalls
+  // Stalls (coloured by type, with glyphs when zoomed in + selection)
   if (layers.parking) {
+    const selSet = new Set(stallSel || []);
+    const showGlyph = view.scale >= 5.5;
     for (const st of result.stalls) {
       pathPoly(ctx, st.poly, w2s, true);
-      const c = STALL_TYPES[st.type] ? STALL_TYPES[st.type].color : '#3b82f6';
-      ctx.fillStyle = c;
+      const info = STALL_TYPES[st.type] || STALL_TYPES.standard;
+      ctx.fillStyle = info.color;
       ctx.globalAlpha = 0.85;
       ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-      ctx.lineWidth = 0.6;
+      const selected = selSet.has(st.key);
+      ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = selected ? 2 : 0.6;
       ctx.stroke();
+      if (showGlyph && info.glyph) {
+        const s = w2s(polygonCentroid(st.poly));
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.font = Math.max(8, view.scale * 1.15) + 'px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(info.glyph, s.x, s.y);
+      }
     }
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // Marquee selection box
+  if (marquee) {
+    const a = w2s({ x: marquee.x0, y: marquee.y0 });
+    const b = w2s({ x: marquee.x1, y: marquee.y1 });
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    ctx.fillStyle = 'rgba(59,130,246,0.12)';
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1;
+    ctx.fillRect(x, y, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    ctx.strokeRect(x, y, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
   }
 
   // In-progress polygon
@@ -208,6 +242,33 @@ function drawHandle(ctx, s, color) {
   ctx.stroke();
 }
 
+// Chevron arrows along a one-way aisle, pointing in its travel direction.
+function drawAisleArrows(ctx, aisle, w2s, scale) {
+  const ax = aisleAxis(aisle.poly);
+  if (!(ax.length > 0)) return;
+  const dir = aisle.dir || 1;
+  const tvx = ax.ux * dir, tvy = ax.uy * dir;       // travel direction (unit)
+  const pvx = -ax.uy, pvy = ax.ux;                  // perpendicular (unit)
+  const spacing = 9;                                // meters between arrows
+  const n = Math.max(1, Math.round(ax.length / spacing));
+  const L = Math.min(2.6, ax.width * 0.55);         // arrow length (m)
+  const W = Math.min(1.8, ax.width * 0.42);         // arrow half-span (m)
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = Math.max(1.2, scale * 0.13);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < n; i++) {
+    const along = -ax.length / 2 + ((i + 0.5) * ax.length) / n;
+    const px = ax.cx + ax.ux * along, py = ax.cy + ax.uy * along;
+    const tip = w2s({ x: px + tvx * (L / 2), y: py + tvy * (L / 2) });
+    const bl = w2s({ x: px - tvx * (L / 2) + pvx * W, y: py - tvy * (L / 2) + pvy * W });
+    const br = w2s({ x: px - tvx * (L / 2) - pvx * W, y: py - tvy * (L / 2) - pvy * W });
+    ctx.beginPath();
+    ctx.moveTo(bl.x, bl.y); ctx.lineTo(tip.x, tip.y); ctx.lineTo(br.x, br.y);
+    ctx.stroke();
+  }
+}
+
 function drawGrid(ctx, view, size) {
   // Adaptive metric grid: pick a step that renders ~45px+ apart.
   const steps = [1, 2, 5, 10, 20, 50, 100, 200];
@@ -234,7 +295,9 @@ function App() {
   const [view, setView] = useState({ scale: 8, ox: 60, oy: 60 });
   const [drawing, setDrawing] = useState(null); // { points: [] }
   const [hover, setHover] = useState(null);
-  const [selection, setSelection] = useState(null);
+  const [selection, setSelection] = useState(null);       // obstacle selection
+  const [stallSel, setStallSel] = useState([]);           // selected stall keys
+  const [aisleSel, setAisleSel] = useState(null);         // selected aisle key
   const [result, setResult] = useState({ stalls: [], aisles: [], orientationCount: 0 });
   const [solving, setSolving] = useState(false);
   const [basemapStyle, setBasemapStyle] = useState('none');
@@ -250,6 +313,7 @@ function App() {
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
+  const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
 
   // Once mounted, cancel the index.html boot-failure fallback and let
   // the tile loader trigger redraws as tiles arrive.
@@ -295,6 +359,23 @@ function App() {
     return () => clearTimeout(solveTimer.current);
   }, [doc.site, doc.obstacles, doc.params, doc.orientationIndex]);
 
+  // Apply manual overrides (stall type, aisle one-way) on top of the
+  // solver output, keyed by position so marks survive re-solves.
+  const deco = useMemo(() => {
+    const ov = doc.overrides || {};
+    const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {};
+    const stalls = result.stalls.map((st) => {
+      const key = stallKey(st.poly);
+      return { ...st, key, type: ovStalls[key] || st.type };
+    });
+    const aisles = result.aisles.map((q) => {
+      const key = aisleKey(q);
+      const o = ovAisles[key] || {};
+      return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1 };
+    });
+    return { stalls, aisles, orientationCount: result.orientationCount };
+  }, [result, doc.overrides]);
+
   const renderNow = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -304,20 +385,21 @@ function App() {
     if (!(sz.w > 0) || !(sz.h > 0) || !(view.scale > 0) || !isFinite(view.scale)) return;
     const ctx = canvas.getContext('2d');
     draw(ctx, {
-      view, doc, result, layers,
+      view, doc, result: deco, layers,
       dpr: Math.min(2, window.devicePixelRatio || 1),
       drawing, hover, selection, size: sizeRef.current,
       showHandles: tool === 'select', basemapStyle,
+      stallSel, aisleSel, marquee: marqueeRef.current,
     });
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, result, layers, drawing, hover, selection, tool, basemapStyle]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel]);
 
   renderRef.current = renderNow;
   useEffect(() => { renderNow(); }, [renderNow]);
 
   const metrics = useMemo(
-    () => computeMetrics(doc.site, doc.obstacles, result, doc.params),
-    [doc.site, doc.obstacles, result, doc.params]
+    () => computeMetrics(doc.site, doc.obstacles, deco, doc.params),
+    [doc.site, doc.obstacles, deco, doc.params]
   );
 
   // ---------- Param helpers ----------
@@ -341,6 +423,26 @@ function App() {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // ---------- Override actions (manual marks) ----------
+  const ovOf = (d) => ({ stalls: { ...(d.overrides && d.overrides.stalls) }, aisles: { ...(d.overrides && d.overrides.aisles) } });
+  const setStallTypes = (keys, type) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const ov = ovOf(d);
+    for (const k of keys) { if (type === null) delete ov.stalls[k]; else ov.stalls[k] = type; }
+    return { ...d, overrides: ov };
+  } });
+  const setAisleOneway = (key, oneway) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const ov = ovOf(d);
+    ov.aisles[key] = { ...(ov.aisles[key] || { dir: 1 }), oneway };
+    return { ...d, overrides: ov };
+  } });
+  const flipAisle = (key) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const ov = ovOf(d);
+    const cur = ov.aisles[key] || { oneway: true, dir: 1 };
+    ov.aisles[key] = { ...cur, oneway: true, dir: (cur.dir || 1) * -1 };
+    return { ...d, overrides: ov };
+  } });
+  const clearSel = () => { setStallSel([]); setAisleSel(null); setSelection(null); };
+
   const hitVertex = (sp) => {
     const { w2s } = makeTransform(view);
     for (let i = 0; i < doc.site.length; i++)
@@ -356,8 +458,8 @@ function App() {
     const sp = getScreen(e);
     const wp = getWorld(e);
 
-    // Middle-button or pan tool or space → pan.
-    if (e.button === 1 || tool === 'pan' || e.shiftKey) {
+    // Middle-button or pan tool → pan.
+    if (e.button === 1 || tool === 'pan') {
       dragRef.current = { mode: 'pan', start: sp, view: { ...view } };
       return;
     }
@@ -365,12 +467,34 @@ function App() {
     if (tool === 'select') {
       const v = hitVertex(sp);
       if (v) { dragRef.current = { mode: 'vertex', target: v }; return; }
-      // Select obstacle by interior click.
-      for (let i = doc.obstacles.length - 1; i >= 0; i--) {
-        if (pointInPolygon(wp, doc.obstacles[i])) { setSelection({ type: 'obs', index: i }); return; }
+      // Stall? (topmost first) — click selects, shift+click toggles.
+      for (let i = deco.stalls.length - 1; i >= 0; i--) {
+        if (pointInPolygon(wp, deco.stalls[i].poly)) {
+          const key = deco.stalls[i].key;
+          setSelection(null); setAisleSel(null);
+          setStallSel((cur) => e.shiftKey
+            ? (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key])
+            : [key]);
+          return;
+        }
       }
-      setSelection(null);
-      dragRef.current = { mode: 'pan', start: sp, view: { ...view } };
+      // Aisle?
+      for (let i = deco.aisles.length - 1; i >= 0; i--) {
+        if (pointInPolygon(wp, deco.aisles[i].poly)) {
+          setSelection(null); setStallSel([]); setAisleSel(deco.aisles[i].key);
+          return;
+        }
+      }
+      // Obstacle interior?
+      for (let i = doc.obstacles.length - 1; i >= 0; i--) {
+        if (pointInPolygon(wp, doc.obstacles[i])) {
+          setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null); return;
+        }
+      }
+      // Empty space → marquee-select stalls (drag a box).
+      if (!e.shiftKey) { setSelection(null); setStallSel([]); setAisleSel(null); }
+      marqueeRef.current = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
+      dragRef.current = { mode: 'marquee', add: e.shiftKey };
       return;
     }
 
@@ -415,6 +539,9 @@ function App() {
       drag.cur = wp;
       const r = rectFrom(drag.start, wp);
       setHover({ preview: r });
+    } else if (drag.mode === 'marquee') {
+      marqueeRef.current.x1 = wp.x; marqueeRef.current.y1 = wp.y;
+      renderRef.current();
     }
   };
 
@@ -433,6 +560,24 @@ function App() {
       }
       setHover(null);
       setTool('select');
+    } else if (drag.mode === 'marquee') {
+      const m = marqueeRef.current;
+      marqueeRef.current = null;
+      if (m) {
+        const minX = Math.min(m.x0, m.x1), maxX = Math.max(m.x0, m.x1);
+        const minY = Math.min(m.y0, m.y1), maxY = Math.max(m.y0, m.y1);
+        if (maxX - minX > 0.5 || maxY - minY > 0.5) {
+          const hitKeys = deco.stalls.filter((st) => {
+            const c = polygonCentroid(st.poly);
+            return c.x >= minX && c.x <= maxX && c.y >= minY && c.y <= maxY;
+          }).map((st) => st.key);
+          if (hitKeys.length) {
+            setSelection(null); setAisleSel(null);
+            setStallSel((cur) => drag.add ? Array.from(new Set([...cur, ...hitKeys])) : hitKeys);
+          }
+        }
+        renderRef.current();
+      }
     }
   };
 
@@ -468,7 +613,7 @@ function App() {
         case 'b': setTool('obstacle'); break;
         case ' ': setTool('pan'); break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
-        case 'escape': setDrawing(null); setTool('select'); setSelection(null); break;
+        case 'escape': setDrawing(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); break;
         case 'delete': case 'backspace':
           if (selection && selection.type === 'obs') {
             dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== selection.index) }) });
@@ -546,7 +691,8 @@ function App() {
     site: 'Klik om punten te plaatsen · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
     obstacle: 'Sleep een rechthoek voor een gebouw / uitsluitingszone',
     pan: 'Sleep om te verschuiven',
-    select: null,
+    select: (stallSel.length || aisleSel) ? null
+      : 'Klik een vak of rijbaan om te markeren · sleep een kader om meerdere vakken te selecteren · Shift = bij selectie voegen',
   }[tool];
 
   return html`
@@ -626,6 +772,36 @@ function App() {
       </div>
 
       <div className="panel right">
+        ${(stallSel.length > 0 || aisleSel) && html`
+        <div className="section sel-section">
+          ${stallSel.length > 0 && html`
+            <h3>${stallSel.length} vak${stallSel.length > 1 ? 'ken' : ''} geselecteerd</h3>
+            <div className="type-grid">
+              ${Object.values(STALL_TYPES).map((t) => html`
+                <button key=${t.key} className="type-btn" onClick=${() => setStallTypes(stallSel, t.key)}>
+                  <span className="dot" style=${{ background: t.color }}></span>${t.label}
+                </button>`)}
+            </div>
+            <div className="sel-actions">
+              <button className="btn ghost" onClick=${() => setStallTypes(stallSel, null)}>↺ Wis markering</button>
+              <button className="btn ghost" onClick=${clearSel}>Deselecteer</button>
+            </div>
+          `}
+          ${aisleSel && (() => {
+            const a = deco.aisles.find((x) => x.key === aisleSel);
+            const oneway = a && a.oneway;
+            return html`
+            <h3>Rijbaan geselecteerd</h3>
+            <label className="toggle" style=${{ marginBottom: '8px' }}>
+              <span>Eenrichting (met pijlen)</span>
+              <input type="checkbox" checked=${!!oneway} onChange=${(e) => setAisleOneway(aisleSel, e.target.checked)} />
+            </label>
+            <div className="sel-actions">
+              <button className="btn" onClick=${() => flipAisle(aisleSel)} disabled=${!oneway}>⇄ Draai richting om</button>
+              <button className="btn ghost" onClick=${clearSel}>Deselecteer</button>
+            </div>`;
+          })()}
+        </div>`}
         <div className="section">
           <h3>Metrics</h3>
           <div className="metric-grid">
@@ -643,8 +819,11 @@ function App() {
                 <span className="count">${metrics.counts[t.key] || 0}</span>
               </div>`)}
           </div>
-          ${doc.params.ada && html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '10px' }}>
-            ADA-vereiste (Tabel 208.2): <b style=${{ color: 'var(--text)' }}>${metrics.adaRequired}</b> toegankelijk, waarvan <b style=${{ color: 'var(--text)' }}>${metrics.adaVan}</b> van-accessible.
+          <div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '10px' }}>
+            Minder-valide (Tabel 208.2): <b style=${{ color: metrics.adaProvided >= metrics.adaRequired ? '#22c55e' : '#f59e0b' }}>${metrics.adaProvided}</b> / ${metrics.adaRequired} vereist${metrics.adaRequired ? `, waarvan ${metrics.adaVan} van-accessible` : ''}.
+          </div>
+          ${metrics.onewayAisles > 0 && html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '4px' }}>
+            Eenrichtings-rijbanen: <b style=${{ color: 'var(--text)' }}>${metrics.onewayAisles}</b> / ${metrics.aisleCount}.
           </div>`}
         </div>
 
@@ -654,9 +833,18 @@ function App() {
           ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
           ${slider('Rijstrook', 'aisleWidth', doc.params.aisleWidth, 5, 8, 0.1, 'm', setParam)}
           <div className="field">
-            <label>Parkeerhoek</label>
-            <div className="seg">
-              ${[45, 60, 90].map((a) => html`<button key=${a} className=${doc.params.angle === a ? 'active' : ''} onClick=${() => setParam('angle', a)}>${a}°</button>`)}
+            <label>Parkeerhoek<span className="val">${doc.params.angle}°</span></label>
+            <div className="seg" style=${{ marginBottom: '6px' }}>
+              ${[30, 45, 60, 75, 90].map((a) => html`<button key=${a} className=${doc.params.angle === a ? 'active' : ''} onClick=${() => setParam('angle', a)}>${a}°</button>`)}
+            </div>
+            <div className="row">
+              <input type="range" min="30" max="90" step="1" value=${doc.params.angle}
+                onInput=${(e) => setParam('angle', parseInt(e.target.value, 10), false)}
+                onChange=${(e) => setParam('angle', parseInt(e.target.value, 10), true)}
+                style=${{ flex: 1 }} />
+              <input type="number" min="30" max="90" step="1" value=${doc.params.angle}
+                onChange=${(e) => { const v = Math.max(30, Math.min(90, parseInt(e.target.value, 10) || 90)); setParam('angle', v); }}
+                style=${{ width: '58px' }} />
             </div>
           </div>
         </div>
