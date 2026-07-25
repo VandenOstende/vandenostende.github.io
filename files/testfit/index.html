@@ -18,27 +18,40 @@
     <div class="boot">Bezig met laden van ParkPlanner…</div>
   </div>
 
-  <!-- Fail loudly instead of a silent blank/crash screen. -->
+  <!-- Fail loudly with the real error, instead of a silent blank/crash. -->
   <script>
     (function () {
       var shown = false;
-      function fail(msg) {
-        if (shown) return; shown = true;
+      var errors = [];
+      function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+      function render(headline) {
         var r = document.getElementById('root');
-        if (r) r.innerHTML =
-          '<div class="boot" style="flex-direction:column;gap:10px;padding:24px;text-align:center">' +
-          '<div style="font-size:15px;color:#e6eaef">ParkPlanner kon niet laden</div>' +
-          '<div style="max-width:420px">' + (msg || '') + '</div>' +
-          '<button onclick="location.reload()" style="margin-top:8px;padding:8px 14px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer">Opnieuw proberen</button>' +
+        if (!r) return;
+        var detail = errors.length
+          ? '<pre style="max-width:90vw;overflow:auto;text-align:left;background:#0b0e12;border:1px solid #2a313b;border-radius:6px;padding:10px;font-size:11px;color:#ffb4b4;white-space:pre-wrap">' + esc(errors.join('\n\n')) + '</pre>'
+          : '<div style="max-width:420px">Onbekende fout. Controleer je internetverbinding.</div>';
+        r.innerHTML =
+          '<div class="boot" style="flex-direction:column;gap:12px;padding:20px;text-align:center;justify-content:flex-start">' +
+          '<div style="font-size:15px;color:#e6eaef;margin-top:24px">' + headline + '</div>' + detail +
+          '<div style="font-size:11px;color:#97a2b0">Maak hiervan een screenshot en stuur die door.</div>' +
+          '<button onclick="location.reload()" style="padding:8px 14px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer">Opnieuw proberen</button>' +
           '</div>';
       }
+      function fail(headline) { if (shown) return; shown = true; render(headline); }
       window.addEventListener('error', function (e) {
-        if (e && e.target && e.target.tagName === 'SCRIPT') fail('Een scriptbestand kon niet geladen worden. Controleer je verbinding en probeer opnieuw.');
+        if (e && e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
+          errors.push('Kon niet laden: ' + (e.target.src || e.target.href));
+        } else if (e && e.message) {
+          errors.push(e.message + (e.filename ? '\n  ' + e.filename.split('/').pop() + ':' + e.lineno + ':' + e.colno : '') + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+        }
+        if (!document.querySelector('.app')) fail('ParkPlanner kon niet laden');
       }, true);
-      window.addEventListener('unhandledrejection', function () { /* handled in-app */ });
-      // If React never mounted after a grace period, surface a hint.
+      window.addEventListener('unhandledrejection', function (e) {
+        var reason = e && e.reason; errors.push('Promise-fout: ' + (reason && reason.message ? reason.message : reason));
+        if (!document.querySelector('.app')) fail('ParkPlanner kon niet laden');
+      });
       window.__pp_boot = setTimeout(function () {
-        if (!document.querySelector('.app')) fail('De app is niet gestart. Werk je browser bij (iOS 12+/moderne browser) en probeer opnieuw.');
+        if (!document.querySelector('.app')) fail('ParkPlanner is niet gestart');
       }, 6000);
     })();
   </script>
