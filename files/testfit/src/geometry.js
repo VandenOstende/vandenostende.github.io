@@ -1,0 +1,223 @@
+// ============================================================
+// geometry.js — pure 2D polygon geometry helpers (no deps)
+// All units are world units (meters). Points are {x, y}.
+// ============================================================
+
+export const EPS = 1e-9;
+
+/** Shoelace area (absolute value), m². */
+export function polygonArea(poly) {
+  let a = 0;
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % n];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Signed area (>0 == counter-clockwise in standard math axes). */
+export function signedArea(poly) {
+  let a = 0;
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % n];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a / 2;
+}
+
+/** Ensure a polygon winds counter-clockwise. */
+export function ensureCCW(poly) {
+  return signedArea(poly) < 0 ? poly.slice().reverse() : poly.slice();
+}
+
+export function polygonCentroid(poly) {
+  let cx = 0, cy = 0, a = 0;
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % n];
+    const cross = p.x * q.y - q.x * p.y;
+    a += cross;
+    cx += (p.x + q.x) * cross;
+    cy += (p.y + q.y) * cross;
+  }
+  if (Math.abs(a) < EPS) {
+    // Degenerate — fall back to vertex average.
+    const s = poly.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    return { x: s.x / poly.length, y: s.y / poly.length };
+  }
+  a *= 0.5;
+  return { x: cx / (6 * a), y: cy / (6 * a) };
+}
+
+export function boundingBox(poly) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of poly) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+
+/** Ray-casting point-in-polygon (edges count as inside within EPS). */
+export function pointInPolygon(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    const intersect =
+      (a.y > pt.y) !== (b.y > pt.y) &&
+      pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+export function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/** Shortest distance from point to a segment. */
+export function distPointSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < EPS) return dist(p, a);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** Min distance from a point to any edge of the polygon. */
+export function distPointToPolygonBoundary(p, poly) {
+  let min = Infinity;
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const d = distPointSegment(p, poly[i], poly[(i + 1) % n]);
+    if (d < min) min = d;
+  }
+  return min;
+}
+
+/** Do segments p1p2 and p3p4 properly intersect? */
+export function segmentsIntersect(p1, p2, p3, p4) {
+  const d = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const d1 = d(p3, p4, p1);
+  const d2 = d(p3, p4, p2);
+  const d3 = d(p1, p2, p3);
+  const d4 = d(p1, p2, p4);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+      ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  return false;
+}
+
+/** Does any edge of poly cross any edge of the quad? */
+export function polyEdgesCrossQuad(poly, quad) {
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n];
+    for (let j = 0; j < quad.length; j++) {
+      const c = quad[j], dd = quad[(j + 1) % quad.length];
+      if (segmentsIntersect(a, b, c, dd)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Is the convex quad fully contained within poly?
+ * Corners inside AND no boundary crossings.
+ */
+export function quadInsidePolygon(quad, poly) {
+  for (const c of quad) if (!pointInPolygon(c, poly)) return false;
+  if (polyEdgesCrossQuad(poly, quad)) return false;
+  return true;
+}
+
+/** Do the quad and polygon overlap at all (used for obstacle rejection)? */
+export function quadIntersectsPolygon(quad, poly) {
+  for (const c of quad) if (pointInPolygon(c, poly)) return true;
+  for (const p of poly) if (pointInPolygon(p, quad)) return true;
+  if (polyEdgesCrossQuad(poly, quad)) return true;
+  return false;
+}
+
+/** Rotate a point around a pivot by angle (radians). */
+export function rotatePoint(p, angle, pivot = { x: 0, y: 0 }) {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const dx = p.x - pivot.x, dy = p.y - pivot.y;
+  return { x: pivot.x + dx * c - dy * s, y: pivot.y + dx * s + dy * c };
+}
+
+export function rotatePolygon(poly, angle, pivot = { x: 0, y: 0 }) {
+  return poly.map((p) => rotatePoint(p, angle, pivot));
+}
+
+/**
+ * Inward polygon offset (positive `d` shrinks the polygon).
+ * Edge-offset with miter joins — exact for convex polygons and
+ * rectangles, adequate for the mild concavity of typical sites.
+ * Returns null if the offset collapses the polygon.
+ */
+export function offsetPolygon(poly, d) {
+  if (d === 0) return poly.slice();
+  const pts = ensureCCW(poly);
+  const n = pts.length;
+  if (n < 3) return null;
+  // For CCW polygons, the inward normal of edge (i -> i+1) points left.
+  const lines = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    let nx = -(b.y - a.y), ny = b.x - a.x;
+    const len = Math.hypot(nx, ny);
+    if (len < EPS) continue;
+    nx /= len; ny /= len;
+    lines.push({
+      a: { x: a.x + nx * d, y: a.y + ny * d },
+      b: { x: b.x + nx * d, y: b.y + ny * d },
+    });
+  }
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const prev = lines[(i - 1 + lines.length) % lines.length];
+    const cur = lines[i];
+    const p = lineIntersection(prev.a, prev.b, cur.a, cur.b);
+    out.push(p || cur.a);
+  }
+  if (out.length < 3 || polygonArea(out) < EPS) return null;
+  // Reject if winding flipped (over-offset).
+  if (signedArea(out) * signedArea(pts) < 0) return null;
+  return out;
+}
+
+/** Infinite-line intersection of a1a2 and b1b2. */
+export function lineIntersection(a1, a2, b1, b2) {
+  const d1x = a2.x - a1.x, d1y = a2.y - a1.y;
+  const d2x = b2.x - b1.x, d2y = b2.y - b1.y;
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < EPS) return null;
+  const t = ((b1.x - a1.x) * d2y - (b1.y - a1.y) * d2x) / denom;
+  return { x: a1.x + t * d1x, y: a1.y + t * d1y };
+}
+
+/** Unique edge directions of a polygon, in [0, PI). */
+export function edgeAngles(poly) {
+  const set = [];
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n];
+    let ang = Math.atan2(b.y - a.y, b.x - a.x);
+    // Normalise to [0, PI).
+    ang = ((ang % Math.PI) + Math.PI) % Math.PI;
+    if (!set.some((e) => Math.abs(e - ang) < 1e-4)) set.push(ang);
+  }
+  return set;
+}
+
+/** Axis-aligned rectangle → polygon (4 CCW points). */
+export function rectPoly(x, y, w, h) {
+  return [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ];
+}
