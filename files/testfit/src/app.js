@@ -12,6 +12,8 @@ import * as basemap from './basemap.js';
 import { BASEMAPS, geocode } from './basemap.js';
 
 const html = htm.bind(React.createElement);
+const mark = (s) => { try { window.__pp_mark && window.__pp_mark(s); } catch (e) {} };
+mark('1-module-uitgevoerd');
 
 // ---------- Presets & defaults ----------
 const PRESETS = {
@@ -80,7 +82,13 @@ function makeTransform(view) {
 
 function fitView(site, width, height, pad = 60) {
   const bb = boundingBox(site);
-  const scale = Math.min((width - pad * 2) / bb.w, (height - pad * 2) / bb.h);
+  // Can't fit before layout has a real size — signal "not yet".
+  if (!(width > 0) || !(height > 0) || !(bb.w > 0) || !(bb.h > 0)) return null;
+  const usableW = Math.max(20, width - pad * 2);
+  const usableH = Math.max(20, height - pad * 2);
+  // Always a finite, positive scale — a negative/NaN scale would make the
+  // world-space draw loops run forever and crash the tab.
+  const scale = Math.max(0.2, Math.min(200, Math.min(usableW / bb.w, usableH / bb.h)));
   const ox = (width - bb.w * scale) / 2 - bb.minX * scale;
   const oy = (height - bb.h * scale) / 2 - bb.minY * scale;
   return { scale, ox, oy };
@@ -205,6 +213,8 @@ function drawGrid(ctx, view, size) {
   const steps = [1, 2, 5, 10, 20, 50, 100, 200];
   const stepM = steps.find((s) => s * view.scale >= 45) || 200;
   const px = stepM * view.scale;
+  // Hard guard: a non-positive/non-finite pixel step would loop forever.
+  if (!(px > 0) || !isFinite(px)) return;
   const startX = ((view.ox % px) + px) % px;
   const startY = ((view.oy % px) + px) % px;
   ctx.strokeStyle = 'rgba(255,255,255,0.045)';
@@ -239,12 +249,14 @@ function App() {
   const solveTimer = useRef(null);
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
+  const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
 
   // Once mounted, cancel the index.html boot-failure fallback and let
   // the tile loader trigger redraws as tiles arrive.
   useEffect(() => {
     if (window.__pp_boot) { clearTimeout(window.__pp_boot); window.__pp_boot = null; }
     basemap.setRedraw(() => renderRef.current());
+    mark('3-gemount');
   }, []);
 
   // Resize handling + initial fit. DPR capped at 2 to avoid huge canvas
@@ -256,13 +268,13 @@ function App() {
       sizeRef.current = { w: r.width, h: r.height };
       const canvas = canvasRef.current;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      canvas.width = Math.round(r.width * dpr);
-      canvas.height = Math.round(r.height * dpr);
+      canvas.width = Math.max(1, Math.round(r.width * dpr));
+      canvas.height = Math.max(1, Math.round(r.height * dpr));
       canvas.style.width = r.width + 'px';
       canvas.style.height = r.height + 'px';
-      if (!fittedRef.current && r.width > 0) {
-        setView(fitView(doc.site, r.width, r.height));
-        fittedRef.current = true;
+      if (!fittedRef.current && r.width > 0 && r.height > 0) {
+        const fv = fitView(doc.site, r.width, r.height);
+        if (fv) { setView(fv); fittedRef.current = true; }
       }
       renderRef.current();
     });
@@ -286,6 +298,10 @@ function App() {
   const renderNow = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const sz = sizeRef.current;
+    // Never draw with a zero canvas or a non-finite scale — those are the
+    // conditions that turn world-space draw loops into infinite loops.
+    if (!(sz.w > 0) || !(sz.h > 0) || !(view.scale > 0) || !isFinite(view.scale)) return;
     const ctx = canvas.getContext('2d');
     draw(ctx, {
       view, doc, result, layers,
@@ -293,6 +309,7 @@ function App() {
       drawing, hover, selection, size: sizeRef.current,
       showHandles: tool === 'select', basemapStyle,
     });
+    if (!drewRef.current) { drewRef.current = true; mark('ok'); }
   }, [view, doc, result, layers, drawing, hover, selection, tool, basemapStyle]);
 
   renderRef.current = renderNow;
@@ -469,7 +486,10 @@ function App() {
   const cycleAxis = () =>
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, orientationIndex: (d.orientationIndex + 1) % Math.max(1, result.orientationCount || 1) }) });
   const resetAxis = () => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, orientationIndex: 0 }) });
-  const fitToSite = () => setView(fitView(doc.site, sizeRef.current.w, sizeRef.current.h));
+  const fitToSite = () => {
+    const fv = fitView(doc.site, sizeRef.current.w, sizeRef.current.h);
+    if (fv) setView(fv);
+  };
 
   const saveJSON = () => {
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
@@ -704,6 +724,7 @@ try {
   if (!window.React || !window.ReactDOM || !window.htm) {
     throw new Error('Kernbibliotheken ontbreken (React/ReactDOM/htm niet geladen).');
   }
+  mark('2-mount-start');
   createRoot(document.getElementById('root')).render(html`<${App} />`);
 } catch (err) {
   window.dispatchEvent(new ErrorEvent('error', { message: 'Mount-fout: ' + (err && err.message), error: err }));
