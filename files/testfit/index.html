@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ParkPlanner — TestFit-kloon</title>
+  <meta name="description" content="Automatische parkeerplanner: teken een site, genereer live parkeervakken, rijstroken en metrics. Een open-source TestFit-kloon in React." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- Vendored, self-contained dependencies (no runtime CDN needed). -->
+  <script src="./vendor/react.production.min.js"></script>
+  <script src="./vendor/react-dom.production.min.js"></script>
+  <script src="./vendor/htm.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "./vendor/react.mjs",
+        "react-dom/client": "./vendor/react-dom-client.mjs",
+        "htm": "./vendor/htm.mjs"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root">
+    <div class="boot">Bezig met laden van ParkPlanner…</div>
+  </div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
