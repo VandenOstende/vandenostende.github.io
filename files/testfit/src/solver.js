@@ -13,16 +13,46 @@
 
 import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
-  quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea,
+  quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
 } from './geometry.js';
 
-// Stall type catalogue. Dimensions in meters; ratio drives the mix.
+// Stall type catalogue. `glyph` is a single char drawn on the stall when
+// zoomed in; `label` is shown in the UI. Order defines legend/button order.
 export const STALL_TYPES = {
-  standard: { key: 'standard', label: 'Standaard', color: '#3b82f6' },
-  compact:  { key: 'compact',  label: 'Compact',   color: '#22c55e' },
-  ev:       { key: 'ev',       label: 'EV',        color: '#14b8a6' },
-  ada:      { key: 'ada',      label: 'ADA',       color: '#6366f1' },
+  standard:   { key: 'standard',   label: 'Standaard',    color: '#3b82f6', glyph: '' },
+  compact:    { key: 'compact',    label: 'Compact',      color: '#0ea5e9', glyph: 'C' },
+  ev:         { key: 'ev',         label: 'EV / laadpunt', color: '#22c55e', glyph: 'E' },
+  ada:        { key: 'ada',        label: 'Minder-valide', color: '#6366f1', glyph: '♿' },
+  staff:      { key: 'staff',      label: 'Personeel',    color: '#f59e0b', glyph: 'P' },
+  visitor:    { key: 'visitor',    label: 'Bezoeker',     color: '#ec4899', glyph: 'B' },
+  reserved:   { key: 'reserved',   label: 'Gereserveerd', color: '#ef4444', glyph: 'R' },
+  motorcycle: { key: 'motorcycle', label: 'Motor',        color: '#a855f7', glyph: 'M' },
 };
+
+// Stable position keys so manual overrides survive re-solves. Stalls are
+// grid-placed, so rounding the centroid to 0.5 m gives a robust identity.
+export function stallKey(poly) {
+  const c = polygonCentroid(poly);
+  return Math.round(c.x * 2) / 2 + ',' + Math.round(c.y * 2) / 2;
+}
+export function aisleKey(quad) {
+  const c = polygonCentroid(quad);
+  return Math.round(c.x) + ',' + Math.round(c.y);
+}
+
+/** Long-axis unit vector and centre of an aisle quad (for arrows). */
+export function aisleAxis(quad) {
+  const a = quad[0], b = quad[1], c = quad[2], d = quad[3];
+  const cx = (a.x + b.x + c.x + d.x) / 4, cy = (a.y + b.y + c.y + d.y) / 4;
+  const len01 = Math.hypot(b.x - a.x, b.y - a.y);
+  const len12 = Math.hypot(c.x - b.x, c.y - b.y);
+  // The longer edge pair is the driving direction.
+  let vx, vy, longLen, wide;
+  if (len01 >= len12) { vx = b.x - a.x; vy = b.y - a.y; longLen = len01; wide = len12; }
+  else { vx = c.x - b.x; vy = c.y - b.y; longLen = len12; wide = len01; }
+  const inv = longLen > 0 ? 1 / longLen : 0;
+  return { cx, cy, ux: vx * inv, uy: vy * inv, length: longLen, width: wide };
+}
 
 /**
  * Build the drivable/buildable region: the site shrunk by the setback,
@@ -216,7 +246,8 @@ function assignStallTypes(stalls, params) {
 export function computeMetrics(site, obstacles, result, params) {
   const siteArea = site && site.length >= 3 ? polygonArea(site) : 0;
   const buildingArea = (obstacles || []).reduce((s, o) => s + polygonArea(o), 0);
-  const counts = { standard: 0, compact: 0, ev: 0, ada: 0 };
+  const counts = {};
+  for (const k of Object.keys(STALL_TYPES)) counts[k] = 0;
   for (const st of result.stalls) counts[st.type] = (counts[st.type] || 0) + 1;
   const total = result.stalls.length;
   const buildable = computeBuildable(site, params.setback);
@@ -224,11 +255,14 @@ export function computeMetrics(site, obstacles, result, params) {
   // Gross area per stall (lower is a denser, more efficient layout).
   const areaPerStall = total > 0 ? buildableArea / total : 0;
   const ada = adaRequirement(total);
+  const onewayAisles = (result.aisles || []).filter((a) => a.oneway).length;
   return {
     siteArea, buildingArea, buildableArea, total, counts,
     areaPerStall,
     coverage: siteArea > 0 ? buildingArea / siteArea : 0,
     adaRequired: ada.required, adaVan: ada.van,
+    adaProvided: counts.ada || 0,
     orientationCount: result.orientationCount || 0,
+    aisleCount: (result.aisles || []).length, onewayAisles,
   };
 }

@@ -300,6 +300,33 @@ select.preset {
 .legend .dot { width: 11px; height: 11px; border-radius: 3px; }
 .legend .row .count { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
 
+/* ---- Selection panel ---- */
+.sel-section { background: #131a24; border-bottom: 1px solid var(--border); }
+.sel-section h3 { color: var(--accent); }
+.type-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.type-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.type-btn:hover { background: #262d37; border-color: var(--accent); }
+.type-btn .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.sel-actions { display: flex; gap: 6px; }
+.sel-actions .btn { flex: 1; justify-content: center; }
+
 .foot {
   padding: 12px 14px;
   font-size: 11px;
