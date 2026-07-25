@@ -6,7 +6,8 @@ import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
 import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis } from './solver.js';
 import {
-  offsetPolygon, boundingBox, polygonCentroid, dist, pointInPolygon, rectPoly,
+  offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
+  pointInPolygon, rectPoly,
 } from './geometry.js';
 import * as basemap from './basemap.js';
 import { BASEMAPS, geocode } from './basemap.js';
@@ -41,12 +42,27 @@ const DEFAULT_OBSTACLES = [
 const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 
 // ---------- Document reducer + undo/redo ----------
+// Infrastructure annotations you can draw over the plan.
+//   mode 'line'  → click points, finish on dbl-click/first point (Esc cancels)
+//   mode 'cross' → 2 clicks define a crossing centreline (zebra stripes)
+//   mode 'area'  → drag a rectangle
+// `under: true` draws beneath the parking (roads, bike parking).
+export const ANNOT_TYPES = {
+  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: true, under: true },
+  walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true },
+  bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true },
+  crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross' },
+  bikeparking: { label: 'Fietsparking', color: '#0e7490', width: 0,   mode: 'area', under: true },
+  marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false },
+};
+
 // `overrides` are manual, position-keyed marks that persist across
 // re-solves: stall type per stall, one-way + direction per aisle.
 const initialDoc = {
   site: DEFAULT_SITE, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
   params: DEFAULT_PARAMS, orientationIndex: 0,
   overrides: { stalls: {}, aisles: {} },
+  annotations: [], // { kind, points:[{x,y}], width, curved }
 };
 
 // Simple history wrapper: { past[], present, future[] }.
@@ -111,8 +127,15 @@ function draw(ctx, opts) {
     basemap.drawBasemap(ctx, { style: basemapStyle, geo: doc.geo, view, size, w2s });
   }
 
+  const selAnnIdx = selection && selection.type === 'annot' ? selection.index : -1;
+
   // Grid
   if (layers.grid) drawGrid(ctx, view, size);
+
+  // Infrastructure drawn under the parking (roads, bike parking)
+  if (layers.infra && doc.annotations) {
+    drawAnnotations(ctx, doc.annotations, w2s, view.scale, true, selAnnIdx);
+  }
 
   // Site fill + outline
   if (layers.site && doc.site.length >= 2) {
@@ -187,6 +210,22 @@ function draw(ctx, opts) {
     }
     ctx.textAlign = 'start';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  // Infrastructure drawn over the parking (paths, crosswalks, markings)
+  if (layers.infra && doc.annotations) {
+    drawAnnotations(ctx, doc.annotations, w2s, view.scale, false, selAnnIdx);
+  }
+
+  // Rectangle preview (obstacle / bike-parking area drag)
+  if (hover && hover.preview) {
+    const r = hover.preview;
+    const a = w2s({ x: r.x, y: r.y }), b = w2s({ x: r.x + r.w, y: r.y + r.h });
+    ctx.strokeStyle = '#22c55e';
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    ctx.setLineDash([]);
   }
 
   // Marquee selection box
@@ -269,6 +308,104 @@ function drawAisleArrows(ctx, aisle, w2s, scale) {
   }
 }
 
+// ---- Annotation (infrastructure) rendering ----
+function buildAnnotPath(ctx, pts, curved) {
+  ctx.beginPath();
+  if (pts.length < 2) return;
+  ctx.moveTo(pts[0].x, pts[0].y);
+  if (!curved || pts.length === 2) {
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    return;
+  }
+  // Catmull-Rom → cubic bezier for a smooth curve through the points.
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    ctx.bezierCurveTo(
+      p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6,
+      p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6,
+      p2.x, p2.y);
+  }
+}
+
+function drawAnnotation(ctx, ann, w2s, scale, selected) {
+  const t = ANNOT_TYPES[ann.kind];
+  if (!t || !ann.points || ann.points.length < 2) return;
+
+  if (t.mode === 'cross') {
+    const A = ann.points[0], B = ann.points[1];
+    const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
+    if (len < 0.1) return;
+    const ux = dx / len, uy = dy / len, px = -uy, py = ux, half = (ann.width || 3.5) / 2;
+    const step = 1.2, stripe = 0.6;
+    ctx.fillStyle = selected ? '#ffffff' : '#e9edf2';
+    for (let s = 0; s < len; s += step) {
+      const s2 = Math.min(s + stripe, len);
+      const q = [
+        { x: A.x + ux * s + px * half, y: A.y + uy * s + py * half },
+        { x: A.x + ux * s2 + px * half, y: A.y + uy * s2 + py * half },
+        { x: A.x + ux * s2 - px * half, y: A.y + uy * s2 - py * half },
+        { x: A.x + ux * s - px * half, y: A.y + uy * s - py * half },
+      ].map(w2s);
+      ctx.beginPath();
+      q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fill();
+    }
+    return;
+  }
+
+  if (t.mode === 'area') {
+    const pts = ann.points.map(w2s);
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(14,116,144,0.35)';
+    ctx.fill();
+    ctx.strokeStyle = selected ? '#ffffff' : t.color;
+    ctx.lineWidth = selected ? 2.5 : 1.5;
+    ctx.stroke();
+    const cap = Math.floor(polygonArea(ann.points) / 1.5); // ~1.5 m² per bike
+    const c = w2s(polygonCentroid(ann.points));
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('~' + cap + ' fietsen', c.x, c.y);
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+    return;
+  }
+
+  // Line kinds (road, walkway, bikepath, marking)
+  const pts = ann.points.map(w2s);
+  const wpx = Math.max(1.5, (ann.width || 0.3) * scale);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (selected) {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = wpx + 4;
+    buildAnnotPath(ctx, pts, ann.curved);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = t.color;
+  ctx.lineWidth = wpx;
+  buildAnnotPath(ctx, pts, ann.curved);
+  ctx.stroke();
+  if (ann.kind === 'bikepath') { // dashed centre line
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = Math.max(1, wpx * 0.12);
+    ctx.setLineDash([6, 6]);
+    buildAnnotPath(ctx, pts, ann.curved);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawAnnotations(ctx, anns, w2s, scale, under, selIdx) {
+  for (let i = 0; i < anns.length; i++) {
+    const t = ANNOT_TYPES[anns[i].kind];
+    if (!t || !!t.under !== under) continue;
+    drawAnnotation(ctx, anns[i], w2s, scale, i === selIdx);
+  }
+}
+
 function drawGrid(ctx, view, size) {
   // Adaptive metric grid: pick a step that renders ~45px+ apart.
   const steps = [1, 2, 5, 10, 20, 50, 100, 200];
@@ -291,7 +428,10 @@ function App() {
   const [hist, dispatch] = useReducer(historyReducer, { past: [], present: initialDoc, future: [] });
   const doc = hist.present;
   const [tool, setTool] = useState('select');
-  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true });
+  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true });
+  const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
+  const [annotWidth, setAnnotWidth] = useState(6);
+  const [annotCurved, setAnnotCurved] = useState(true);
   const [view, setView] = useState({ scale: 8, ox: 60, oy: 60 });
   const [drawing, setDrawing] = useState(null); // { points: [] }
   const [hover, setHover] = useState(null);
@@ -443,6 +583,47 @@ function App() {
   } });
   const clearSel = () => { setStallSel([]); setAisleSel(null); setSelection(null); };
 
+  // ---------- Annotation (infrastructure) actions ----------
+  const addAnnotation = (ann) =>
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: [...(d.annotations || []), ann] }) });
+  const deleteAnnotation = (index) =>
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: (d.annotations || []).filter((_, i) => i !== index) }) });
+  const startAnnot = (kind) => {
+    const t = ANNOT_TYPES[kind];
+    setAnnotKind(kind);
+    setAnnotWidth(t.width || 2);
+    setAnnotCurved(!!t.curved);
+    setTool('annot'); setDrawing(null); clearSel();
+  };
+  const finishAnnotLine = (points) => {
+    const t = ANNOT_TYPES[annotKind];
+    if (points.length >= 2) {
+      addAnnotation({ kind: annotKind, points, width: annotWidth, curved: t.mode === 'line' ? annotCurved : false });
+    }
+    setDrawing(null);
+  };
+
+  // Nearest annotation to a screen point (for selection), or -1.
+  const hitAnnotation = (sp) => {
+    const { w2s } = makeTransform(view);
+    const anns = doc.annotations || [];
+    for (let i = anns.length - 1; i >= 0; i--) {
+      const ann = anns[i];
+      const t = ANNOT_TYPES[ann.kind];
+      if (!t || !ann.points || ann.points.length < 2) continue;
+      const pts = ann.points.map(w2s);
+      const tol = Math.max(6, ((ann.width || 1) * view.scale) / 2 + 4);
+      if (t.mode === 'area') {
+        if (pointInPolygon(makeTransform(view).s2w(sp), ann.points)) return i;
+        continue;
+      }
+      for (let s = 0; s < pts.length - 1; s++) {
+        if (distPointSegment(sp, pts[s], pts[s + 1]) < tol) return i;
+      }
+    }
+    return -1;
+  };
+
   const hitVertex = (sp) => {
     const { w2s } = makeTransform(view);
     for (let i = 0; i < doc.site.length; i++)
@@ -491,6 +672,9 @@ function App() {
           setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null); return;
         }
       }
+      // Infrastructure annotation?
+      const ai = hitAnnotation(sp);
+      if (ai >= 0) { setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null); return; }
       // Empty space → marquee-select stalls (drag a box).
       if (!e.shiftKey) { setSelection(null); setStallSel([]); setAisleSel(null); }
       marqueeRef.current = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
@@ -512,6 +696,21 @@ function App() {
       dragRef.current = { mode: 'rect', start: wp, cur: wp };
       return;
     }
+
+    if (tool === 'annot') {
+      const t = ANNOT_TYPES[annotKind];
+      if (t.mode === 'area') { dragRef.current = { mode: 'annotArea', start: wp, cur: wp }; return; }
+      // line / cross: accumulate points
+      const first = drawing && drawing.points[0];
+      const { w2s } = makeTransform(view);
+      if (t.mode === 'line' && first && drawing.points.length >= 2 && dist(w2s(first), sp) < 12) {
+        finishAnnotLine(drawing.points); return;
+      }
+      const pts = [...((drawing && drawing.points) || []), wp];
+      if (t.mode === 'cross' && pts.length >= 2) { finishAnnotLine(pts); return; }
+      setDrawing({ points: pts });
+      return;
+    }
   };
 
   const onPointerMove = (e) => {
@@ -520,12 +719,15 @@ function App() {
     const drag = dragRef.current;
 
     if (!drag) {
-      if (tool === 'site' && drawing) setHover(wp);
+      if ((tool === 'site' || tool === 'annot') && drawing) setHover(wp);
       return;
     }
     if (drag.mode === 'pan') {
       const dx = sp.x - drag.start.x, dy = sp.y - drag.start.y;
       setView({ ...drag.view, ox: drag.view.ox + dx, oy: drag.view.oy + dy });
+    } else if (drag.mode === 'annotArea') {
+      drag.cur = wp;
+      setHover({ preview: rectFrom(drag.start, wp) });
     } else if (drag.mode === 'vertex') {
       const t = drag.target;
       dispatch({ type: 'LIVE', updater: (d) => {
@@ -560,6 +762,12 @@ function App() {
       }
       setHover(null);
       setTool('select');
+    } else if (drag.mode === 'annotArea') {
+      const r = rectFrom(drag.start, drag.cur);
+      if (Math.abs(r.w) > 0.5 && Math.abs(r.h) > 0.5) {
+        addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0 });
+      }
+      setHover(null);
     } else if (drag.mode === 'marquee') {
       const m = marqueeRef.current;
       marqueeRef.current = null;
@@ -584,6 +792,8 @@ function App() {
   const onDoubleClick = () => {
     if (tool === 'site' && drawing && drawing.points.length >= 3) {
       commitSite(drawing.points); setDrawing(null); setTool('select');
+    } else if (tool === 'annot' && drawing && drawing.points.length >= 2) {
+      finishAnnotLine(drawing.points);
     }
   };
 
@@ -618,6 +828,8 @@ function App() {
           if (selection && selection.type === 'obs') {
             dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== selection.index) }) });
             setSelection(null);
+          } else if (selection && selection.type === 'annot') {
+            deleteAnnotation(selection.index); setSelection(null);
           }
           break;
         default: break;
@@ -691,6 +903,11 @@ function App() {
     site: 'Klik om punten te plaatsen · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
     obstacle: 'Sleep een rechthoek voor een gebouw / uitsluitingszone',
     pan: 'Sleep om te verschuiven',
+    annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'area'
+      ? `${ANNOT_TYPES[annotKind].label}: sleep een rechthoek`
+      : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'cross'
+        ? `${ANNOT_TYPES[annotKind].label}: klik begin- en eindpunt van de oversteek`
+        : `${ANNOT_TYPES[annotKind] ? ANNOT_TYPES[annotKind].label : ''}: klik punten · dubbelklik of klik beginpunt om te eindigen · Esc annuleert`,
     select: (stallSel.length || aisleSel) ? null
       : 'Klik een vak of rijbaan om te markeren · sleep een kader om meerdere vakken te selecteren · Shift = bij selectie voegen',
   }[tool];
@@ -734,12 +951,34 @@ function App() {
           <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
         </div>
         <div className="section">
+          <h3>Teken (infrastructuur)</h3>
+          <div className="type-grid">
+            ${Object.entries(ANNOT_TYPES).map(([k, t]) => html`
+              <button key=${k} className=${'type-btn' + (tool === 'annot' && annotKind === k ? ' active' : '')}
+                onClick=${() => startAnnot(k)}>
+                <span className="dot" style=${{ background: t.color }}></span>${t.label}
+              </button>`)}
+          </div>
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Breedte<span className="val">${annotWidth.toFixed(1)} m</span></label>
+              <input type="range" min="0.2" max="12" step="0.1" value=${annotWidth}
+                onInput=${(e) => setAnnotWidth(parseFloat(e.target.value))} />
+              ${ANNOT_TYPES[annotKind].mode === 'line' && html`
+                <label className="toggle" style=${{ marginTop: '8px' }}>
+                  <span>Vloeiende bochten</span>
+                  <input type="checkbox" checked=${annotCurved} onChange=${(e) => setAnnotCurved(e.target.checked)} />
+                </label>`}
+            </div>`}
+        </div>
+        <div className="section">
           <h3>Lagen</h3>
           ${layerRow('grid', 'Raster', '#3b4453', layers, setLayers)}
           ${layerRow('site', 'Site-grens', '#f8b500', layers, setLayers)}
           ${layerRow('setback', 'Setback', '#6ee7ff', layers, setLayers)}
           ${layerRow('building', 'Gebouwen', '#64748b', layers, setLayers)}
           ${layerRow('parking', 'Parkeren', '#3b82f6', layers, setLayers)}
+          ${layerRow('infra', 'Infrastructuur', '#0e7490', layers, setLayers)}
         </div>
         <div className="section">
           <h3>Preset</h3>
@@ -772,6 +1011,14 @@ function App() {
       </div>
 
       <div className="panel right">
+        ${selection && selection.type === 'annot' && doc.annotations[selection.index] && html`
+        <div className="section sel-section">
+          <h3>${ANNOT_TYPES[doc.annotations[selection.index].kind].label} geselecteerd</h3>
+          <div className="sel-actions">
+            <button className="btn" onClick=${() => { deleteAnnotation(selection.index); setSelection(null); }}>🗑 Verwijder</button>
+            <button className="btn ghost" onClick=${() => setSelection(null)}>Deselecteer</button>
+          </div>
+        </div>`}
         ${(stallSel.length > 0 || aisleSel) && html`
         <div className="section sel-section">
           ${stallSel.length > 0 && html`
