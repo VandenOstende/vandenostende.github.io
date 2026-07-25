@@ -1,13 +1,15 @@
 // ============================================================
 // app.js — ParkPlanner React UI (no build step; htm + React ESM)
 // ============================================================
-import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { createRoot } from 'react-dom/client';
-import htm from 'htm';
+import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
+import { createRoot } from '../vendor/react-dom-client.mjs';
+import htm from '../vendor/htm.mjs';
 import { solveParking, computeMetrics, STALL_TYPES } from './solver.js';
 import {
   offsetPolygon, boundingBox, polygonCentroid, dist, pointInPolygon, rectPoly,
 } from './geometry.js';
+import * as basemap from './basemap.js';
+import { BASEMAPS, geocode } from './basemap.js';
 
 const html = htm.bind(React.createElement);
 
@@ -33,9 +35,12 @@ const DEFAULT_OBSTACLES = [
   rectPoly(60, 36, 36, 24), // building footprint, top-right
 ];
 
+// Geographic anchor for local origin (0,0). Default: Amsterdam Zuidas.
+const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
+
 // ---------- Document reducer + undo/redo ----------
 const initialDoc = {
-  site: DEFAULT_SITE, obstacles: DEFAULT_OBSTACLES,
+  site: DEFAULT_SITE, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
   params: DEFAULT_PARAMS, orientationIndex: 0,
 };
 
@@ -83,11 +88,16 @@ function fitView(site, width, height, pad = 60) {
 
 // ---------- Rendering ----------
 function draw(ctx, opts) {
-  const { view, doc, result, layers, dpr, drawing, hover, selection, size } = opts;
+  const { view, doc, result, layers, dpr, drawing, hover, selection, size, basemapStyle } = opts;
   const { w2s } = makeTransform(view);
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, size.w, size.h);
+
+  // Basemap tiles (under everything)
+  if (basemapStyle && basemapStyle !== 'none') {
+    basemap.drawBasemap(ctx, { style: basemapStyle, geo: doc.geo, view, size, w2s });
+  }
 
   // Grid
   if (layers.grid) drawGrid(ctx, view, size);
@@ -217,6 +227,10 @@ function App() {
   const [selection, setSelection] = useState(null);
   const [result, setResult] = useState({ stalls: [], aisles: [], orientationCount: 0 });
   const [solving, setSolving] = useState(false);
+  const [basemapStyle, setBasemapStyle] = useState('none');
+  const [geoSearch, setGeoSearch] = useState('');
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoMsg, setGeoMsg] = useState('');
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -226,16 +240,24 @@ function App() {
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
 
-  // Resize handling + initial fit.
+  // Once mounted, cancel the index.html boot-failure fallback and let
+  // the tile loader trigger redraws as tiles arrive.
+  useEffect(() => {
+    if (window.__pp_boot) { clearTimeout(window.__pp_boot); window.__pp_boot = null; }
+    basemap.setRedraw(() => renderRef.current());
+  }, []);
+
+  // Resize handling + initial fit. DPR capped at 2 to avoid huge canvas
+  // backing stores that can crash mobile Safari on hi-DPI screens.
   useEffect(() => {
     const el = wrapRef.current;
     const ro = new ResizeObserver(() => {
       const r = el.getBoundingClientRect();
       sizeRef.current = { w: r.width, h: r.height };
       const canvas = canvasRef.current;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = r.width * dpr;
-      canvas.height = r.height * dpr;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.round(r.width * dpr);
+      canvas.height = Math.round(r.height * dpr);
       canvas.style.width = r.width + 'px';
       canvas.style.height = r.height + 'px';
       if (!fittedRef.current && r.width > 0) {
@@ -267,11 +289,11 @@ function App() {
     const ctx = canvas.getContext('2d');
     draw(ctx, {
       view, doc, result, layers,
-      dpr: window.devicePixelRatio || 1,
+      dpr: Math.min(2, window.devicePixelRatio || 1),
       drawing, hover, selection, size: sizeRef.current,
-      showHandles: tool === 'select',
+      showHandles: tool === 'select', basemapStyle,
     });
-  }, [view, doc, result, layers, drawing, hover, selection, tool]);
+  }, [view, doc, result, layers, drawing, hover, selection, tool, basemapStyle]);
 
   renderRef.current = renderNow;
   useEffect(() => { renderNow(); }, [renderNow]);
@@ -474,6 +496,31 @@ function App() {
     setTimeout(fitToSite, 0);
   };
 
+  // Re-anchor the plan so the site centroid sits at a geographic point.
+  const centerOnLatLon = (lat, lon) => {
+    const c = polygonCentroid(doc.site);
+    const cosLat = Math.cos((lat * Math.PI) / 180);
+    const geo = { lat: lat + c.y / 111320, lon: lon - c.x / (111320 * cosLat) };
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, geo }) });
+    setTimeout(fitToSite, 0);
+  };
+  const doGeocode = async () => {
+    const q = geoSearch.trim();
+    if (!q) return;
+    setGeoBusy(true); setGeoMsg('');
+    try {
+      const hit = await geocode(q);
+      if (!hit) { setGeoMsg('Niet gevonden'); }
+      else {
+        centerOnLatLon(hit.lat, hit.lon);
+        if (basemapStyle === 'none') setBasemapStyle('satellite');
+        setGeoMsg(hit.label.split(',').slice(0, 3).join(', '));
+      }
+    } catch (err) {
+      setGeoMsg('Zoeken mislukt (netwerk/CORS)');
+    } finally { setGeoBusy(false); }
+  };
+
   // ---------- Render UI ----------
   const hintText = {
     site: 'Klik om punten te plaatsen · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
@@ -506,6 +553,20 @@ function App() {
       </div>
 
       <div className="panel left">
+        <div className="section">
+          <h3>Kaart (onderlaag)</h3>
+          <select className="preset" style=${{ marginBottom: '10px' }}
+            value=${basemapStyle} onChange=${(e) => setBasemapStyle(e.target.value)}>
+            ${Object.entries(BASEMAPS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
+          </select>
+          <form onSubmit=${(e) => { e.preventDefault(); doGeocode(); }} className="geo-form">
+            <input type="text" placeholder="Zoek adres of plaats…" value=${geoSearch}
+              onChange=${(e) => setGeoSearch(e.target.value)} />
+            <button type="submit" className="btn" disabled=${geoBusy}>${geoBusy ? '…' : 'Ga'}</button>
+          </form>
+          ${geoMsg && html`<div className="geo-msg">${geoMsg}</div>`}
+          <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
+        </div>
         <div className="section">
           <h3>Lagen</h3>
           ${layerRow('grid', 'Raster', '#3b4453', layers, setLayers)}
@@ -540,6 +601,8 @@ function App() {
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
         </div>
+        ${basemapStyle !== 'none' && BASEMAPS[basemapStyle].attribution && html`
+          <div className="attrib">${BASEMAPS[basemapStyle].attribution}</div>`}
       </div>
 
       <div className="panel right">
