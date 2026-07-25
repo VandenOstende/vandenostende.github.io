@@ -11,6 +11,15 @@ rijstroken en metrics — geïnspireerd op TestFit's *Parking Solver*.
 - **Kaart-onderlaag** — plan bovenop **OpenStreetMap**, **satelliet** of **hybride**
   (satelliet + labels) luchtbeelden. Zoek een adres/plaats (OSM Nominatim) en de
   site wordt op die locatie geplaatst; de tegels lijnen uit met de site-geometrie.
+- **3D-weergave (Mapbox)** — schakel naar 3D met **echte gebouwen**; het plan wordt
+  over de 3D-kaart gedrapeerd. Vereist je **eigen Mapbox public token** (pk.…), die
+  alleen lokaal in je browser wordt bewaard.
+- **Vakken markeren** — selecteer één vak of sleep een kader over meerdere en
+  markeer ze als EV, minder-valide, personeel, bezoeker, gereserveerd, compact of motor.
+- **Rijbanen als eenrichting** — selecteer een rijbaan en zet 'm op eenrichting;
+  richtingspijlen verschijnen op de baan (met omkeer-knop).
+- **Infrastructuur tekenen** — wegen (met bochten), wandelpaden, fietspaden,
+  zebrapaden, fietsparking (met capaciteit) en vrije markeringen.
 - **Site tekenen** — polygoon-tool met sleepbare hoekpunten en numerieke oppervlakte.
 - **Gebouwen / uitsluitingszones** — sleep rechthoeken die de solver respecteert.
 - **Automatische parkeergeneratie** — dubbel-belaste modules, live herberekend.

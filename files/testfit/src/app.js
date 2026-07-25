@@ -444,6 +444,10 @@ function App() {
   const [geoSearch, setGeoSearch] = useState('');
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoMsg, setGeoMsg] = useState('');
+  const [viewMode, setViewMode] = useState('2d');            // '2d' | '3d'
+  const [mbToken, setMbToken] = useState(() => { try { return localStorage.getItem('pp_mapbox_token') || ''; } catch (e) { return ''; } });
+  const [mbTokenInput, setMbTokenInput] = useState('');
+  const [map3dError, setMap3dError] = useState('');
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -454,6 +458,7 @@ function App() {
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
+  const map3dRef = useRef(null);   // Mapbox controller when in 3D view
 
   // Once mounted, cancel the index.html boot-failure fallback and let
   // the tile loader trigger redraws as tiles arrive.
@@ -536,6 +541,37 @@ function App() {
 
   renderRef.current = renderNow;
   useEffect(() => { renderNow(); }, [renderNow]);
+
+  // Snapshot of everything the 3D view draws.
+  const buildPlan = useCallback(() => ({
+    site: doc.site, obstacles: doc.obstacles,
+    stalls: deco.stalls, aisles: deco.aisles, annotations: doc.annotations,
+  }), [doc.site, doc.obstacles, deco, doc.annotations]);
+
+  // Create/destroy the Mapbox 3D map when entering/leaving 3D (needs a token).
+  useEffect(() => {
+    if (viewMode !== '3d' || !mbToken) {
+      if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; }
+      return;
+    }
+    let cancelled = false;
+    setMap3dError('');
+    const container = document.getElementById('pp-map3d');
+    if (!container) return;
+    import('./map3d.js').then(async (m) => {
+      if (cancelled) return;
+      const ctrl = await m.init3D(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg));
+      if (cancelled) { if (ctrl) ctrl.destroy(); return; }
+      map3dRef.current = ctrl;
+    }).catch(() => setMap3dError('3D-weergave kon niet laden.'));
+    return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, mbToken]);
+
+  // Push plan updates into an existing 3D map.
+  useEffect(() => {
+    if (map3dRef.current && map3dRef.current.update) map3dRef.current.update(buildPlan());
+  }, [buildPlan]);
 
   const metrics = useMemo(
     () => computeMetrics(doc.site, doc.obstacles, deco, doc.params),
@@ -898,6 +934,18 @@ function App() {
     } finally { setGeoBusy(false); }
   };
 
+  // ---------- Mapbox 3D token ----------
+  const saveMbToken = () => {
+    const t = mbTokenInput.trim();
+    if (!t) return;
+    try { localStorage.setItem('pp_mapbox_token', t); } catch (e) {}
+    setMbToken(t); setMbTokenInput(''); setMap3dError('');
+  };
+  const clearMbToken = () => {
+    try { localStorage.removeItem('pp_mapbox_token'); } catch (e) {}
+    setMbToken(''); setMap3dError('');
+  };
+
   // ---------- Render UI ----------
   const hintText = {
     site: 'Klik om punten te plaatsen · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
@@ -928,6 +976,8 @@ function App() {
         <div className="tb-sep"></div>
         <button className="btn ghost" onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶ Undo</button>
         <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>
+        <div className="tb-sep"></div>
+        <button className=${'btn' + (viewMode === '3d' ? ' active' : '')} onClick=${() => setViewMode(viewMode === '3d' ? '2d' : '3d')} title="Wissel 2D/3D">${viewMode === '3d' ? '🧊 3D' : '🗺 2D'}</button>
         <div className="tb-spacer"></div>
         <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>
         <button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
@@ -1006,8 +1056,32 @@ function App() {
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
         </div>
-        ${basemapStyle !== 'none' && BASEMAPS[basemapStyle].attribution && html`
+        ${basemapStyle !== 'none' && viewMode === '2d' && BASEMAPS[basemapStyle].attribution && html`
           <div className="attrib">${BASEMAPS[basemapStyle].attribution}</div>`}
+
+        ${viewMode === '3d' && html`
+          <div id="pp-map3d" className="map3d"></div>
+          ${!mbToken && html`
+            <div className="token-panel">
+              <h4>🧊 3D-gebouwen via Mapbox</h4>
+              <p>Voer je eigen Mapbox <b>public token</b> (pk.…) in. Die wordt alleen lokaal in je browser bewaard.</p>
+              <input type="text" placeholder="pk.eyJ…" value=${mbTokenInput} onInput=${(e) => setMbTokenInput(e.target.value)} />
+              <div className="sel-actions">
+                <button className="btn" onClick=${saveMbToken}>3D starten</button>
+                <button className="btn ghost" onClick=${() => setViewMode('2d')}>Terug naar 2D</button>
+              </div>
+              <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener">Gratis token aanmaken →</a>
+            </div>`}
+          ${mbToken && map3dError && html`
+            <div className="token-panel">
+              <h4>3D niet beschikbaar</h4>
+              <p>${map3dError}</p>
+              <div className="sel-actions">
+                <button className="btn" onClick=${clearMbToken}>Andere token invoeren</button>
+                <button className="btn ghost" onClick=${() => setViewMode('2d')}>Terug naar 2D</button>
+              </div>
+            </div>`}
+          ${mbToken && !map3dError && html`<div className="attrib">Mapbox · plan in 3D</div>`}`}
       </div>
 
       <div className="panel right">
