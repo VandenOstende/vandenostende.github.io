@@ -698,4 +698,14 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-createRoot(document.getElementById('root')).render(html`<${App} />`);
+// Guard the mount so any error surfaces through the boot overlay
+// (index.html) rather than as a silent blank screen.
+try {
+  if (!window.React || !window.ReactDOM || !window.htm) {
+    throw new Error('Kernbibliotheken ontbreken (React/ReactDOM/htm niet geladen).');
+  }
+  createRoot(document.getElementById('root')).render(html`<${App} />`);
+} catch (err) {
+  window.dispatchEvent(new ErrorEvent('error', { message: 'Mount-fout: ' + (err && err.message), error: err }));
+  throw err;
+}
