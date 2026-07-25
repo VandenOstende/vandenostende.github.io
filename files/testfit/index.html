@@ -38,6 +38,14 @@
           '</div>';
       }
       function fail(headline) { if (shown) return; shown = true; render(headline); }
+      // Breadcrumbs survive a hard WebContent crash: on the next load we can
+      // report how far the previous attempt got.
+      window.__pp_mark = function (s) { try { localStorage.setItem('pp_step', s); } catch (e) {} };
+      try {
+        var prev = localStorage.getItem('pp_step');
+        if (prev && prev !== 'ok') errors.push('Vorige poging stopte bij stap: ' + prev);
+      } catch (e) {}
+      window.__pp_mark('0-html-geladen');
       window.addEventListener('error', function (e) {
         if (e && e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
           errors.push('Kon niet laden: ' + (e.target.src || e.target.href));
