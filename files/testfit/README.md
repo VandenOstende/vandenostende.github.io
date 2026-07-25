@@ -8,6 +8,9 @@ rijstroken en metrics — geïnspireerd op TestFit's *Parking Solver*.
 
 ## Wat het doet
 
+- **Kaart-onderlaag** — plan bovenop **OpenStreetMap**, **satelliet** of **hybride**
+  (satelliet + labels) luchtbeelden. Zoek een adres/plaats (OSM Nominatim) en de
+  site wordt op die locatie geplaatst; de tegels lijnen uit met de site-geometrie.
 - **Site tekenen** — polygoon-tool met sleepbare hoekpunten en numerieke oppervlakte.
 - **Gebouwen / uitsluitingszones** — sleep rechthoeken die de solver respecteert.
 - **Automatische parkeergeneratie** — dubbel-belaste modules, live herberekend.
@@ -38,19 +41,25 @@ Alles draait client-side; er is geen backend en geen build-stap nodig.
 ## Architectuur
 
 Bewust **geen build-tooling** (past bij deze GitHub Pages-site). React, ReactDOM
-en `htm` zijn lokaal gevendord in `vendor/` en via een import-map gekoppeld, dus
-de app is volledig zelfstandig — geen runtime-CDN.
+en `htm` zijn lokaal gevendord in `vendor/` als klassieke UMD-scripts en via kleine
+ESM-shims geïmporteerd met **relatieve paden** — geen import-map en geen runtime-CDN.
+Daardoor boot de app ook op oudere browsers (ES-modules, geen import-maps vereist),
+met een foutmelding-overlay als er toch iets misgaat.
 
 ```
 files/testfit/
-├── index.html            # import-map + gevendorde <script>-tags
+├── index.html            # gevendorde <script>-tags + boot-foutoverlay
 ├── styles.css            # donkere CAD-achtige UI
 ├── vendor/               # React 18, ReactDOM, htm (UMD + ESM-shims)
 └── src/
     ├── geometry.js       # pure 2D-polygoongeometrie (offset, clip, hit-tests)
     ├── solver.js         # parkeer-solver + ADA-tabel + metrics
+    ├── basemap.js        # slippy-map tegels (OSM/Esri) + geocoding + geo↔meters
     └── app.js            # React-UI (htm) + imperatieve canvas-rendering
 ```
+
+De kaart-tegels (OpenStreetMap, Esri World Imagery) en geocoding (Nominatim) zijn
+de enige externe netwerkverzoeken; zonder internet werkt de rest gewoon door.
 
 `geometry.js` en `solver.js` zijn dependency-vrije, pure ES-modules en zijn
 los te testen met Node.

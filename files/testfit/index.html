@@ -2,29 +2,46 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>ParkPlanner — TestFit-kloon</title>
-  <meta name="description" content="Automatische parkeerplanner: teken een site, genereer live parkeervakken, rijstroken en metrics. Een open-source TestFit-kloon in React." />
+  <meta name="description" content="Automatische parkeerplanner: teken een site op OSM- of satellietkaarten, genereer live parkeervakken, rijstroken en metrics. Een open-source TestFit-kloon in React." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
   <link rel="stylesheet" href="./styles.css" />
-  <!-- Vendored, self-contained dependencies (no runtime CDN needed). -->
+  <!-- Vendored dependencies as classic UMD scripts (globals). No import
+       maps and no runtime CDN, so the app boots on older browsers too. -->
   <script src="./vendor/react.production.min.js"></script>
   <script src="./vendor/react-dom.production.min.js"></script>
   <script src="./vendor/htm.js"></script>
-  <script type="importmap">
-    {
-      "imports": {
-        "react": "./vendor/react.mjs",
-        "react-dom/client": "./vendor/react-dom-client.mjs",
-        "htm": "./vendor/htm.mjs"
-      }
-    }
-  </script>
 </head>
 <body>
   <div id="root">
     <div class="boot">Bezig met laden van ParkPlanner…</div>
   </div>
+
+  <!-- Fail loudly instead of a silent blank/crash screen. -->
+  <script>
+    (function () {
+      var shown = false;
+      function fail(msg) {
+        if (shown) return; shown = true;
+        var r = document.getElementById('root');
+        if (r) r.innerHTML =
+          '<div class="boot" style="flex-direction:column;gap:10px;padding:24px;text-align:center">' +
+          '<div style="font-size:15px;color:#e6eaef">ParkPlanner kon niet laden</div>' +
+          '<div style="max-width:420px">' + (msg || '') + '</div>' +
+          '<button onclick="location.reload()" style="margin-top:8px;padding:8px 14px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer">Opnieuw proberen</button>' +
+          '</div>';
+      }
+      window.addEventListener('error', function (e) {
+        if (e && e.target && e.target.tagName === 'SCRIPT') fail('Een scriptbestand kon niet geladen worden. Controleer je verbinding en probeer opnieuw.');
+      }, true);
+      window.addEventListener('unhandledrejection', function () { /* handled in-app */ });
+      // If React never mounted after a grace period, surface a hint.
+      window.__pp_boot = setTimeout(function () {
+        if (!document.querySelector('.app')) fail('De app is niet gestart. Werk je browser bij (iOS 12+/moderne browser) en probeer opnieuw.');
+      }, 6000);
+    })();
+  </script>
   <script type="module" src="./src/app.js"></script>
 </body>
 </html>
