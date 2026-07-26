@@ -8,6 +8,7 @@
 // ============================================================
 import { localToLatLon } from './basemap.js';
 import { STALL_TYPES } from './solver.js';
+import { polyOf } from './geometry.js';
 
 const MB_VERSION = 'v3.7.0';
 let mbPromise = null;
@@ -49,7 +50,7 @@ function planToGeoJSON(plan, geo) {
   const stalls = { type: 'FeatureCollection', features: (plan.stalls || []).map((s) =>
     polyFeature(s.poly, geo, { color: (STALL_TYPES[s.type] || STALL_TYPES.standard).color })) };
   const aisles = { type: 'FeatureCollection', features: (plan.aisles || []).map((a) => polyFeature(a.poly, geo, {})) };
-  const buildings = { type: 'FeatureCollection', features: (plan.obstacles || []).map((o) => polyFeature(o, geo, { height: 12 })) };
+  const buildings = { type: 'FeatureCollection', features: (plan.obstacles || []).map((o) => polyFeature(polyOf(o), geo, { height: (o && o.floors ? o.floors : 4) * 3.2 })) };
   const site = { type: 'FeatureCollection', features: plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : [] };
   // Filled areas: grass, bike parking, and closed line-annotations (pleinen).
   const areas = { type: 'FeatureCollection', features: anns

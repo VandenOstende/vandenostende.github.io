@@ -7,7 +7,7 @@ import htm from '../vendor/htm.mjs';
 import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
-  pointInPolygon, rectPoly, tessellateClosed,
+  pointInPolygon, rectPoly, tessellateClosed, polyOf,
 } from './geometry.js';
 import * as basemap from './basemap.js';
 import { BASEMAPS, geocode, latLonToLocal } from './basemap.js';
@@ -16,6 +16,7 @@ import { parseParcel, simplifyRing } from './importers.js';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
+const FLOOR_H = 3.2;             // metres per building floor (for 3D + height)
 const mark = (s) => { try { window.__pp_mark && window.__pp_mark(s); } catch (e) {} };
 mark('1-module-uitgevoerd');
 
@@ -43,7 +44,7 @@ const DEFAULT_SITE = [
   { x: 0, y: 0 }, { x: 96, y: 0 }, { x: 96, y: 60 }, { x: 0, y: 60 },
 ];
 const DEFAULT_OBSTACLES = [
-  rectPoly(60, 36, 36, 24), // building footprint, top-right
+  { poly: rectPoly(60, 36, 36, 24), floors: 3 }, // building footprint, top-right
 ];
 
 // Geographic anchor for local origin (0,0). Default: Amsterdam Zuidas.
@@ -211,13 +212,24 @@ function draw(ctx, opts) {
   // Buildings / exclusion zones
   if (layers.building) {
     doc.obstacles.forEach((o, i) => {
-      pathPoly(ctx, o, w2s, true);
+      const op = polyOf(o);
+      pathPoly(ctx, op, w2s, true);
       ctx.fillStyle = selection && selection.type === 'obs' && selection.index === i
         ? 'rgba(239,68,68,0.28)' : 'rgba(100,116,139,0.5)';
       ctx.fill();
       ctx.strokeStyle = selection && selection.type === 'obs' && selection.index === i ? '#ef4444' : '#7c8896';
       ctx.lineWidth = 1.5;
       ctx.stroke();
+      // Floor count badge when zoomed in.
+      const floors = (o && o.floors) || 1;
+      if (view.scale >= 4 && op.length >= 3) {
+        const c = w2s(polygonCentroid(op));
+        ctx.fillStyle = 'rgba(230,234,239,0.9)';
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(floors + (floors > 1 ? ' verd.' : ' verd.'), c.x, c.y);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      }
     });
   }
 
@@ -324,7 +336,7 @@ function draw(ctx, opts) {
   // Vertex handles for site (select tool)
   if (opts.showHandles) {
     for (const p of doc.site) drawHandle(ctx, w2s(p), '#f8b500');
-    for (const o of doc.obstacles) for (const p of o) drawHandle(ctx, w2s(p), '#7c8896');
+    for (const o of doc.obstacles) for (const p of polyOf(o)) drawHandle(ctx, w2s(p), '#7c8896');
   }
 
   ctx.restore();
@@ -638,17 +650,18 @@ function draw25D(ctx, opts) {
     ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
   });
 
-  // Extruded buildings, far → near.
-  const H = 12;
-  (doc.obstacles || []).map((o) => ({ o, cy: o.reduce((t, p) => t + p.y, 0) / o.length })).sort((a, b) => a.cy - b.cy)
-    .forEach(({ o }) => {
-      for (let i = 0; i < o.length; i++) {
-        const a = o[i], b = o[(i + 1) % o.length];
+  // Extruded buildings, far → near. Height scales with floor count.
+  (doc.obstacles || []).map((o) => { const p = polyOf(o); return { p, floors: (o && o.floors) || 1, cy: p.reduce((t, q) => t + q.y, 0) / (p.length || 1) }; })
+    .sort((a, b) => a.cy - b.cy)
+    .forEach(({ p, floors }) => {
+      const H = floors * FLOOR_H;
+      for (let i = 0; i < p.length; i++) {
+        const a = p[i], b = p[(i + 1) % p.length];
         const a0 = proj(a, 0), b0 = proj(b, 0), b1 = proj(b, H), a1 = proj(a, H);
         ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(b0.x, b0.y); ctx.lineTo(b1.x, b1.y); ctx.lineTo(a1.x, a1.y); ctx.closePath();
         ctx.fillStyle = '#5b6675'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.5; ctx.stroke();
       }
-      path(o, H); ctx.fillStyle = '#8a97a8'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.6; ctx.stroke();
+      path(p, H); ctx.fillStyle = '#8a97a8'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.6; ctx.stroke();
     });
 
   // Trees, far → near.
@@ -907,7 +920,7 @@ function App() {
     const consider = (pt) => { const d = dist(w2s(pt), sp); if (d < bestD) { bestD = d; best = pt; } };
     (doc.annotations || []).forEach((a) => (a.points || []).forEach(consider));
     (doc.site || []).forEach(consider);
-    (doc.obstacles || []).forEach((o) => o.forEach(consider));
+    (doc.obstacles || []).forEach((o) => polyOf(o).forEach(consider));
     return best ? { x: best.x, y: best.y } : s2w(sp);
   };
 
@@ -1088,9 +1101,11 @@ function App() {
     const { w2s } = makeTransform(view);
     for (let i = 0; i < doc.site.length; i++)
       if (dist(w2s(doc.site[i]), sp) < 9) return { type: 'site', index: i };
-    for (let oi = 0; oi < doc.obstacles.length; oi++)
-      for (let vi = 0; vi < doc.obstacles[oi].length; vi++)
-        if (dist(w2s(doc.obstacles[oi][vi]), sp) < 9) return { type: 'obsV', obs: oi, index: vi };
+    for (let oi = 0; oi < doc.obstacles.length; oi++) {
+      const op = polyOf(doc.obstacles[oi]);
+      for (let vi = 0; vi < op.length; vi++)
+        if (dist(w2s(op[vi]), sp) < 9) return { type: 'obsV', obs: oi, index: vi };
+    }
     return null;
   };
 
@@ -1141,7 +1156,7 @@ function App() {
       }
       // Obstacle interior?
       for (let i = doc.obstacles.length - 1; i >= 0; i--) {
-        if (pointInPolygon(wp, doc.obstacles[i])) {
+        if (pointInPolygon(wp, polyOf(doc.obstacles[i]))) {
           setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null); return;
         }
       }
@@ -1168,6 +1183,17 @@ function App() {
 
     if (tool === 'obstacle') {
       dragRef.current = { mode: 'rect', start: wp, cur: wp };
+      return;
+    }
+
+    if (tool === 'obstaclepoly') {
+      const first = drawing && drawing.points[0];
+      const { w2s } = makeTransform(view);
+      if (first && drawing.points.length >= 3 && dist(w2s(first), sp) < 12) {
+        commitObstaclePoly(drawing.points); setDrawing(null); setTool('select'); return;
+      }
+      const pt = drawPoint(sp, e.shiftKey);
+      setDrawing((d) => ({ points: [...(d ? d.points : []), pt] }));
       return;
     }
 
@@ -1200,7 +1226,7 @@ function App() {
     const drag = dragRef.current;
 
     if (!drag) {
-      if ((tool === 'site' || tool === 'annot') && drawing) setHover(drawPoint(sp, e.shiftKey));
+      if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') setHover({ stallPreview: stallAt(snapStallCenter(wp), result.angleUsed || 0) });
       return;
     }
@@ -1219,8 +1245,10 @@ function App() {
         if (t.type === 'site') {
           const site = d.site.slice(); site[t.index] = wp; return { ...d, site };
         }
-        const obstacles = d.obstacles.map((o) => o.slice());
-        obstacles[t.obs][t.index] = wp; return { ...d, obstacles };
+        const obstacles = d.obstacles.map((o) => (Array.isArray(o) ? o.slice() : { ...o, poly: o.poly.slice() }));
+        const tgt = obstacles[t.obs];
+        if (Array.isArray(tgt)) tgt[t.index] = wp; else tgt.poly[t.index] = wp;
+        return { ...d, obstacles };
       }});
     } else if (drag.mode === 'rect') {
       drag.cur = wp;
@@ -1243,7 +1271,7 @@ function App() {
       const r = rectFrom(drag.start, drag.cur);
       if (Math.abs(r.w) > 1 && Math.abs(r.h) > 1) {
         const poly = rectPoly(r.x, r.y, r.w, r.h);
-        dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, poly] }) });
+        dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, { poly, floors: 1 }] }) });
       }
       setHover(null);
       setTool('select');
@@ -1277,6 +1305,8 @@ function App() {
   const onDoubleClick = () => {
     if (tool === 'site' && drawing && drawing.points.length >= 3) {
       commitSite(drawing.points); setDrawing(null); setTool('select');
+    } else if (tool === 'obstaclepoly' && drawing && drawing.points.length >= 3) {
+      commitObstaclePoly(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'annot' && drawing && drawing.points.length >= 2) {
       finishAnnotLine(drawing.points, false);
     }
@@ -1284,6 +1314,15 @@ function App() {
 
   const commitSite = (points) =>
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: points, obstacles: [] }) });
+  const commitObstaclePoly = (points) => {
+    if (!points || points.length < 3) return;
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, { poly: points.slice(), floors: 1 }] }) });
+  };
+  const setObsFloors = (index, floors) => dispatch({ type: 'COMMIT', updater: (d) => ({
+    ...d,
+    obstacles: d.obstacles.map((o, i) => (i === index ? { poly: polyOf(o).slice(), floors: Math.max(1, floors || 1) } : o)),
+  }) });
+  const deleteObs = (index) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== index) }) });
 
   // Wheel handling is attached natively (passive:false) so preventDefault
   // works — see the effect below. Pinch/Ctrl+wheel zooms; two-finger
@@ -1320,6 +1359,7 @@ function App() {
         case 'v': setTool('select'); break;
         case 'p': setTool('site'); setDrawing({ points: [] }); break;
         case 'b': setTool('obstacle'); break;
+        case 'n': setTool('obstaclepoly'); setDrawing({ points: [] }); break;
         case 'k': setTool('placestall'); break;
         case ' ': setTool('pan'); break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
@@ -1527,6 +1567,7 @@ function App() {
   const hintText = {
     site: 'Klik om punten te plaatsen · Shift ingedrukt = uitlijnen per 15° · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
     obstacle: 'Sleep een rechthoek voor een gebouw / uitsluitingszone',
+    obstaclepoly: 'Klik punten voor een gebouw in vrije vorm · Shift = 15° · klik beginpunt of dubbelklik om te sluiten · Esc annuleert',
     pan: 'Sleep om te verschuiven',
     placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
     annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'point'
@@ -1549,7 +1590,8 @@ function App() {
         <div className="tb-sep"></div>
         ${toolBtn('select', 'Selecteer', 'V', tool, setTool, setDrawing)}
         ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
-        ${toolBtn('obstacle', 'Gebouw', 'B', tool, setTool, setDrawing)}
+        ${toolBtn('obstacle', 'Gebouw ▭', 'B', tool, setTool, setDrawing)}
+        ${toolBtn('obstaclepoly', 'Gebouw ⬠', 'N', tool, setTool, setDrawing)}
         ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
         ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
         <button className="btn ghost" onClick=${newRect}>Nieuwe site</button>
@@ -1715,6 +1757,33 @@ function App() {
             <button className="btn ghost" onClick=${() => setSelection(null)}>Deselecteer</button>
           </div>
         </div>`}
+        ${selection && selection.type === 'obs' && doc.obstacles[selection.index] && (() => {
+          const o = doc.obstacles[selection.index];
+          const floors = (o && o.floors) || 1;
+          const footprint = polygonArea(polyOf(o));
+          return html`
+        <div className="section sel-section">
+          <h3>Gebouw geselecteerd</h3>
+          <div className="field">
+            <label>Verdiepingen<span className="val">${floors}</span></label>
+            <div className="row">
+              <input type="range" min="1" max="40" step="1" value=${floors}
+                onInput=${(e) => setObsFloors(selection.index, parseInt(e.target.value, 10))} style=${{ flex: 1 }} />
+              <input type="number" min="1" max="200" step="1" value=${floors}
+                onChange=${(e) => setObsFloors(selection.index, Math.max(1, parseInt(e.target.value, 10) || 1))} />
+            </div>
+          </div>
+          <table className="sum-table">
+            <tr><td>Voetafdruk</td><td>${fmt(footprint)} m²</td></tr>
+            <tr><td>Vloeroppervlak (GLA)</td><td>${fmt(footprint * floors)} m²</td></tr>
+            <tr><td>Hoogte</td><td>${(floors * FLOOR_H).toFixed(1)} m</td></tr>
+          </table>
+          <div className="sel-actions" style=${{ marginTop: '10px' }}>
+            <button className="btn" onClick=${() => { deleteObs(selection.index); setSelection(null); }}>🗑 Verwijder</button>
+            <button className="btn ghost" onClick=${() => setSelection(null)}>Deselecteer</button>
+          </div>
+        </div>`;
+        })()}
         ${(stallSel.length > 0 || aisleSel) && html`
         <div className="section sel-section">
           ${stallSel.length > 0 && html`
@@ -1906,6 +1975,7 @@ function App() {
             <table className="sum-table">
               <tr><td>Site</td><td>${fmt(metrics.siteArea)} m²</td></tr>
               <tr><td>Bebouwd</td><td>${fmt(metrics.buildingArea)} m² · ${(metrics.coverage * 100).toFixed(0)}%</td></tr>
+              ${metrics.grossFloorArea > 0 && html`<tr><td>Vloeroppervlak (GLA)</td><td>${fmt(metrics.grossFloorArea)} m² · FAR ${metrics.far.toFixed(2)}</td></tr>`}
               <tr><td>Beschikbaar</td><td>${fmt(metrics.buildableArea)} m²</td></tr>
               <tr><td>m² per vak</td><td>${metrics.areaPerStall ? metrics.areaPerStall.toFixed(1) : '—'}</td></tr>
               <tr><td>Verhard</td><td>${(metrics.imperviousPct * 100).toFixed(0)}%</td></tr>
@@ -1989,7 +2059,7 @@ function App() {
 // ---------- Small UI helpers ----------
 function toolBtn(id, label, key, tool, setTool, setDrawing) {
   return html`<button className=${'btn' + (tool === id ? ' active' : '')}
-    onClick=${() => { setTool(id); if (id === 'site') setDrawing({ points: [] }); else setDrawing(null); }}>
+    onClick=${() => { setTool(id); if (id === 'site' || id === 'obstaclepoly') setDrawing({ points: [] }); else setDrawing(null); }}>
     ${label} <kbd>${key}</kbd></button>`;
 }
 

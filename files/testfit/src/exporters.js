@@ -6,6 +6,7 @@
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
 import { localToLatLon } from './basemap.js';
+import { polyOf } from './geometry.js';
 
 const AREA_KINDS = ['bikeparking', 'grass']; // annotation kinds that are filled areas
 
@@ -23,7 +24,7 @@ export function toGeoJSON(plan, geo) {
 
   const feats = [];
   if (plan.site && plan.site.length >= 3) feats.push(poly(plan.site, { kind: 'site' }));
-  (plan.obstacles || []).forEach((o) => feats.push(poly(o, { kind: 'building' })));
+  (plan.obstacles || []).forEach((o) => feats.push(poly(polyOf(o), { kind: 'building', floors: (o && o.floors) || 1 })));
   (plan.aisles || []).forEach((a) => feats.push(poly(a.poly, { kind: 'aisle', oneway: !!a.oneway })));
   (plan.stalls || []).forEach((s) => feats.push(poly(s.poly, { kind: 'stall', type: s.type })));
   (plan.annotations || []).forEach((an) => {
@@ -48,7 +49,7 @@ export function toDXF(plan) {
 
   g(0, 'SECTION'); g(2, 'ENTITIES');
   if (plan.site && plan.site.length >= 3) addPoly(plan.site, 'SITE', true);
-  (plan.obstacles || []).forEach((o) => addPoly(o, 'BUILDINGS', true));
+  (plan.obstacles || []).forEach((o) => addPoly(polyOf(o), 'BUILDINGS', true));
   (plan.aisles || []).forEach((a) => addPoly(a.poly, 'AISLES', true));
   (plan.stalls || []).forEach((s) => addPoly(s.poly, 'STALLS_' + (s.type || 'standard').toUpperCase(), true));
   (plan.annotations || []).forEach((an) => {
