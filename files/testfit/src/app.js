@@ -702,6 +702,7 @@ function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
+  const [schemes, setSchemes] = useState(null);           // generated layout variants
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -1352,6 +1353,45 @@ function App() {
     const fv = fitView(sitePoly, sizeRef.current.w, sizeRef.current.h);
     if (fv) setView(fv);
   };
+  // Design schemes: solve a handful of layout variants and compare their yield,
+  // so the user can pick the best (TestFit "Design Schemes").
+  const genSchemes = () => {
+    const site = sitePoly;
+    if (!site || site.length < 3) { setSchemes([]); return; }
+    const align = site.length >= 2 ? longestEdgeAngle(site) : 0;
+    const siteArea = polygonArea(site);
+    const variants = [
+      { label: 'Recht 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: false } },
+      { label: 'Schuin 60°', patch: { layout: 'strip', angle: 60, alignLongestEdge: false } },
+      { label: 'Schuin 45°', patch: { layout: 'strip', angle: 45, alignLongestEdge: false } },
+      { label: 'Uitgelijnd op rand', patch: { layout: 'strip', angle: 90, alignLongestEdge: true } },
+    ];
+    // Curved layouts only make sense (and only pack cleanly) on curved sites.
+    if (doc.siteCurved) {
+      variants.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
+      variants.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
+    }
+    const out = variants.map((v) => {
+      const p = { ...doc.params, ...v.patch };
+      const solveP = p.alignLongestEdge ? { ...p, alignAngle: align } : p;
+      let res;
+      try { res = solveParking(site, doc.obstacles, solveP, 0); } catch (e) { res = { stalls: [] }; }
+      const physical = (res.stalls || []).length;
+      const density = physical > 0 ? siteArea / physical : 0; // m² of site per stall
+      return { label: v.label, patch: v.patch, physical, density };
+    });
+    // "Best" = most stalls among plausible (non-overlapping) layouts. A density
+    // below ~20 m²/stall means stalls overlap, so those never win the star.
+    const eligible = out.filter((o) => o.density >= 20);
+    const max = Math.max(1, ...(eligible.length ? eligible : out).map((o) => o.physical));
+    out.forEach((o) => { o.best = o.physical === max && (o.density >= 20 || !eligible.length); });
+    out.sort((a, b) => b.physical - a.physical);
+    setSchemes(out);
+  };
+  const applyScheme = (patch) => {
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, ...patch } }) });
+    setSchemes(null);
+  };
   const zoomBy = (factor) => setView((v) => {
     const cx = sizeRef.current.w / 2, cy = sizeRef.current.h / 2;
     const s = Math.max(1, Math.min(60, v.scale * factor));
@@ -1762,6 +1802,21 @@ function App() {
             <span>Lijn rijen uit met langste rand</span>
             <input type="checkbox" checked=${!!doc.params.alignLongestEdge} onChange=${(e) => setParam('alignLongestEdge', e.target.checked)} />
           </div>
+          <div className="field">
+            <button className="btn ghost" style=${{ width: '100%', justifyContent: 'center' }} onClick=${genSchemes}>⚖️ Vergelijk varianten</button>
+          </div>
+          ${schemes && html`
+            <div className="schemes">
+              ${schemes.length === 0 ? html`<div className="scheme-empty">Teken eerst een site.</div>` : ''}
+              ${schemes.map((s) => html`
+                <div key=${s.label} className=${'scheme-row' + (s.best ? ' best' : '')}>
+                  <div className="scheme-info">
+                    <span className="scheme-label">${s.label}${s.best ? ' ★' : ''}</span>
+                    <span className="scheme-count">${s.physical} vakken · ${Math.round(s.density)} m²/vak</span>
+                  </div>
+                  <button className="btn ghost" onClick=${() => applyScheme(s.patch)}>Toepassen</button>
+                </div>`)}
+            </div>`}
           ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
           ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
           ${slider('Rijstrook', 'aisleWidth', doc.params.aisleWidth, 5, 8, 0.1, 'm', setParam)}
