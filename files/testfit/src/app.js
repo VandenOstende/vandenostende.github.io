@@ -817,6 +817,7 @@ function App() {
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
   const [schemes, setSchemes] = useState(null);           // generated layout variants
   const [optState, setOptState] = useState(null);         // { running, i, n } | { done, label, before, after }
+  const [dealbarOpen, setDealbarOpen] = useState(true);   // bottom deal-tabulation bar
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -1957,7 +1958,7 @@ function App() {
           style=${{ cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
         ${viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
         ${viewMode === '2.5d' && html`<div className="hint">2.5D-weergave · alleen-lezen — schakel naar 2D om te bewerken</div>`}
-        <div className="hud">
+        <div className="hud" style=${{ bottom: (dealbarOpen && viewMode !== '3d' ? 96 : 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>
           <span>schaal <b>${view.scale.toFixed(1)}</b> px/m</span>
@@ -1965,7 +1966,48 @@ function App() {
           <span>${solving ? 'rekenen…' : 'live'}</span>
         </div>
         ${basemapStyle !== 'none' && viewMode === '2d' && BASEMAPS[basemapStyle].attribution && html`
-          <div className="attrib">${BASEMAPS[basemapStyle].attribution}</div>`}
+          <div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>${BASEMAPS[basemapStyle].attribution}</div>`}
+
+        ${viewMode !== '3d' && html`
+          <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
+            <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾' : '▴'} Tabulatie</button>
+            ${dealbarOpen && html`
+              <div className="dealbar-cols">
+                <div className="deal-col">
+                  <div className="deal-h">Site</div>
+                  <div className="deal-row"><span>Oppervlak</span><b>${fmt(metrics.siteArea)} m²</b></div>
+                  <div className="deal-row"><span>Bebouwd</span><b>${(metrics.coverage * 100).toFixed(0)}%</b></div>
+                  <div className="deal-row"><span>Verhard</span><b>${(metrics.imperviousPct * 100).toFixed(0)}%</b></div>
+                  <div className="deal-row"><span>FAR</span><b>${metrics.far.toFixed(2)}</b></div>
+                </div>
+                <div className="deal-col">
+                  <div className="deal-h">Gebouw</div>
+                  <div className="deal-row"><span>Voetafdruk</span><b>${fmt(metrics.buildingArea)} m²</b></div>
+                  <div className="deal-row"><span>Vloeropp. (GLA)</span><b>${fmt(metrics.grossFloorArea)} m²</b></div>
+                  <div className="deal-row"><span>Beschikbaar</span><b>${fmt(metrics.buildableArea)} m²</b></div>
+                </div>
+                <div className="deal-col">
+                  <div className="deal-h">Parking</div>
+                  <div className="deal-row"><span>Plaatsen</span><b>${metrics.total}</b></div>
+                  <div className="deal-row"><span>Fysieke vakken</span><b>${metrics.physicalStalls}</b></div>
+                  <div className="deal-row"><span>m² / vak</span><b>${metrics.areaPerStall ? metrics.areaPerStall.toFixed(1) : '—'}</b></div>
+                  <div className="deal-row"><span>Rijstroken</span><b>${metrics.aisleCount}</b></div>
+                </div>
+                <div className="deal-col">
+                  <div className="deal-h">Toegankelijk</div>
+                  <div className="deal-row"><span>Minder-valide</span><b>${metrics.adaProvided}/${metrics.adaRequired}</b></div>
+                  <div className="deal-row"><span>Toegangspunten</span><b>${metrics.accessCount}</b></div>
+                  <div className="deal-row"><span>Oriëntaties</span><b>${metrics.orientationCount}</b></div>
+                </div>
+                ${metrics.requiredStalls != null && html`
+                <div className="deal-col">
+                  <div className="deal-h">Zoning</div>
+                  <div className="deal-row"><span>Vereist</span><b>${metrics.requiredStalls}</b></div>
+                  <div className="deal-row"><span>Geleverd</span><b>${metrics.total}</b></div>
+                  <div className="deal-row"><span>Saldo</span><b className=${metrics.total >= metrics.requiredStalls ? 'ok' : 'bad'}>${metrics.total - metrics.requiredStalls >= 0 ? '+' : ''}${metrics.total - metrics.requiredStalls}</b></div>
+                </div>`}
+              </div>`}
+          </div>`}
 
         ${viewMode === '3d' && html`
           <div id="pp-map3d" className="map3d"></div>
