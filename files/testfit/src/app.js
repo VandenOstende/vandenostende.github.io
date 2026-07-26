@@ -57,7 +57,8 @@ const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 //   mode 'area'  → drag a rectangle
 // `under: true` draws beneath the parking (roads, bike parking).
 export const ANNOT_TYPES = {
-  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: true, under: true },
+  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: true, under: true, blocks: true },
+  driveway:    { label: 'Inrit',        color: '#525b68', width: 6.5, mode: 'line', curved: true, under: true, blocks: true },
   walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true },
   bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true },
   crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross' },
@@ -67,6 +68,26 @@ export const ANNOT_TYPES = {
   access:      { label: 'Toegang',      color: '#22d3ee', width: 6,   mode: 'point' },
   marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false },
 };
+
+// Turn a blocking annotation (road / driveway) into a clearance polygon the
+// parking solver must avoid. Closed pleinen block their whole area; open lines
+// become a ribbon of their width.
+function annotationBlocker(ann) {
+  const t = ANNOT_TYPES[ann.kind];
+  if (!t || !ann.points || ann.points.length < 2) return null;
+  if (ann.closed && ann.points.length >= 3) return ann.points.slice();
+  const hw = Math.max(0.5, (ann.width || t.width || 3) / 2);
+  const pts = ann.points, left = [], right = [];
+  for (let i = 0; i < pts.length; i++) {
+    let dx = 0, dy = 0;
+    if (i > 0) { dx += pts[i].x - pts[i - 1].x; dy += pts[i].y - pts[i - 1].y; }
+    if (i < pts.length - 1) { dx += pts[i + 1].x - pts[i].x; dy += pts[i + 1].y - pts[i].y; }
+    const len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+    left.push({ x: pts[i].x + nx * hw, y: pts[i].y + ny * hw });
+    right.push({ x: pts[i].x - nx * hw, y: pts[i].y - ny * hw });
+  }
+  return [...left, ...right.reverse()];
+}
 
 // `overrides` are manual, position-keyed marks that persist across
 // re-solves: stall type per stall, one-way + direction per aisle.
@@ -691,6 +712,13 @@ function App() {
     () => (doc.siteCurved && doc.site.length >= 3 ? tessellateClosed(doc.site, 14) : doc.site),
     [doc.site, doc.siteCurved]
   );
+  // Roads / driveways carve clear corridors the parking must avoid.
+  const roadBlockers = useMemo(
+    () => (doc.annotations || [])
+      .filter((a) => ANNOT_TYPES[a.kind] && ANNOT_TYPES[a.kind].blocks)
+      .map(annotationBlocker).filter(Boolean),
+    [doc.annotations]
+  );
   const [tool, setTool] = useState('select');
   const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
@@ -793,7 +821,8 @@ function App() {
       const solveP = doc.params.alignLongestEdge && doc.site.length >= 2
         ? { ...doc.params, alignAngle: longestEdgeAngle(doc.site) }
         : doc.params;
-      const args = [sitePoly, doc.obstacles, solveP, doc.orientationIndex];
+      const solveObstacles = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
+      const args = [sitePoly, solveObstacles, solveP, doc.orientationIndex];
       lastArgsRef.current = args;
       const reqId = ++reqRef.current;
       if (workerRef.current) {
@@ -804,7 +833,7 @@ function App() {
       }
     }, 90);
     return () => clearTimeout(solveTimer.current);
-  }, [sitePoly, doc.obstacles, doc.params, doc.orientationIndex]);
+  }, [sitePoly, doc.obstacles, roadBlockers, doc.params, doc.orientationIndex]);
 
   // Apply manual overrides (stall type, aisle one-way) on top of the
   // solver output, keyed by position so marks survive re-solves.
