@@ -65,7 +65,7 @@ export const ANNOT_TYPES = {
 const initialDoc = {
   site: DEFAULT_SITE, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
   params: DEFAULT_PARAMS, orientationIndex: 0,
-  overrides: { stalls: {}, aisles: {} },
+  overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} } },
   annotations: [], // { kind, points:[{x,y}], width, curved }
 };
 
@@ -177,6 +177,13 @@ function draw(ctx, opts) {
       ctx.fill();
       if (aisleSel === a.key) { ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2; ctx.stroke(); }
       if (a.oneway) drawAisleArrows(ctx, a, w2s, view.scale);
+      if (a.locked) {
+        const c = w2s(polygonCentroid(a.poly));
+        ctx.font = '13px system-ui, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('🔒', c.x, c.y);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      }
     }
   }
 
@@ -208,6 +215,13 @@ function draw(ctx, opts) {
       ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0,0,0,0.35)';
       ctx.lineWidth = selected ? 2 : 0.6;
       ctx.stroke();
+      if (st.locked) { // dashed white outline marks a locked stall
+        ctx.setLineDash([3, 2]);
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       if (showGlyph && info.glyph) {
         const s = w2s(polygonCentroid(st.poly));
         ctx.fillStyle = 'rgba(255,255,255,0.95)';
@@ -645,14 +659,15 @@ function App() {
   const deco = useMemo(() => {
     const ov = doc.overrides || {};
     const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {};
+    const locks = ov.locks || {}, lockS = locks.stalls || {}, lockA = locks.aisles || {};
     const stalls = result.stalls.map((st) => {
       const key = stallKey(st.poly);
-      return { ...st, key, type: ovStalls[key] || st.type };
+      return { ...st, key, type: ovStalls[key] || st.type, locked: !!lockS[key] };
     });
     const aisles = result.aisles.map((q) => {
       const key = aisleKey(q);
       const o = ovAisles[key] || {};
-      return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1 };
+      return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
     });
     return { stalls, aisles, orientationCount: result.orientationCount };
   }, [result, doc.overrides]);
@@ -748,10 +763,29 @@ function App() {
   };
 
   // ---------- Override actions (manual marks) ----------
-  const ovOf = (d) => ({ stalls: { ...(d.overrides && d.overrides.stalls) }, aisles: { ...(d.overrides && d.overrides.aisles) } });
+  const ovOf = (d) => {
+    const o = d.overrides || {}, l = o.locks || {};
+    return {
+      stalls: { ...o.stalls }, aisles: { ...o.aisles },
+      locks: { stalls: { ...l.stalls }, aisles: { ...l.aisles } },
+    };
+  };
   const setStallTypes = (keys, type) => dispatch({ type: 'COMMIT', updater: (d) => {
     const ov = ovOf(d);
-    for (const k of keys) { if (type === null) delete ov.stalls[k]; else ov.stalls[k] = type; }
+    for (const k of keys) {
+      if (type === null) { if (!ov.locks.stalls[k]) delete ov.stalls[k]; } // keep locked marks
+      else ov.stalls[k] = type;
+    }
+    return { ...d, overrides: ov };
+  } });
+  const toggleLockStalls = (keys, lock) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const ov = ovOf(d);
+    for (const k of keys) { if (lock) ov.locks.stalls[k] = 1; else delete ov.locks.stalls[k]; }
+    return { ...d, overrides: ov };
+  } });
+  const toggleLockAisle = (key, lock) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const ov = ovOf(d);
+    if (lock) ov.locks.aisles[key] = 1; else delete ov.locks.aisles[key];
     return { ...d, overrides: ov };
   } });
   const setAisleOneway = (key, oneway) => dispatch({ type: 'COMMIT', updater: (d) => {
@@ -1338,14 +1372,20 @@ function App() {
                   <span className="dot" style=${{ background: t.color }}></span>${t.label}
                 </button>`)}
             </div>
-            <div className="sel-actions">
-              <button className="btn ghost" onClick=${() => setStallTypes(stallSel, null)}>↺ Wis markering</button>
-              <button className="btn ghost" onClick=${clearSel}>Deselecteer</button>
-            </div>
+            ${(() => {
+              const lockedSet = (doc.overrides.locks && doc.overrides.locks.stalls) || {};
+              const allLocked = stallSel.every((k) => lockedSet[k]);
+              return html`<div className="sel-actions">
+                <button className="btn ghost" onClick=${() => setStallTypes(stallSel, null)}>↺ Wis markering</button>
+                <button className="btn ghost" onClick=${() => toggleLockStalls(stallSel, !allLocked)}>${allLocked ? '🔓 Ontgrendel' : '🔒 Vergrendel'}</button>
+                <button className="btn ghost" onClick=${clearSel}>Deselecteer</button>
+              </div>`;
+            })()}
           `}
           ${aisleSel && (() => {
             const a = deco.aisles.find((x) => x.key === aisleSel);
             const oneway = a && a.oneway;
+            const locked = a && a.locked;
             return html`
             <h3>Rijbaan geselecteerd</h3>
             <label className="toggle" style=${{ marginBottom: '8px' }}>
@@ -1354,6 +1394,7 @@ function App() {
             </label>
             <div className="sel-actions">
               <button className="btn" onClick=${() => flipAisle(aisleSel)} disabled=${!oneway}>⇄ Draai richting om</button>
+              <button className="btn ghost" onClick=${() => toggleLockAisle(aisleSel, !locked)}>${locked ? '🔓 Ontgrendel' : '🔒 Vergrendel'}</button>
               <button className="btn ghost" onClick=${clearSel}>Deselecteer</button>
             </div>`;
           })()}
