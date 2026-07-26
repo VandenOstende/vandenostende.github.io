@@ -30,6 +30,7 @@ const DEFAULT_PARAMS = {
   angle: 90, setback: 6, padding: 0.6, maxRun: 12,
   compactRatio: 0, evRatio: 0.05, ada: true,
   singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
+  buildingGLA: 0, parkingRatio: 0, // GLA (m²) + stalls per 100 m² (zoning)
 };
 
 // Default demo site: an L-shaped parcel (rectangle with a building in the corner).
@@ -57,6 +58,7 @@ export const ANNOT_TYPES = {
   bikeparking: { label: 'Fietsparking', color: '#0e7490', width: 0,   mode: 'area', under: true },
   grass:       { label: 'Gras',         color: '#3f9b46', width: 0,   mode: 'area', under: true },
   tree:        { label: 'Boom',         color: '#2f9e44', width: 5,   mode: 'point' },
+  access:      { label: 'Toegang',      color: '#22d3ee', width: 6,   mode: 'point' },
   marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false },
 };
 
@@ -407,6 +409,27 @@ function drawTree(ctx, s, rpx, index, selected) {
   }
 }
 
+// Access point / entrance marker on the site boundary.
+function drawAccess(ctx, s, rpx, selected) {
+  const r = Math.max(7, rpx * 0.7);
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#22d3ee';
+  ctx.fill();
+  ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = selected ? 2 : 1;
+  ctx.stroke();
+  ctx.strokeStyle = '#06323a';
+  ctx.lineWidth = Math.max(1.5, r * 0.22);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(s.x - r * 0.4, s.y + r * 0.18);
+  ctx.lineTo(s.x, s.y - r * 0.35);
+  ctx.lineTo(s.x + r * 0.4, s.y + r * 0.18);
+  ctx.stroke();
+}
+
 // ---- Annotation (infrastructure) rendering ----
 function buildAnnotPath(ctx, pts, curved) {
   ctx.beginPath();
@@ -432,7 +455,8 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
 
   if (t.mode === 'point') {
     const rpx = Math.max(3, ((ann.width || t.width || 5) / 2) * scale);
-    drawTree(ctx, w2s(ann.points[0]), rpx, index || 0, selected);
+    if (ann.kind === 'access') drawAccess(ctx, w2s(ann.points[0]), rpx, selected);
+    else drawTree(ctx, w2s(ann.points[0]), rpx, index || 0, selected);
     return;
   }
   if (ann.points.length < 2) return;
@@ -786,8 +810,8 @@ function App() {
   }, [buildPlan]);
 
   const metrics = useMemo(
-    () => computeMetrics(doc.site, doc.obstacles, deco, doc.params),
-    [doc.site, doc.obstacles, deco, doc.params]
+    () => computeMetrics(doc.site, doc.obstacles, deco, doc.params, doc.annotations),
+    [doc.site, doc.obstacles, deco, doc.params, doc.annotations]
   );
 
   // ---------- Param helpers ----------
@@ -821,6 +845,22 @@ function App() {
     (doc.site || []).forEach(consider);
     (doc.obstacles || []).forEach((o) => o.forEach(consider));
     return best ? { x: best.x, y: best.y } : s2w(sp);
+  };
+
+  // Closest point on the site boundary (for placing access points).
+  const nearestOnSiteEdge = (wp) => {
+    const site = doc.site;
+    if (!site || site.length < 2) return wp;
+    let best = wp, bestD = Infinity;
+    for (let i = 0; i < site.length; i++) {
+      const a = site[i], b = site[(i + 1) % site.length];
+      const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+      let t = len2 ? ((wp.x - a.x) * dx + (wp.y - a.y) * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const px = a.x + t * dx, py = a.y + t * dy, d = Math.hypot(wp.x - px, wp.y - py);
+      if (d < bestD) { bestD = d; best = { x: px, y: py }; }
+    }
+    return best;
   };
 
   // ---------- Override actions (manual marks) ----------
@@ -1007,7 +1047,11 @@ function App() {
     if (tool === 'annot') {
       const t = ANNOT_TYPES[annotKind];
       const snap = snapPoint(sp);
-      if (t.mode === 'point') { addAnnotation({ kind: annotKind, points: [snap], width: annotWidth }); return; }
+      if (t.mode === 'point') {
+        const at = annotKind === 'access' ? nearestOnSiteEdge(wp) : snap;
+        addAnnotation({ kind: annotKind, points: [at], width: annotWidth });
+        return;
+      }
       if (t.mode === 'area') { dragRef.current = { mode: 'annotArea', start: snap, cur: snap }; return; }
       // line / cross: accumulate points; clicking the first point closes it
       // into a filled area (weg/plein).
@@ -1336,7 +1380,7 @@ function App() {
           </div>
           ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
-              <label>${ANNOT_TYPES[annotKind].mode === 'point' ? 'Kroondiameter' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
+              <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
               <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
                 onInput=${(e) => setAnnotWidth(parseFloat(e.target.value))} />
               ${ANNOT_TYPES[annotKind].mode === 'line' && html`
@@ -1472,8 +1516,15 @@ function App() {
             <div className="metric"><div className="k">Site</div><div className="v">${fmt(metrics.siteArea)}<small> m²</small></div></div>
             <div className="metric"><div className="k">Bebouwd</div><div className="v">${(metrics.coverage * 100).toFixed(0)}<small>%</small></div></div>
             <div className="metric"><div className="k">m² / vak</div><div className="v">${metrics.areaPerStall ? metrics.areaPerStall.toFixed(1) : '—'}</div></div>
+            <div className="metric"><div className="k">Verhard</div><div className="v">${(metrics.imperviousPct * 100).toFixed(0)}<small>%</small></div></div>
             <div className="metric"><div className="k">Oriëntaties</div><div className="v">${metrics.orientationCount}</div></div>
           </div>
+          ${metrics.requiredStalls != null && html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '10px' }}>
+            Zoning-eis: <b style=${{ color: metrics.total >= metrics.requiredStalls ? '#22c55e' : '#f59e0b' }}>${metrics.total}</b> / ${metrics.requiredStalls} vereiste plaatsen.
+          </div>`}
+          ${metrics.accessCount > 0 && html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '4px' }}>
+            Toegangspunten: <b style=${{ color: 'var(--text)' }}>${metrics.accessCount}</b>.
+          </div>`}
           <div className="legend">
             ${Object.values(STALL_TYPES).map((t) => html`
               <div className="row" key=${t.key}>
@@ -1536,6 +1587,26 @@ function App() {
             <span>ADA-vakken (auto-tabel)</span>
             <input type="checkbox" checked=${doc.params.ada} onChange=${(e) => setParam('ada', e.target.checked)} />
           </div>
+        </div>
+
+        <div className="section">
+          <h3>Programma & parkeer­ratio</h3>
+          <div className="field">
+            <label>Gebouw-GLA<span className="val">${doc.params.buildingGLA || 0} m²</span></label>
+            <input type="number" min="0" step="50" value=${doc.params.buildingGLA || 0}
+              onChange=${(e) => setParam('buildingGLA', Math.max(0, parseFloat(e.target.value) || 0))} />
+          </div>
+          <div className="field">
+            <label>Ratio<span className="val">${doc.params.parkingRatio || 0} / 100 m²</span></label>
+            <input type="number" min="0" step="0.1" value=${doc.params.parkingRatio || 0}
+              onChange=${(e) => setParam('parkingRatio', Math.max(0, parseFloat(e.target.value) || 0))} />
+          </div>
+          ${metrics.requiredStalls != null
+            ? html`<div style=${{ fontSize: '12px', marginTop: '2px' }}>
+                <b style=${{ color: metrics.total >= metrics.requiredStalls ? '#22c55e' : '#f59e0b' }}>${metrics.total}</b>
+                <span style=${{ color: 'var(--muted)' }}> / ${metrics.requiredStalls} vereist — ${metrics.total >= metrics.requiredStalls ? 'voldoet ✓' : (metrics.requiredStalls - metrics.total) + ' tekort'}</span>
+              </div>`
+            : html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)' }}>Vul GLA en ratio in voor een zoning-check.</div>`}
         </div>
       </div>
     </div>

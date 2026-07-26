@@ -89,11 +89,20 @@ los te testen met Node.
 
 Zoom met het scrollwiel; pan met de Pan-tool, middelste muisknop of `Shift`+slepen.
 
-## Roadmap (nice-to-have)
+## Recente uitbreidingen
 
-Web-worker voor de solve bij grote sites, single-loaded rijen & dead-end
-turnarounds, manual override met pin/lock op vakken en rijstroken, licht-gekantelde
-2.5D-weergave, en DXF/GeoJSON-export.
+- **Export** naar GeoJSON, DXF (CAD) en CSV (takeoff), naast PNG/JSON.
+- **Web-worker solve** (met inline-fallback) zodat grote sites de UI niet bevriezen.
+- **Single-loaded rijen & dead-end turnarounds** als solver-opties.
+- **Pin/lock** op vakken en rijstroken (blijven bij "wis markering").
+- **2.5D** gekantelde alleen-lezen weergave (naast de Mapbox 3D).
+- **Programma & parkeerratio** (GLA → vereiste plaatsen), **impervious/verhard %**,
+  en **toegangspunten** op de site-rand.
+
+## Roadmap (grotere epics)
+
+Meerlaags structured/garage-parking (tray counts), site-import (GeoJSON/KML/DXF),
+generatieve varianten, en PDF/Revit/glTF-export.
 
 ---
 
