@@ -22,6 +22,11 @@ rijstroken en metrics — geïnspireerd op TestFit's *Parking Solver*.
   zebrapaden, fietsparking (met capaciteit), **gras**, **bomen** en markeringen.
   Wegen/paden **snappen** aan bestaande hoekpunten en kunnen tot een **gesloten
   vlak/plein** worden gesloten; **afmetingen** verschijnen live tijdens het tekenen.
+- **Gebogen site-grenzen** — teken multipoint-sites en zet "Vloeiende bochten"
+  aan; de solver plaatst automatisch vakken in de curves.
+- **Handmatig vakken plaatsen** — "Vak +" (K) plaatst vakken die aan bestaande
+  vakken snappen; selecteer vakken en verwijder ze (Delete). Verwijderde
+  solver-vakken blijven weg bij her-solve.
 - **Site verplaatsen/verwijderen** — klik de site-rand om de hele site te
   selecteren, sleep om te verplaatsen, Delete om te verwijderen.
 - **Navigatie** — twee-vinger trackpad pant, pinch/Ctrl+scroll zoomt.
