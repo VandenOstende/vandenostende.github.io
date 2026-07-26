@@ -117,6 +117,23 @@ function polylineLen(pts) {
 }
 function drivethruStacks(pts) { return Math.max(0, Math.floor(polylineLen(pts) / CAR_LEN)); }
 
+// Fillet a corner a-v-b with radius R: returns the arc centre, tangent points
+// and whether the turn is too tight for the adjacent segment lengths.
+function filletAt(a, v, b, R) {
+  const da = { x: a.x - v.x, y: a.y - v.y }, db = { x: b.x - v.x, y: b.y - v.y };
+  const la = Math.hypot(da.x, da.y), lb = Math.hypot(db.x, db.y);
+  if (la < 1e-3 || lb < 1e-3) return null;
+  const ua = { x: da.x / la, y: da.y / la }, ub = { x: db.x / lb, y: db.y / lb };
+  let cph = Math.max(-0.9999, Math.min(0.9999, ua.x * ub.x + ua.y * ub.y));
+  const phi = Math.acos(cph);
+  if (phi < 0.08 || phi > Math.PI - 0.08) return null; // ~straight, nothing to fillet
+  const T = R / Math.tan(phi / 2);
+  const bx = ua.x + ub.x, by = ua.y + ub.y, bl = Math.hypot(bx, by) || 1;
+  const O = { x: v.x + (bx / bl) * (R / Math.sin(phi / 2)), y: v.y + (by / bl) * (R / Math.sin(phi / 2)) };
+  const pa = { x: v.x + ua.x * T, y: v.y + ua.y * T }, pb = { x: v.x + ub.x * T, y: v.y + ub.y * T };
+  return { O, pa, pb, tight: T > la - 0.1 || T > lb - 0.1 };
+}
+
 // A circle approximated as an n-gon polygon (so all polygon code just works).
 function circlePoly(cx, cy, r, n = 40) {
   const pts = [];
@@ -668,6 +685,30 @@ function drawDriveThru(ctx, ann, w2s, scale, selected) {
   ctx.lineTo(ax, ay);
   ctx.lineTo(ax - h * Math.cos(ang + 0.5), ay - h * Math.sin(ang + 0.5));
   ctx.stroke();
+  // Turn-radius fillets at each interior bend (green = OK, red = too tight).
+  const R = ann.turnR || 7.5;
+  for (let i = 1; i < P.length - 1; i++) {
+    const fl = filletAt(P[i - 1], P[i], P[i + 1], R);
+    if (!fl) continue;
+    const O = w2s(fl.O), rp = R * scale;
+    let a0 = Math.atan2(w2s(fl.pa).y - O.y, w2s(fl.pa).x - O.x), a1 = Math.atan2(w2s(fl.pb).y - O.y, w2s(fl.pb).x - O.x);
+    let d = a1 - a0; while (d < -Math.PI) d += 2 * Math.PI; while (d > Math.PI) d -= 2 * Math.PI;
+    const col = fl.tight ? '#ef4444' : '#22c55e';
+    for (const rr of [rp - hw * scale, rp, rp + hw * scale]) {
+      if (rr <= 0) continue;
+      ctx.beginPath(); ctx.arc(O.x, O.y, rr, a0, a1, d < 0);
+      ctx.strokeStyle = rr === rp ? col : 'rgba(253,186,116,0.6)';
+      ctx.setLineDash(rr === rp ? [4, 3] : []); ctx.lineWidth = 1.2; ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if (fl.tight) {
+      const c = w2s(P[i]);
+      ctx.fillStyle = '#ef4444'; ctx.font = '10px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('R ' + R.toFixed(1) + ' m krap', c.x, c.y - 8);
+      ctx.textAlign = 'start';
+    }
+  }
+
   // Stacking count label at the midpoint.
   const mid = pts[Math.floor(pts.length / 2)] || pts[0], label = drivethruStacks(P) + ' auto\'s';
   ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1344,6 +1385,12 @@ function App() {
     const a = anns[index];
     if (!a || a.kind !== 'driveway') return d;
     anns[index] = makeDriveway({ point: a.anchor, tx: a.tx, ty: a.ty, nx: a.nx, ny: a.ny }, width, a.depth || 12);
+    return { ...d, annotations: anns };
+  } });
+  const setDrivethruTurnR = (index, R) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const anns = (d.annotations || []).slice();
+    if (!anns[index] || anns[index].kind !== 'drivethru') return d;
+    anns[index] = { ...anns[index], turnR: R };
     return { ...d, annotations: anns };
   } });
   const startAnnot = (kind) => {
@@ -2359,12 +2406,23 @@ function App() {
             </div>`}
           ${doc.annotations[selection.index].kind === 'drivethru' && (() => {
             const a = doc.annotations[selection.index];
-            const len = polylineLen(a.points);
+            const len = polylineLen(a.points), R = a.turnR || 7.5;
+            let tight = 0;
+            for (let i = 1; i < a.points.length - 1; i++) { const fl = filletAt(a.points[i - 1], a.points[i], a.points[i + 1], R); if (fl && fl.tight) tight++; }
             return html`<table className="sum-table" style=${{ marginBottom: '8px' }}>
               <tr><td>Lengte</td><td>${len.toFixed(1)} m</td></tr>
               <tr className="sum-tot"><td>Wachtplaatsen</td><td>${drivethruStacks(a.points)}</td></tr>
               <tr><td>Afhaalpunt</td><td>einde (W)</td></tr>
             </table>
+            <div className="field">
+              <label>Draaistraal</label>
+              <div className="row">
+                <input type="number" min="3" max="20" step="0.5" value=${R}
+                  onChange=${(e) => setDrivethruTurnR(selection.index, Math.max(3, Math.min(20, parseFloat(e.target.value) || 7.5)))} />
+                <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
+              </div>
+            </div>
+            ${tight > 0 ? html`<div className="mix-warn">${tight} bocht${tight > 1 ? 'en' : ''} te krap voor R ${R.toFixed(1)} m.</div>` : ''}
             <div className="mix-note" style=${{ marginTop: 0 }}>Sleep de hoeken om de wachtrij te verlengen (~6 m per auto).</div>`;
           })()}
           <div className="sel-actions" style=${{ flexWrap: 'wrap' }}>
