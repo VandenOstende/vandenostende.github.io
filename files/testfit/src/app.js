@@ -745,6 +745,7 @@ function App() {
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
   const [schemes, setSchemes] = useState(null);           // generated layout variants
+  const [optState, setOptState] = useState(null);         // { running, i, n } | { done, label, before, after }
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -1514,6 +1515,72 @@ function App() {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, ...patch } }) });
     setSchemes(null);
   };
+
+  // Automatic optimisation: search the parameter space (angle sweep + a fine
+  // refinement pass, alignment, and curved layouts where applicable) and apply
+  // the highest-yield plausible layout automatically. Solves are yielded
+  // between candidates so the UI stays responsive, and roads/driveways are
+  // respected just like the live solve.
+  const evalPatch = (patch, siteArea) => {
+    const p = { ...doc.params, ...patch };
+    const solveP = p.alignLongestEdge ? { ...p, alignAngle: longestEdgeAngle(sitePoly) } : p;
+    const obs = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
+    let res;
+    try { res = solveParking(sitePoly, obs, solveP, 0); } catch (e) { res = { stalls: [] }; }
+    const physical = (res.stalls || []).length;
+    const spaces = (res.stalls || []).reduce((s, st) => s + (STALL_TYPES[st.type] ? STALL_TYPES[st.type].spaces || 1 : 1), 0);
+    return { physical, spaces, density: physical > 0 ? siteArea / physical : 0 };
+  };
+  const autoOptimize = async () => {
+    const site = sitePoly;
+    if (!site || site.length < 3) return;
+    const siteArea = polygonArea(site);
+    const before = metrics.total;
+    // Phase 1 — coarse candidates (the current setup is always included so the
+    // result can never be worse than what you already have).
+    const coarse = [
+      { label: 'Huidig', patch: {} },
+      { label: 'Recht 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: false } },
+      { label: 'Schuin 75°', patch: { layout: 'strip', angle: 75, alignLongestEdge: false } },
+      { label: 'Schuin 60°', patch: { layout: 'strip', angle: 60, alignLongestEdge: false } },
+      { label: 'Schuin 45°', patch: { layout: 'strip', angle: 45, alignLongestEdge: false } },
+      { label: 'Schuin 30°', patch: { layout: 'strip', angle: 30, alignLongestEdge: false } },
+      { label: 'Uitgelijnd 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: true } },
+    ];
+    if (doc.siteCurved) {
+      coarse.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
+      coarse.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
+    }
+    const scored = [];
+    const better = (a, b) => !b || a.spaces > b.spaces; // a beats b?
+    const plausible = (r) => r.density >= 20 && r.physical > 0;
+    let best = null;
+    // Phase 2 refine steps depend on phase-1 winner, so build the total up front.
+    const totalEst = coarse.length + 4;
+    for (let i = 0; i < coarse.length; i++) {
+      setOptState({ running: true, i: i + 1, n: totalEst });
+      await new Promise((r) => setTimeout(r, 0));
+      const r = { ...coarse[i], ...evalPatch(coarse[i].patch, siteArea) };
+      scored.push(r);
+      if (plausible(r) && better(r, best)) best = r;
+    }
+    if (!best) best = scored.slice().sort((a, b) => b.spaces - a.spaces)[0];
+    // Phase 2 — refine the angle ±5°/±10° around a straight-layout winner.
+    if (best && best.patch.layout === 'strip' && !best.patch.alignLongestEdge && typeof best.patch.angle === 'number') {
+      const base = best.patch.angle;
+      const refine = [base - 10, base - 5, base + 5, base + 10].filter((a) => a >= 30 && a <= 90);
+      for (let j = 0; j < refine.length; j++) {
+        setOptState({ running: true, i: coarse.length + j + 1, n: totalEst });
+        await new Promise((r) => setTimeout(r, 0));
+        const patch = { layout: 'strip', angle: refine[j], alignLongestEdge: false };
+        const r = { label: `Recht ${refine[j]}°`, patch, ...evalPatch(patch, siteArea) };
+        if (plausible(r) && better(r, best)) best = r;
+      }
+    }
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, ...best.patch } }) });
+    setSchemes(null);
+    setOptState({ done: true, label: best.label, before, after: best.spaces });
+  };
   const zoomBy = (factor) => setView((v) => {
     const cx = sizeRef.current.w / 2, cy = sizeRef.current.h / 2;
     const s = Math.max(1, Math.min(60, v.scale * factor));
@@ -1953,9 +2020,18 @@ function App() {
             <span>Lijn rijen uit met langste rand</span>
             <input type="checkbox" checked=${!!doc.params.alignLongestEdge} onChange=${(e) => setParam('alignLongestEdge', e.target.checked)} />
           </div>
-          <div className="field">
-            <button className="btn ghost" style=${{ width: '100%', justifyContent: 'center' }} onClick=${genSchemes}>⚖️ Vergelijk varianten</button>
+          <div className="field" style=${{ display: 'flex', gap: '6px' }}>
+            <button className="btn ghost" style=${{ flex: 1, justifyContent: 'center' }} onClick=${genSchemes}>⚖️ Vergelijk</button>
+            <button className="btn" style=${{ flex: 1, justifyContent: 'center' }} disabled=${!!(optState && optState.running)} onClick=${autoOptimize}>
+              ${optState && optState.running ? `Bezig… ${optState.i}/${optState.n}` : '✨ Optimaliseer'}
+            </button>
           </div>
+          ${optState && optState.done && html`
+            <div className="opt-result">
+              Beste layout: <b>${optState.label}</b> —
+              ${optState.after} plaatsen${optState.after > optState.before ? html` <span className="opt-up">(+${optState.after - optState.before})</span>`
+                : optState.after < optState.before ? ` (${optState.after - optState.before})` : ' — al optimaal'}
+            </div>`}
           ${schemes && html`
             <div className="schemes">
               ${schemes.length === 0 ? html`<div className="scheme-empty">Teken eerst een site.</div>` : ''}
