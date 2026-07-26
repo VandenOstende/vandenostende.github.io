@@ -59,7 +59,7 @@ const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 // `under: true` draws beneath the parking (roads, bike parking).
 export const ANNOT_TYPES = {
   road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: true, under: true, blocks: true },
-  driveway:    { label: 'Inrit',        color: '#525b68', width: 6.5, mode: 'line', curved: true, under: true, blocks: true },
+  driveway:    { label: 'In/uitrit',    color: '#525b68', width: 6.5, depth: 12, mode: 'driveway', under: true, blocks: true },
   walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true },
   bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true },
   crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross' },
@@ -69,6 +69,42 @@ export const ANNOT_TYPES = {
   access:      { label: 'Toegang',      color: '#22d3ee', width: 6,   mode: 'point' },
   marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false },
 };
+
+// Nearest point on a polygon boundary, with the local edge tangent and the
+// inward unit normal (pointing toward the polygon centroid). Used to snap a
+// driveway onto the site edge.
+function siteEdgeFrame(wp, poly, centroid) {
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+    let t = len2 ? ((wp.x - a.x) * dx + (wp.y - a.y) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + t * dx, py = a.y + t * dy, d = Math.hypot(wp.x - px, wp.y - py);
+    if (d < bestD) {
+      bestD = d;
+      const len = Math.hypot(dx, dy) || 1;
+      let nx = -dy / len, ny = dx / len; // normal candidate
+      if ((centroid.x - px) * nx + (centroid.y - py) * ny < 0) { nx = -nx; ny = -ny; } // point inward
+      best = { point: { x: px, y: py }, tx: dx / len, ty: dy / len, nx, ny };
+    }
+  }
+  return best;
+}
+
+// Build a fixed rectangular driveway straddling the site edge: `width` along
+// the edge, `depth` into the site (plus a short apron outside).
+function makeDriveway(frame, width, depth) {
+  const { point: c, tx, ty, nx, ny } = frame;
+  const hw = width / 2, apron = 1.5;
+  const points = [
+    { x: c.x + tx * hw - nx * apron, y: c.y + ty * hw - ny * apron },
+    { x: c.x - tx * hw - nx * apron, y: c.y - ty * hw - ny * apron },
+    { x: c.x - tx * hw + nx * depth, y: c.y - ty * hw + ny * depth },
+    { x: c.x + tx * hw + nx * depth, y: c.y + ty * hw + ny * depth },
+  ];
+  return { kind: 'driveway', points, closed: true, anchor: { x: c.x, y: c.y }, nx, ny, tx, ty, width, depth };
+}
 
 // Turn a blocking annotation (road / driveway) into a clearance polygon the
 // parking solver must avoid. Closed pleinen block their whole area; open lines
@@ -305,6 +341,11 @@ function draw(ctx, opts) {
     drawAnnotations(ctx, doc.annotations, w2s, view.scale, false, selAnnIdx);
   }
 
+  // Driveway placement preview (snapped to the site edge)
+  if (hover && hover.driveway) {
+    drawDriveway(ctx, hover.driveway, w2s, view.scale, true);
+  }
+
   // Manual stall placement preview
   if (hover && hover.stallPreview) {
     pathPoly(ctx, hover.stallPreview, w2s, true);
@@ -525,6 +566,35 @@ function buildAnnotPath(ctx, pts, curved) {
   }
 }
 
+// A driveway: filled rectangle straddling the site edge with an inward arrow.
+function drawDriveway(ctx, ann, w2s, scale, selected) {
+  const pts = (ann.points || []).map(w2s);
+  if (pts.length < 3) return;
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.fillStyle = selected ? 'rgba(82,91,104,0.9)' : 'rgba(82,91,104,0.72)';
+  ctx.fill();
+  ctx.strokeStyle = selected ? '#93c5fd' : '#6b7280';
+  ctx.lineWidth = selected ? 2 : 1.2;
+  ctx.stroke();
+  // Inward direction arrow.
+  if (ann.anchor && ann.nx != null) {
+    const o = w2s(ann.anchor);
+    const tip = w2s({ x: ann.anchor.x + ann.nx * (ann.depth || 10) * 0.7, y: ann.anchor.y + ann.ny * (ann.depth || 10) * 0.7 });
+    ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
+    const ang = Math.atan2(tip.y - o.y, tip.x - o.x), h = Math.max(5, scale * 1.1);
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - h * Math.cos(ang - 0.5), tip.y - h * Math.sin(ang - 0.5));
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - h * Math.cos(ang + 0.5), tip.y - h * Math.sin(ang + 0.5));
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+}
+
 function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   const t = ANNOT_TYPES[ann.kind];
   if (!t || !ann.points || ann.points.length < 1) return;
@@ -535,6 +605,7 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
     else drawTree(ctx, w2s(ann.points[0]), rpx, index || 0, selected);
     return;
   }
+  if (t.mode === 'driveway') { drawDriveway(ctx, ann, w2s, scale, selected); return; }
   if (ann.points.length < 2) return;
 
   if (t.mode === 'cross') {
@@ -1076,6 +1147,14 @@ function App() {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: [...(d.annotations || []), ann] }) });
   const deleteAnnotation = (index) =>
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: (d.annotations || []).filter((_, i) => i !== index) }) });
+  // Resize a driveway in place: rebuild its rectangle from the stored edge frame.
+  const setDrivewayWidth = (index, width) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const anns = (d.annotations || []).slice();
+    const a = anns[index];
+    if (!a || a.kind !== 'driveway') return d;
+    anns[index] = makeDriveway({ point: a.anchor, tx: a.tx, ty: a.ty, nx: a.nx, ny: a.ny }, width, a.depth || 12);
+    return { ...d, annotations: anns };
+  } });
   const startAnnot = (kind) => {
     const t = ANNOT_TYPES[kind];
     setAnnotKind(kind);
@@ -1236,6 +1315,12 @@ function App() {
     if (tool === 'annot') {
       const t = ANNOT_TYPES[annotKind];
       const snap = snapPoint(sp);
+      if (t.mode === 'driveway') {
+        if (!sitePoly || sitePoly.length < 3) return;
+        const frame = siteEdgeFrame(wp, sitePoly, polygonCentroid(sitePoly));
+        if (frame) addAnnotation(makeDriveway(frame, annotWidth, t.depth || 12));
+        return;
+      }
       if (t.mode === 'point') {
         const at = annotKind === 'access' ? nearestOnSiteEdge(wp) : snap;
         addAnnotation({ kind: annotKind, points: [at], width: annotWidth });
@@ -1262,6 +1347,13 @@ function App() {
     const drag = dragRef.current;
 
     if (!drag) {
+      if (tool === 'annot' && annotKind === 'driveway') {
+        if (sitePoly && sitePoly.length >= 3) {
+          const frame = siteEdgeFrame(wp, sitePoly, polygonCentroid(sitePoly));
+          setHover(frame ? { driveway: makeDriveway(frame, annotWidth, ANNOT_TYPES.driveway.depth || 12) } : null);
+        }
+        return;
+      }
       if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') setHover({ stallPreview: stallAt(snapStallCenter(wp), result.angleUsed || 0) });
       return;
@@ -1719,7 +1811,9 @@ function App() {
     obstaclepoly: 'Klik punten voor een gebouw in vrije vorm · Shift = 15° · klik beginpunt of dubbelklik om te sluiten · Esc annuleert',
     pan: 'Sleep om te verschuiven',
     placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
-    annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'point'
+    annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'driveway'
+      ? 'In/uitrit: klik op de siterand om te plaatsen · breedte instelbaar links · Esc stopt'
+      : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'point'
       ? `${ANNOT_TYPES[annotKind].label}: klik om te plaatsen · Esc stopt`
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'area'
       ? `${ANNOT_TYPES[annotKind].label}: sleep een rechthoek`
@@ -1798,7 +1892,17 @@ function App() {
                 <span className="dot" style=${{ background: t.color }}></span>${t.label}
               </button>`)}
           </div>
-          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && html`
+          ${tool === 'annot' && annotKind === 'driveway' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Breedte in/uitrit</label>
+              <div className="row">
+                <input type="number" min="3" max="20" step="0.5" value=${annotWidth}
+                  onChange=${(e) => setAnnotWidth(Math.max(3, Math.min(20, parseFloat(e.target.value) || 6.5)))} />
+                <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
+              </div>
+              <div className="mix-note">Klik op de siterand om te plaatsen — de in/uitrit snapt op de rand.</div>
+            </div>`}
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
               <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
@@ -1901,6 +2005,15 @@ function App() {
         ${selection && selection.type === 'annot' && doc.annotations[selection.index] && html`
         <div className="section sel-section">
           <h3>${ANNOT_TYPES[doc.annotations[selection.index].kind].label} geselecteerd</h3>
+          ${doc.annotations[selection.index].kind === 'driveway' && html`
+            <div className="field">
+              <label>Breedte</label>
+              <div className="row">
+                <input type="number" min="3" max="20" step="0.5" value=${doc.annotations[selection.index].width || 6.5}
+                  onChange=${(e) => setDrivewayWidth(selection.index, Math.max(3, Math.min(20, parseFloat(e.target.value) || 6.5)))} />
+                <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
+              </div>
+            </div>`}
           <div className="sel-actions">
             <button className="btn" onClick=${() => { deleteAnnotation(selection.index); setSelection(null); }}>🗑 Verwijder</button>
             <button className="btn ghost" onClick=${() => setSelection(null)}>Deselecteer</button>
