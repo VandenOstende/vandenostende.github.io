@@ -5,6 +5,15 @@
 
 export const EPS = 1e-9;
 
+/**
+ * Normalise a "building/obstacle" to its point ring. Buildings are stored as
+ * { poly, floors } objects, but legacy saves (and some call sites) use a bare
+ * point array — this accepts either.
+ */
+export function polyOf(o) {
+  return Array.isArray(o) ? o : (o && o.poly) || [];
+}
+
 /** Shoelace area (absolute value), m². */
 export function polygonArea(poly) {
   let a = 0;

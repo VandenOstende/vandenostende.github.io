@@ -14,7 +14,7 @@
 import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
-  pointInPolygon, distPointToPolygonBoundary,
+  pointInPolygon, distPointToPolygonBoundary, polyOf,
 } from './geometry.js';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
@@ -125,7 +125,7 @@ export function solveParking(site, obstacles, params, orientationIndex = 0) {
   // Expand obstacles by the padding buffer so stalls keep clearance.
   const pad = params.padding || 0;
   const blockers = (obstacles || [])
-    .map((o) => (pad > 0 ? offsetPolygon(o, -pad) : o.slice()))
+    .map((o) => { const p = polyOf(o); return pad > 0 ? offsetPolygon(p, -pad) : p.slice(); })
     .filter(Boolean);
 
   if (params.layout === 'perimeter') return { ...packConcentric(buildable, blockers, params), orientationCount: 1 };
@@ -438,7 +438,9 @@ function assignStallTypes(stalls, params) {
 /** Aggregate live metrics for the dashboard. */
 export function computeMetrics(site, obstacles, result, params, annotations) {
   const siteArea = site && site.length >= 3 ? polygonArea(site) : 0;
-  const buildingArea = (obstacles || []).reduce((s, o) => s + polygonArea(o), 0);
+  const buildingArea = (obstacles || []).reduce((s, o) => s + polygonArea(polyOf(o)), 0);
+  // Gross floor area = footprint × number of floors (default 1); FAR vs. site.
+  const grossFloorArea = (obstacles || []).reduce((s, o) => s + polygonArea(polyOf(o)) * (o && o.floors ? o.floors : 1), 0);
   // Counts are in parking *spaces*: a motorcycle stall provides 3 spaces.
   const counts = {};
   for (const k of Object.keys(STALL_TYPES)) counts[k] = 0;
@@ -476,7 +478,8 @@ export function computeMetrics(site, obstacles, result, params, annotations) {
 
   return {
     siteArea, buildingArea, buildableArea, total, physicalStalls, counts,
-    areaPerStall,
+    areaPerStall, grossFloorArea,
+    far: siteArea > 0 ? grossFloorArea / siteArea : 0,
     coverage: siteArea > 0 ? buildingArea / siteArea : 0,
     imperviousPct,
     adaRequired: ada.required, adaVan: ada.van,
