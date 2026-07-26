@@ -10,8 +10,9 @@ import {
   pointInPolygon, rectPoly, tessellateClosed,
 } from './geometry.js';
 import * as basemap from './basemap.js';
-import { BASEMAPS, geocode } from './basemap.js';
+import { BASEMAPS, geocode, latLonToLocal } from './basemap.js';
 import { toGeoJSON, toDXF, toCSV } from './exporters.js';
+import { parseParcel, simplifyRing } from './importers.js';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1398,6 +1399,33 @@ function App() {
     reader.readAsText(file);
     e.target.value = '';
   };
+  // Import a real parcel boundary from GeoJSON or KML: anchor the geo frame at
+  // the ring centroid, convert to local metres, simplify, and use it as the site.
+  const applyParcel = (ring) => {
+    const lat = ring.reduce((s, p) => s + p.lat, 0) / ring.length;
+    const lon = ring.reduce((s, p) => s + p.lon, 0) / ring.length;
+    const geo = { lat, lon };
+    let site = simplifyRing(ring.map((p) => latLonToLocal(p, geo)), 0.5, 120);
+    if (site.length < 3) { alert('Geen bruikbare perceelgrens gevonden.'); return; }
+    dispatch({ type: 'RESET', doc: { ...initialDoc, site, geo, obstacles: [] } });
+    setBasemapStyle('satellite');
+    fittedRef.current = true;
+    const fv = fitView(site, sizeRef.current.w, sizeRef.current.h);
+    if (fv) setView(fv);
+    setOnboardOpen(false);
+  };
+  const importParcel = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const ring = parseParcel(reader.result, file.name);
+      if (!ring || ring.length < 3) { alert('Geen perceelgrens gevonden in dit bestand (GeoJSON of KML verwacht).'); return; }
+      applyParcel(ring);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
   const exportPNG = () => {
     canvasRef.current.toBlob((blob) => downloadBlob(blob, 'parkplanner.png'));
   };
@@ -1502,6 +1530,7 @@ function App() {
         <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>
         <button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
         <label className="btn ghost">Laden<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
+        <label className="btn ghost" title="Perceelgrens importeren (GeoJSON of KML)">Perceel<input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} /></label>
         <div className="dropdown">
           <button className="btn ghost" onClick=${() => setExportOpen((o) => !o)}>Export ▾</button>
           ${exportOpen && html`
@@ -1871,6 +1900,12 @@ function App() {
                 <div className="oc-t">Project laden</div>
                 <div className="oc-d">Open een eerder opgeslagen .json — locatie en camera worden hersteld.</div>
                 <input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} />
+              </label>
+              <label className="onboard-card">
+                <div className="oc-ico">🗺️</div>
+                <div className="oc-t">Perceel importeren</div>
+                <div className="oc-d">Laad een echte perceelgrens uit GeoJSON of KML en plan erop.</div>
+                <input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} />
               </label>
             </div>
 

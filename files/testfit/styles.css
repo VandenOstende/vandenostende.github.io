@@ -446,7 +446,7 @@ select.preset {
 }
 .onboard-sub { color: var(--muted); font-size: 12.5px; line-height: 1.45; max-width: 460px; }
 .onboard-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px;
 }
 .onboard-card {
   display: flex; flex-direction: column; gap: 4px; text-align: left;
