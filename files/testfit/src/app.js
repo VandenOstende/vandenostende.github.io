@@ -542,6 +542,63 @@ function drawGrid(ctx, view, size) {
   ctx.stroke();
 }
 
+// ---------- 2.5D (view-only oblique/axonometric render) ----------
+const ANN25_COLOR = { road: '#3b424e', walkway: '#9aa4b2', bikepath: '#b91c1c', marking: '#eab308' };
+function draw25D(ctx, opts) {
+  const { view, doc, result, size, dpr } = opts;
+  const YC = 0.62, ZC = 0.78;               // depth compression + height lift
+  const s = view.scale, ox = view.ox, oy = view.oy;
+  const proj = (p, z) => ({ x: ox + p.x * s, y: oy + p.y * s * YC - (z || 0) * s * ZC });
+  const path = (pts, z) => { ctx.beginPath(); pts.forEach((p, i) => { const q = proj(p, z); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }); ctx.closePath(); };
+
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, size.w, size.h);
+
+  if (doc.site.length >= 3) { path(doc.site, 0); ctx.fillStyle = '#12161c'; ctx.fill(); ctx.strokeStyle = '#f8b500'; ctx.lineWidth = 2; ctx.stroke(); }
+  (doc.annotations || []).filter((a) => a.kind === 'grass' && a.points.length >= 3).forEach((a) => { path(a.points, 0); ctx.fillStyle = hexA('#3f9b46', 0.5); ctx.fill(); });
+  (result.aisles || []).forEach((a) => { path(a.poly, 0); ctx.fillStyle = '#2b3340'; ctx.fill(); });
+  (result.stalls || []).forEach((st) => {
+    path(st.poly, 0);
+    ctx.fillStyle = (STALL_TYPES[st.type] || STALL_TYPES.standard).color;
+    ctx.globalAlpha = 0.9; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.5; ctx.stroke();
+  });
+  (doc.annotations || []).filter((a) => ANN25_COLOR[a.kind] && !a.closed && a.points.length >= 2).forEach((a) => {
+    ctx.beginPath(); a.points.forEach((p, i) => { const q = proj(p, 0); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+    ctx.strokeStyle = ANN25_COLOR[a.kind]; ctx.lineWidth = Math.max(1.5, (a.width || 1) * s * 0.9);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+  });
+
+  // Extruded buildings, far → near.
+  const H = 12;
+  (doc.obstacles || []).map((o) => ({ o, cy: o.reduce((t, p) => t + p.y, 0) / o.length })).sort((a, b) => a.cy - b.cy)
+    .forEach(({ o }) => {
+      for (let i = 0; i < o.length; i++) {
+        const a = o[i], b = o[(i + 1) % o.length];
+        const a0 = proj(a, 0), b0 = proj(b, 0), b1 = proj(b, H), a1 = proj(a, H);
+        ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(b0.x, b0.y); ctx.lineTo(b1.x, b1.y); ctx.lineTo(a1.x, a1.y); ctx.closePath();
+        ctx.fillStyle = '#5b6675'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.5; ctx.stroke();
+      }
+      path(o, H); ctx.fillStyle = '#8a97a8'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.6; ctx.stroke();
+    });
+
+  // Trees, far → near.
+  (doc.annotations || []).filter((a) => a.kind === 'tree' && a.points && a.points[0])
+    .map((a) => ({ a, cy: a.points[0].y })).sort((x, y) => x.cy - y.cy)
+    .forEach(({ a }) => {
+      const base = proj(a.points[0], 0), top = proj(a.points[0], 4);
+      const r = Math.max(3, ((a.width || 5) / 2) * s * 0.7);
+      ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = Math.max(2, r * 0.25);
+      ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+      const g = ctx.createRadialGradient(top.x - r * 0.3, top.y - r * 0.3, r * 0.2, top.x, top.y, r);
+      g.addColorStop(0, '#5fd97f'); g.addColorStop(1, '#166534');
+      ctx.beginPath(); ctx.arc(top.x, top.y, r, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
+    });
+
+  ctx.restore();
+}
+
 // ---------- Main component ----------
 function App() {
   const [hist, dispatch] = useReducer(historyReducer, { past: [], present: initialDoc, future: [] });
@@ -680,15 +737,19 @@ function App() {
     // conditions that turn world-space draw loops into infinite loops.
     if (!(sz.w > 0) || !(sz.h > 0) || !(view.scale > 0) || !isFinite(view.scale)) return;
     const ctx = canvas.getContext('2d');
-    draw(ctx, {
-      view, doc, result: deco, layers,
-      dpr: Math.min(2, window.devicePixelRatio || 1),
-      drawing, hover, selection, size: sizeRef.current,
-      showHandles: tool === 'select', basemapStyle,
-      stallSel, aisleSel, marquee: marqueeRef.current,
-    });
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (viewMode === '2.5d') {
+      draw25D(ctx, { view, doc, result: deco, size: sizeRef.current, dpr });
+    } else {
+      draw(ctx, {
+        view, doc, result: deco, layers, dpr,
+        drawing, hover, selection, size: sizeRef.current,
+        showHandles: tool === 'select', basemapStyle,
+        stallSel, aisleSel, marquee: marqueeRef.current,
+      });
+    }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel, viewMode]);
 
   renderRef.current = renderNow;
   useEffect(() => { renderNow(); }, [renderNow]);
@@ -873,6 +934,7 @@ function App() {
   };
 
   const onPointerDown = (e) => {
+    if (viewMode !== '2d') return; // 2.5D/3D are view-only
     e.target.setPointerCapture?.(e.pointerId);
     const sp = getScreen(e);
     const wp = getWorld(e);
@@ -1226,7 +1288,10 @@ function App() {
         <button className="btn ghost" onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶ Undo</button>
         <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>
         <div className="tb-sep"></div>
-        <button className=${'btn' + (viewMode === '3d' ? ' active' : '')} onClick=${() => setViewMode(viewMode === '3d' ? '2d' : '3d')} title="Wissel 2D/3D">${viewMode === '3d' ? '🧊 3D' : '🗺 2D'}</button>
+        <div className="seg view-seg">
+          ${[['2d', '2D'], ['2.5d', '2.5D'], ['3d', '3D']].map(([m, lbl]) => html`
+            <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
+        </div>
         <div className="tb-spacer"></div>
         <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
         <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
@@ -1308,7 +1373,8 @@ function App() {
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
           onDoubleClick=${onDoubleClick}
           style=${{ cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
-        ${hintText && html`<div className="hint">${hintText}</div>`}
+        ${viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
+        ${viewMode === '2.5d' && html`<div className="hint">2.5D-weergave · alleen-lezen — schakel naar 2D om te bewerken</div>`}
         <div className="hud">
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>

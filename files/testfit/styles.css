@@ -76,6 +76,9 @@ body {
 
 .tb-sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
 
+.seg.view-seg { width: auto; }
+.seg.view-seg button { flex: 0 0 auto; padding: 5px 10px; }
+
 .dropdown { position: relative; }
 .dropdown .menu {
   position: absolute;
