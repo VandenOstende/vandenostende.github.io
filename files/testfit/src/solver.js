@@ -270,7 +270,7 @@ function assignStallTypes(stalls, params) {
 }
 
 /** Aggregate live metrics for the dashboard. */
-export function computeMetrics(site, obstacles, result, params) {
+export function computeMetrics(site, obstacles, result, params, annotations) {
   const siteArea = site && site.length >= 3 ? polygonArea(site) : 0;
   const buildingArea = (obstacles || []).reduce((s, o) => s + polygonArea(o), 0);
   const counts = {};
@@ -283,12 +283,37 @@ export function computeMetrics(site, obstacles, result, params) {
   const areaPerStall = total > 0 ? buildableArea / total : 0;
   const ada = adaRequirement(total);
   const onewayAisles = (result.aisles || []).filter((a) => a.oneway).length;
+
+  // Impervious (paved) coverage: buildings + parking + paved infrastructure,
+  // excluding grass. Capped at the site area (overlaps inflate the raw sum).
+  let paved = buildingArea;
+  for (const st of result.stalls) paved += polygonArea(st.poly);
+  for (const a of result.aisles || []) paved += polygonArea(a.poly);
+  for (const an of annotations || []) {
+    if (!an.points || an.kind === 'grass' || an.kind === 'tree' || an.kind === 'access') continue;
+    if (an.points.length >= 3 && (an.closed || an.kind === 'bikeparking')) paved += polygonArea(an.points);
+    else if (an.points.length >= 2 && (an.kind === 'road' || an.kind === 'walkway' || an.kind === 'bikepath')) {
+      let len = 0;
+      for (let i = 0; i < an.points.length - 1; i++) len += Math.hypot(an.points[i + 1].x - an.points[i].x, an.points[i + 1].y - an.points[i].y);
+      paved += len * (an.width || 1);
+    }
+  }
+  const imperviousPct = siteArea > 0 ? Math.min(1, paved / siteArea) : 0;
+
+  // Zoning parking requirement from building GLA (stalls per 100 m²).
+  const gla = params.buildingGLA || 0;
+  const ratio = params.parkingRatio || 0;
+  const requiredStalls = gla > 0 && ratio > 0 ? Math.ceil((gla / 100) * ratio) : null;
+  const accessCount = (annotations || []).filter((a) => a.kind === 'access').length;
+
   return {
     siteArea, buildingArea, buildableArea, total, counts,
     areaPerStall,
     coverage: siteArea > 0 ? buildingArea / siteArea : 0,
+    imperviousPct,
     adaRequired: ada.required, adaVan: ada.van,
     adaProvided: counts.ada || 0,
+    requiredStalls, accessCount,
     orientationCount: result.orientationCount || 0,
     aisleCount: (result.aisles || []).length, onewayAisles,
   };
