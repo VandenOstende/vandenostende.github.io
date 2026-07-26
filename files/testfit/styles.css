@@ -75,6 +75,33 @@ body {
 .brand small { color: var(--muted); font-weight: 500; font-size: 11px; }
 
 .tb-sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+
+.dropdown { position: relative; }
+.dropdown .menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+}
+.dropdown .menu button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dropdown .menu button:hover { background: var(--panel-2); }
 .tb-spacer { flex: 1; }
 
 .btn {
