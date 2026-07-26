@@ -500,3 +500,10 @@ select.preset {
 }
 .mix-warn { color: var(--danger); font-size: 11px; margin: 2px 0 8px; }
 .mix-note { color: var(--muted); font-size: 11px; margin-top: 8px; line-height: 1.4; }
+
+/* ---- Auto-optimise result ---- */
+.opt-result {
+  margin: 4px 0 8px; padding: 8px 10px; font-size: 12px; line-height: 1.4;
+  background: #16241a; border: 1px solid var(--accent-2); border-radius: 6px; color: var(--text);
+}
+.opt-result .opt-up { color: var(--accent-2); font-weight: 600; }
