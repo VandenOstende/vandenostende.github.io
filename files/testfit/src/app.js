@@ -67,8 +67,9 @@ export const ANNOT_TYPES = {
 const initialDoc = {
   site: DEFAULT_SITE, siteCurved: false, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
   params: DEFAULT_PARAMS, orientationIndex: 0,
-  overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} } },
+  overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} }, removed: {} },
   annotations: [], // { kind, points:[{x,y}], width, curved }
+  manualStalls: [], // hand-placed stalls: { poly, type }
 };
 
 // Simple history wrapper: { past[], present, future[] }.
@@ -241,6 +242,16 @@ function draw(ctx, opts) {
   // Infrastructure drawn over the parking (paths, crosswalks, markings)
   if (layers.infra && doc.annotations) {
     drawAnnotations(ctx, doc.annotations, w2s, view.scale, false, selAnnIdx);
+  }
+
+  // Manual stall placement preview
+  if (hover && hover.stallPreview) {
+    pathPoly(ctx, hover.stallPreview, w2s, true);
+    ctx.fillStyle = 'rgba(34,197,94,0.35)';
+    ctx.fill();
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
   }
 
   // Rectangle preview (obstacle / bike-parking area drag) with dimensions
@@ -750,17 +761,23 @@ function App() {
     const ov = doc.overrides || {};
     const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {};
     const locks = ov.locks || {}, lockS = locks.stalls || {}, lockA = locks.aisles || {};
+    const removed = ov.removed || {};
     const stalls = result.stalls.map((st) => {
       const key = stallKey(st.poly);
-      return { ...st, key, type: ovStalls[key] || st.type, locked: !!lockS[key] };
-    });
+      return { ...st, key, type: ovStalls[key] || st.type, locked: !!lockS[key], manual: false };
+    }).filter((st) => !removed[st.key]);
+    // Hand-placed stalls, markable/lockable like solver stalls.
+    for (const ms of doc.manualStalls || []) {
+      const key = stallKey(ms.poly);
+      stalls.push({ poly: ms.poly, key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], manual: true });
+    }
     const aisles = result.aisles.map((q) => {
       const key = aisleKey(q);
       const o = ovAisles[key] || {};
       return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
     });
     return { stalls, aisles, orientationCount: result.orientationCount };
-  }, [result, doc.overrides]);
+  }, [result, doc.overrides, doc.manualStalls]);
 
   const renderNow = useCallback(() => {
     const canvas = canvasRef.current;
@@ -878,6 +895,7 @@ function App() {
     return {
       stalls: { ...o.stalls }, aisles: { ...o.aisles },
       locks: { stalls: { ...l.stalls }, aisles: { ...l.aisles } },
+      removed: { ...o.removed },
     };
   };
   const setStallTypes = (keys, type) => dispatch({ type: 'COMMIT', updater: (d) => {
@@ -910,6 +928,44 @@ function App() {
     return { ...d, overrides: ov };
   } });
   const clearSel = () => { setStallSel([]); setAisleSel(null); setSelection(null); };
+
+  // ---------- Manual stall placement + delete ----------
+  const stallAt = (center, theta) => {
+    const w = doc.params.stallWidth, d = doc.params.stallDepth;
+    const c = Math.cos(theta), s = Math.sin(theta);
+    const ux = c, uy = s, vx = -s, vy = c, hw = w / 2, hd = d / 2;
+    return [
+      { x: center.x - ux * hw - vx * hd, y: center.y - uy * hw - vy * hd },
+      { x: center.x + ux * hw - vx * hd, y: center.y + uy * hw - vy * hd },
+      { x: center.x + ux * hw + vx * hd, y: center.y + uy * hw + vy * hd },
+      { x: center.x - ux * hw + vx * hd, y: center.y - uy * hw + vy * hd },
+    ];
+  };
+  // Snap a click to the lattice of the nearest existing stall (so hand-placed
+  // stalls tile next to solver stalls); otherwise a coarse metric grid.
+  const snapStallCenter = (click) => {
+    const theta = result.angleUsed || 0;
+    const w = doc.params.stallWidth, d = doc.params.stallDepth;
+    const ux = Math.cos(theta), uy = Math.sin(theta), vx = -Math.sin(theta), vy = Math.cos(theta);
+    let best = null, bestD = Infinity;
+    for (const st of deco.stalls) { const ct = polygonCentroid(st.poly); const dd = dist(ct, click); if (dd < bestD) { bestD = dd; best = ct; } }
+    if (best && bestD < 3 * Math.max(w, d)) {
+      const dx = click.x - best.x, dy = click.y - best.y;
+      const su = Math.round((dx * ux + dy * uy) / w) * w;
+      const sv = Math.round((dx * vx + dy * vy) / d) * d;
+      return { x: best.x + su * ux + sv * vx, y: best.y + su * uy + sv * vy };
+    }
+    return { x: Math.round(click.x * 4) / 4, y: Math.round(click.y * 4) / 4 };
+  };
+  const addManualStall = (poly) =>
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, manualStalls: [...(d.manualStalls || []), { poly, type: 'standard' }] }) });
+  const deleteStalls = (keys) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const manualKeys = new Set((d.manualStalls || []).map((ms) => stallKey(ms.poly)));
+    const keep = (d.manualStalls || []).filter((ms) => !keys.includes(stallKey(ms.poly)));
+    const ov = ovOf(d);
+    for (const k of keys) { if (!manualKeys.has(k)) ov.removed[k] = 1; }
+    return { ...d, manualStalls: keep, overrides: ov };
+  } });
 
   // ---------- Annotation (infrastructure) actions ----------
   const addAnnotation = (ann) =>
@@ -991,6 +1047,11 @@ function App() {
     // Middle-button or pan tool → pan.
     if (e.button === 1 || tool === 'pan') {
       dragRef.current = { mode: 'pan', start: sp, view: { ...view } };
+      return;
+    }
+
+    if (tool === 'placestall') {
+      addManualStall(stallAt(snapStallCenter(wp), result.angleUsed || 0));
       return;
     }
 
@@ -1083,6 +1144,7 @@ function App() {
 
     if (!drag) {
       if ((tool === 'site' || tool === 'annot') && drawing) setHover(snapPoint(sp));
+      else if (tool === 'placestall') setHover({ stallPreview: stallAt(snapStallCenter(wp), result.angleUsed || 0) });
       return;
     }
     if (drag.mode === 'pan') {
@@ -1201,13 +1263,16 @@ function App() {
         case 'v': setTool('select'); break;
         case 'p': setTool('site'); setDrawing({ points: [] }); break;
         case 'b': setTool('obstacle'); break;
+        case 'k': setTool('placestall'); break;
         case ' ': setTool('pan'); break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
         case '+': case '=': zoomBy(1.2); break;
         case '-': case '_': zoomBy(1 / 1.2); break;
         case 'escape': setDrawing(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); break;
         case 'delete': case 'backspace':
-          if (selection && selection.type === 'obs') {
+          if (stallSel.length) {
+            deleteStalls(stallSel); setStallSel([]);
+          } else if (selection && selection.type === 'obs') {
             dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== selection.index) }) });
             setSelection(null);
           } else if (selection && selection.type === 'annot') {
@@ -1221,7 +1286,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selection]);
+  }, [selection, stallSel]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -1311,6 +1376,7 @@ function App() {
     site: 'Klik om punten te plaatsen · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
     obstacle: 'Sleep een rechthoek voor een gebouw / uitsluitingszone',
     pan: 'Sleep om te verschuiven',
+    placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
     annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'point'
       ? `${ANNOT_TYPES[annotKind].label}: klik om te plaatsen · Esc stopt`
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'area'
@@ -1332,6 +1398,7 @@ function App() {
         ${toolBtn('select', 'Selecteer', 'V', tool, setTool, setDrawing)}
         ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
         ${toolBtn('obstacle', 'Gebouw', 'B', tool, setTool, setDrawing)}
+        ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
         ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
         <button className="btn ghost" onClick=${newRect}>Nieuwe site</button>
         <div className="tb-sep"></div>
@@ -1502,10 +1569,11 @@ function App() {
             ${(() => {
               const lockedSet = (doc.overrides.locks && doc.overrides.locks.stalls) || {};
               const allLocked = stallSel.every((k) => lockedSet[k]);
-              return html`<div className="sel-actions">
-                <button className="btn ghost" onClick=${() => setStallTypes(stallSel, null)}>↺ Wis markering</button>
-                <button className="btn ghost" onClick=${() => toggleLockStalls(stallSel, !allLocked)}>${allLocked ? '🔓 Ontgrendel' : '🔒 Vergrendel'}</button>
-                <button className="btn ghost" onClick=${clearSel}>Deselecteer</button>
+              return html`<div className="sel-actions" style=${{ flexWrap: 'wrap' }}>
+                <button className="btn ghost" onClick=${() => setStallTypes(stallSel, null)}>↺ Wis</button>
+                <button className="btn ghost" onClick=${() => toggleLockStalls(stallSel, !allLocked)}>${allLocked ? '🔓' : '🔒'}</button>
+                <button className="btn ghost" onClick=${() => { deleteStalls(stallSel); setStallSel([]); }}>🗑 Verwijder</button>
+                <button className="btn ghost" onClick=${clearSel}>✕</button>
               </div>`;
             })()}
           `}
