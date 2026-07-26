@@ -1188,9 +1188,9 @@ function App() {
     stalls: deco.stalls, aisles: deco.aisles, annotations: doc.annotations,
   }), [sitePoly, doc.obstacles, deco, doc.annotations]);
 
-  // Create/destroy the optional Mapbox satellite-context map (needs a token).
+  // Create/destroy the real-world 3D map (MapLibre + OpenFreeMap, no token).
   useEffect(() => {
-    if (viewMode !== 'mapbox' || !mbToken) {
+    if (viewMode !== 'mapbox') {
       if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; }
       return;
     }
@@ -1200,13 +1200,13 @@ function App() {
     if (!container) return;
     import('./map3d.js').then(async (m) => {
       if (cancelled) return;
-      const ctrl = await m.init3D(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg));
+      const ctrl = await m.init3D(container, doc.geo, buildPlan(), (msg) => setMap3dError(msg));
       if (cancelled) { if (ctrl) ctrl.destroy(); return; }
       map3dRef.current = ctrl;
-    }).catch(() => setMap3dError('3D-weergave kon niet laden.'));
+    }).catch(() => setMap3dError('3D-kaart kon niet laden.'));
     return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, mbToken]);
+  }, [viewMode]);
 
   // Push plan updates into an existing 3D map.
   useEffect(() => {
@@ -2175,7 +2175,7 @@ function App() {
         <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>
         <div className="tb-sep"></div>
         <div className="seg view-seg">
-          ${[['2d', '2D'], ['2.5d', '2.5D'], ['3d', '3D'], ['mapbox', '🛰 Kaart']].map(([m, lbl]) => html`
+          ${[['2d', '2D'], ['2.5d', '2.5D'], ['3d', '3D'], ['mapbox', '🏙 3D-kaart']].map(([m, lbl]) => html`
             <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
         </div>
         <div className="tb-spacer"></div>
@@ -2359,27 +2359,15 @@ function App() {
 
         ${viewMode === 'mapbox' && html`
           <div id="pp-map3d" className="map3d"></div>
-          ${!mbToken && html`
-            <div className="token-panel">
-              <h4>🛰 Satellietkaart-context via Mapbox</h4>
-              <p>Optioneel: plaats je plan op een echte 3D-kaart. Voer je eigen Mapbox <b>public token</b> (pk.…) in — die blijft lokaal in je browser. Het gewone 3D (knop <b>3D</b>) werkt zonder token.</p>
-              <input type="text" placeholder="pk.eyJ…" value=${mbTokenInput} onInput=${(e) => setMbTokenInput(e.target.value)} />
-              <div className="sel-actions">
-                <button className="btn" onClick=${saveMbToken}>3D starten</button>
-                <button className="btn ghost" onClick=${() => setViewMode('2d')}>Terug naar 2D</button>
-              </div>
-              <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener">Gratis token aanmaken →</a>
-            </div>`}
-          ${mbToken && map3dError && html`
-            <div className="token-panel">
-              <h4>3D niet beschikbaar</h4>
-              <p>${map3dError}</p>
-              <div className="sel-actions">
-                <button className="btn" onClick=${clearMbToken}>Andere token invoeren</button>
-                <button className="btn ghost" onClick=${() => setViewMode('2d')}>Terug naar 2D</button>
-              </div>
-            </div>`}
-          ${mbToken && !map3dError && html`<div className="attrib">Mapbox · plan in 3D</div>`}`}
+          ${map3dError
+            ? html`<div className="token-panel">
+                <h4>3D-kaart niet beschikbaar</h4>
+                <p>${map3dError}</p>
+                <div className="sel-actions">
+                  <button className="btn ghost" onClick=${() => setViewMode('2d')}>Terug naar 2D</button>
+                </div>
+              </div>`
+            : html`<div className="attrib">© OpenFreeMap · OpenMapTiles · OpenStreetMap</div>`}`}
       </div>
 
       <div className="panel right">
