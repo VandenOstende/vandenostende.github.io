@@ -14,7 +14,31 @@
 import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
+  pointInPolygon,
 } from './geometry.js';
+
+// Contiguous x-spans where the point (x, y) lies inside `poly`.
+function insideSpans(poly, y, xMin, xMax, step) {
+  const spans = [];
+  let start = null;
+  for (let x = xMin; x <= xMax + 1e-9; x += step) {
+    const inside = pointInPolygon({ x, y }, poly);
+    if (inside && start === null) start = x;
+    else if (!inside && start !== null) { spans.push([start, x - step]); start = null; }
+  }
+  if (start !== null) spans.push([start, xMax]);
+  return spans;
+}
+
+// A stall [x0,x1] is allowed if it sits in an aisle span and (for dead-end
+// turnarounds) clears `turn` metres from both ends of that span.
+function inAllowedSpan(x0, x1, spans, turn) {
+  const mid = (x0 + x1) / 2;
+  for (const [s0, s1] of spans) {
+    if (mid >= s0 && mid <= s1) return x0 >= s0 + turn - 1e-6 && x1 <= s1 - turn + 1e-6;
+  }
+  return false;
+}
 
 // Stall type catalogue. `glyph` is a single char drawn on the stall when
 // zoomed in; `label` is shown in the UI. Order defines legend/button order.
@@ -153,39 +177,42 @@ function packOrientation(buildable, blockers, params, theta) {
   const stalls = [];
   const aisles = [];
   const maxRun = params.maxRun > 0 ? params.maxRun : Infinity;
+  const singleLoaded = !!params.singleLoaded;
+  const deadEnd = !!params.deadEndTurnaround;
+  const turn = params.turnaround > 0 ? params.turnaround : 7;
 
-  for (let yBase = bb.minY; yBase + moduleH <= bb.maxY + 1e-6; yBase += moduleH) {
-    const aisleY0 = yBase + rowDepth;
-    const aisleY1 = aisleY0 + aisle;
-    let aislePlaced = false;
-
-    // Two rows per module: top (skew +) and bottom (skew −, mirrored).
-    for (const row of [
-      { y0: yBase, y1: yBase + rowDepth, dir: 1 },
-      { y0: aisleY1, y1: aisleY1 + rowDepth, dir: -1 },
-    ]) {
-      let run = 0;
-      for (let x = bb.minX; x + pitch <= bb.maxX + 1e-6; x += pitch) {
-        if (run >= maxRun) { run = 0; continue; } // planter gap
-        const quad = stallQuad(x, row.y0, row.y1, pitch, shear, row.dir);
-        if (!quadInsidePolygon(quad, local)) { run = 0; continue; }
-        if (localBlockers.some((b) => quadIntersectsPolygon(quad, b))) { run = 0; continue; }
-        stalls.push({
-          poly: quad.map((p) => rotatePoint(p, theta, pivot)),
-          type: 'standard',
-        });
-        aislePlaced = true;
-        run++;
-      }
+  // Place one row of stalls; returns how many were placed.
+  const placeRow = (y0, y1, dir, spans) => {
+    let placed = 0, run = 0;
+    for (let x = bb.minX; x + pitch <= bb.maxX + 1e-6; x += pitch) {
+      if (run >= maxRun) { run = 0; continue; }                 // planter gap
+      if (spans && !inAllowedSpan(x, x + pitch, spans, turn)) { run = 0; continue; } // turnaround
+      const quad = stallQuad(x, y0, y1, pitch, shear, dir);
+      if (!quadInsidePolygon(quad, local)) { run = 0; continue; }
+      if (localBlockers.some((b) => quadIntersectsPolygon(quad, b))) { run = 0; continue; }
+      stalls.push({ poly: quad.map((p) => rotatePoint(p, theta, pivot)), type: 'standard' });
+      placed++; run++;
     }
+    return placed;
+  };
+  const pushAisle = (y0, y1) => aisles.push(
+    [{ x: bb.minX, y: y0 }, { x: bb.maxX, y: y0 }, { x: bb.maxX, y: y1 }, { x: bb.minX, y: y1 }]
+      .map((p) => rotatePoint(p, theta, pivot)));
 
-    if (aislePlaced) {
-      const aQuad = [
-        { x: bb.minX, y: aisleY0 }, { x: bb.maxX, y: aisleY0 },
-        { x: bb.maxX, y: aisleY1 }, { x: bb.minX, y: aisleY1 },
-      ].map((p) => rotatePoint(p, theta, pivot));
-      aisles.push(aQuad);
-    }
+  // Double-loaded modules bottom-to-top.
+  let yBase = bb.minY;
+  for (; yBase + moduleH <= bb.maxY + 1e-6; yBase += moduleH) {
+    const aisleY0 = yBase + rowDepth, aisleY1 = aisleY0 + aisle;
+    const spans = deadEnd ? insideSpans(local, (aisleY0 + aisleY1) / 2, bb.minX, bb.maxX, Math.min(pitch, aisle)) : null;
+    const placed = placeRow(yBase, yBase + rowDepth, 1, spans) + placeRow(aisleY1, aisleY1 + rowDepth, -1, spans);
+    if (placed > 0) pushAisle(aisleY0, aisleY1);
+  }
+
+  // Single-loaded module (aisle + one row) in a shallow leftover band.
+  if (singleLoaded && bb.maxY - yBase >= aisle + rowDepth - 1e-6) {
+    const aisleY0 = yBase, aisleY1 = yBase + aisle;
+    const spans = deadEnd ? insideSpans(local, (aisleY0 + aisleY1) / 2, bb.minX, bb.maxX, Math.min(pitch, aisle)) : null;
+    if (placeRow(aisleY1, aisleY1 + rowDepth, -1, spans) > 0) pushAisle(aisleY0, aisleY1);
   }
 
   assignStallTypes(stalls, params);

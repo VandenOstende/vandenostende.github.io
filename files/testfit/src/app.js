@@ -29,6 +29,7 @@ const DEFAULT_PARAMS = {
   stallWidth: 2.7, stallDepth: 5.5, aisleWidth: 7.3,
   angle: 90, setback: 6, padding: 0.6, maxRun: 12,
   compactRatio: 0, evRatio: 0.05, ada: true,
+  singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
 };
 
 // Default demo site: an L-shaped parcel (rectangle with a building in the corner).
@@ -1409,6 +1410,15 @@ function App() {
           ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
           ${slider('Padding (buffer)', 'padding', doc.params.padding, 0, 3, 0.1, 'm', setParam)}
           ${slider('Max. rijlengte', 'maxRun', doc.params.maxRun, 0, 30, 1, 'vak', setParam)}
+          <div className="toggle">
+            <span>Single-loaded reststroken</span>
+            <input type="checkbox" checked=${!!doc.params.singleLoaded} onChange=${(e) => setParam('singleLoaded', e.target.checked)} />
+          </div>
+          <div className="toggle">
+            <span>Dead-end turnarounds</span>
+            <input type="checkbox" checked=${!!doc.params.deadEndTurnaround} onChange=${(e) => setParam('deadEndTurnaround', e.target.checked)} />
+          </div>
+          ${doc.params.deadEndTurnaround && slider('Turnaround-ruimte', 'turnaround', doc.params.turnaround, 4, 12, 0.5, 'm', setParam)}
         </div>
 
         <div className="section">
