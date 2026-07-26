@@ -418,6 +418,11 @@ function draw(ctx, opts) {
   if (opts.showHandles) {
     for (const p of doc.site) drawHandle(ctx, w2s(p), '#f8b500');
     for (const o of doc.obstacles) for (const p of polyOf(o)) drawHandle(ctx, w2s(p), '#7c8896');
+    // Resize handles on the selected annotation (except driveways).
+    if (selection && selection.type === 'annot') {
+      const a = (doc.annotations || [])[selection.index];
+      if (a && a.kind !== 'driveway' && a.points) for (const p of a.points) drawHandle(ctx, w2s(p), '#60a5fa');
+    }
   }
 
   ctx.restore();
@@ -814,6 +819,7 @@ function App() {
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
+  const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' for roads (draggable object)
   const [annotCurved, setAnnotCurved] = useState(true);
   const [view, setView] = useState({ scale: 8, ox: 60, oy: 60 });
   const [drawing, setDrawing] = useState(null); // { points: [] }
@@ -1275,6 +1281,15 @@ function App() {
       for (let vi = 0; vi < op.length; vi++)
         if (dist(w2s(op[vi]), sp) < 9) return { type: 'obsV', obs: oi, index: vi };
     }
+    // Corner handles on the selected annotation (resize by dragging) — not for
+    // driveways, which keep their edge-frame shape.
+    if (selection && selection.type === 'annot') {
+      const a = (doc.annotations || [])[selection.index];
+      if (a && a.kind !== 'driveway' && a.points) {
+        for (let vi = 0; vi < a.points.length; vi++)
+          if (dist(w2s(a.points[vi]), sp) < 9) return { type: 'annV', ann: selection.index, index: vi };
+      }
+    }
     return null;
   };
 
@@ -1383,6 +1398,11 @@ function App() {
         addAnnotation({ kind: annotKind, points: [at], width: annotWidth });
         return;
       }
+      // Road as a draggable rectangle object (resize afterwards via corners).
+      if (annotKind === 'road' && roadShape === 'rect') {
+        dragRef.current = { mode: 'annotArea', start: snap, cur: snap, roadRect: true };
+        return;
+      }
       if (t.mode === 'area') {
         if (areaShape === 'rect') { dragRef.current = { mode: 'annotArea', start: snap, cur: snap }; return; }
         if (areaShape === 'circle') { dragRef.current = { mode: 'annotCircle', center: snap, cur: snap }; return; }
@@ -1441,6 +1461,10 @@ function App() {
       dispatch({ type: 'LIVE', updater: (d) => {
         if (t.type === 'site') {
           const site = d.site.slice(); site[t.index] = wp; return { ...d, site };
+        }
+        if (t.type === 'annV') {
+          const anns = (d.annotations || []).map((a, i) => (i === t.ann ? { ...a, points: a.points.map((p, j) => (j === t.index ? { x: wp.x, y: wp.y } : p)) } : a));
+          return { ...d, annotations: anns };
         }
         const obstacles = d.obstacles.map((o) => (Array.isArray(o) ? o.slice() : { ...o, poly: o.poly.slice() }));
         const tgt = obstacles[t.obs];
@@ -1522,7 +1546,9 @@ function App() {
     } else if (drag.mode === 'annotArea') {
       const r = rectFrom(drag.start, drag.cur);
       if (Math.abs(r.w) > 0.5 && Math.abs(r.h) > 0.5) {
-        addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0 });
+        const isRoad = !!drag.roadRect;
+        addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0, closed: isRoad });
+        if (isRoad) { setSelection({ type: 'annot', index: (doc.annotations || []).length }); setTool('select'); }
       }
       setHover(null);
     } else if (drag.mode === 'annotCircle') {
@@ -1914,7 +1940,9 @@ function App() {
     obstaclepoly: 'Klik punten voor een gebouw in vrije vorm · Shift = 15° · klik beginpunt of dubbelklik om te sluiten · Esc annuleert',
     pan: 'Sleep om te verschuiven',
     placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
-    annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'driveway'
+    annot: annotKind === 'road' && roadShape === 'rect'
+      ? 'Weg-object: sleep een rechthoek · selecteer daarna en sleep de hoeken om te vergroten'
+      : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'driveway'
       ? 'In/uitrit: klik op de siterand om te plaatsen · breedte instelbaar links · Esc stopt'
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'point'
       ? `${ANNOT_TYPES[annotKind].label}: klik om te plaatsen · Esc stopt`
@@ -2015,7 +2043,16 @@ function App() {
               </div>
               <div className="mix-note">${areaShape === 'poly' ? 'Klik punten · klik beginpunt of dubbelklik om te sluiten.' : areaShape === 'circle' ? 'Klik het midden en sleep voor de straal.' : 'Sleep een rechthoek.'}</div>
             </div>`}
-          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && html`
+          ${tool === 'annot' && annotKind === 'road' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Weg tekenen als</label>
+              <div className="seg">
+                <button className=${roadShape === 'line' ? 'active' : ''} onClick=${() => setRoadShape('line')}>Lijn</button>
+                <button className=${roadShape === 'rect' ? 'active' : ''} onClick=${() => setRoadShape('rect')}>Object (rechthoek)</button>
+              </div>
+              <div className="mix-note">${roadShape === 'rect' ? 'Sleep een rechthoek; daarna selecteren en aan de hoeken slepen om te vergroten.' : 'Klik punten voor een weglijn.'}</div>
+            </div>`}
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && !(annotKind === 'road' && roadShape === 'rect') && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
               <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
