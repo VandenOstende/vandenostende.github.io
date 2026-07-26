@@ -856,6 +856,76 @@ function draw25D(ctx, opts) {
   ctx.restore();
 }
 
+// Built-in interactive 3D (no external deps). Orbit camera + painter's-algorithm
+// face sort. cam = { az, el, dist } (dist<=0 → auto-fit).
+function draw3D(ctx, opts) {
+  const { doc, result, size, dpr, cam } = opts;
+  const site = opts.sitePoly || doc.site;
+  ctx.save(); ctx.scale(dpr, dpr);
+  const bg = ctx.createLinearGradient(0, 0, 0, size.h);
+  bg.addColorStop(0, '#131c28'); bg.addColorStop(1, '#0a0d12');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, size.w, size.h);
+  if (!site || site.length < 3) { ctx.restore(); return; }
+  const c = polygonCentroid(site);
+  let R = 1; for (const p of site) R = Math.max(R, Math.hypot(p.x - c.x, p.y - c.y));
+  const az = cam.az, el = cam.el, dist = (R * 2.6) / (cam.zoom || 1);
+  const f = Math.min(size.w, size.h) * (dist / (R * 2.4));
+  const cxs = size.w / 2, cys = size.h * 0.58;
+  const ca = Math.cos(az), sa = Math.sin(az), ce = Math.cos(el), se = Math.sin(el);
+  const project = (x, y, z) => {
+    const X = x - c.x, Y = y - c.y, Z = z || 0;
+    const rx = X * ca - Y * sa, ry = X * sa + Y * ca;
+    const depth = dist + ry * ce - Z * se;      // nearer when higher
+    const up = Z * ce - ry * se;
+    const s = f / Math.max(0.01, depth);
+    return { x: cxs + rx * s, y: cys - up * s, depth };
+  };
+  const faces = [];
+  const addFace = (pts, z, fill, stroke, sw) => {
+    if (!pts || pts.length < 3) return;
+    const proj = pts.map((p) => project(p.x, p.y, z || 0));
+    let d = 0; for (const q of proj) d += q.depth; faces.push({ proj, fill, stroke, sw: sw || 0, depth: d / proj.length });
+  };
+  addFace(site, 0, '#141a22', '#f8b500', 1.5);
+  (doc.annotations || []).filter((a) => a.kind === 'grass' && a.points && a.points.length >= 3).forEach((a) => addFace(a.points, 0.01, hexA('#3f9b46', 0.55)));
+  (result.aisles || []).forEach((a) => addFace(a.poly, 0.02, '#2b3340'));
+  (result.islands || []).forEach((is) => addFace(is, 0.05, hexA('#3f9b46', 0.75)));
+  (result.stalls || []).forEach((st) => addFace(st.poly, 0.05, (STALL_TYPES[st.type] || STALL_TYPES.standard).color, 'rgba(0,0,0,0.35)', 0.4));
+  (doc.obstacles || []).forEach((o) => {
+    const p = polyOf(o); if (p.length < 3) return;
+    const H = ((o && o.floors) || 1) * FLOOR_H;
+    for (let i = 0; i < p.length; i++) {
+      const a = p[i], b = p[(i + 1) % p.length];
+      const proj = [project(a.x, a.y, 0), project(b.x, b.y, 0), project(b.x, b.y, H), project(a.x, a.y, H)];
+      let area = 0; for (let k = 0; k < 4; k++) { const q = proj[k], r = proj[(k + 1) % 4]; area += q.x * r.y - r.x * q.y; }
+      if (area < 0) continue; // cull back faces
+      let d = 0; for (const q of proj) d += q.depth; faces.push({ proj, fill: '#5b6675', stroke: 'rgba(0,0,0,0.35)', sw: 0.5, depth: d / 4 });
+    }
+    const top = p.map((pt) => project(pt.x, pt.y, H));
+    let d = 0; for (const q of top) d += q.depth; faces.push({ proj: top, fill: '#8a97a8', stroke: 'rgba(0,0,0,0.4)', sw: 0.6, depth: d / top.length });
+  });
+  (doc.annotations || []).filter((a) => a.kind === 'tree' && a.points && a.points[0]).forEach((a) => {
+    const base = project(a.points[0].x, a.points[0].y, 0), top = project(a.points[0].x, a.points[0].y, 4.5);
+    faces.push({ tree: { base, top, r: Math.max(3, ((a.width || 5) / 2) * (f / Math.max(0.01, base.depth)) * 0.7) }, depth: base.depth - 0.02 });
+  });
+  faces.sort((a, b) => b.depth - a.depth);
+  for (const fc of faces) {
+    if (fc.tree) {
+      const { base, top, r } = fc.tree;
+      ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = Math.max(2, r * 0.25);
+      ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+      const g = ctx.createRadialGradient(top.x - r * 0.3, top.y - r * 0.3, r * 0.2, top.x, top.y, r);
+      g.addColorStop(0, '#5fd97f'); g.addColorStop(1, '#166534');
+      ctx.beginPath(); ctx.arc(top.x, top.y, r, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
+      continue;
+    }
+    ctx.beginPath(); fc.proj.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.closePath();
+    if (fc.fill) { ctx.fillStyle = fc.fill; ctx.fill(); }
+    if (fc.stroke) { ctx.strokeStyle = fc.stroke; ctx.lineWidth = fc.sw; ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
 // ---------- Main component ----------
 function App() {
   const [hist, dispatch] = useReducer(historyReducer, { past: [], present: initialDoc, future: [] });
@@ -893,7 +963,8 @@ function App() {
   const [geoSearch, setGeoSearch] = useState('');
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoMsg, setGeoMsg] = useState('');
-  const [viewMode, setViewMode] = useState('2d');            // '2d' | '3d'
+  const [viewMode, setViewMode] = useState('2d');            // '2d' | '2.5d' | '3d' (built-in) | 'mapbox'
+  const [cam3d, setCam3d] = useState({ az: -0.5, el: 0.95, zoom: 1 }); // built-in 3D orbit camera
   const [mbToken, setMbToken] = useState(() => { try { return localStorage.getItem('pp_mapbox_token') || ''; } catch (e) { return ''; } });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
@@ -912,6 +983,7 @@ function App() {
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
+  const vmRef = useRef('2d');          // latest viewMode (for the native wheel handler)
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
   const map3dRef = useRef(null);   // Mapbox controller when in 3D view
@@ -1052,6 +1124,8 @@ function App() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     if (viewMode === '2.5d') {
       draw25D(ctx, { view, doc, result: deco, size: sizeRef.current, dpr, sitePoly });
+    } else if (viewMode === '3d') {
+      draw3D(ctx, { doc, result: deco, size: sizeRef.current, dpr, sitePoly, cam: cam3d });
     } else {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
@@ -1061,9 +1135,10 @@ function App() {
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel, viewMode, sitePoly]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel, viewMode, sitePoly, cam3d]);
 
   renderRef.current = renderNow;
+  vmRef.current = viewMode;
   useEffect(() => { renderNow(); }, [renderNow]);
 
   // Snapshot of everything the 3D view draws.
@@ -1072,9 +1147,9 @@ function App() {
     stalls: deco.stalls, aisles: deco.aisles, annotations: doc.annotations,
   }), [sitePoly, doc.obstacles, deco, doc.annotations]);
 
-  // Create/destroy the Mapbox 3D map when entering/leaving 3D (needs a token).
+  // Create/destroy the optional Mapbox satellite-context map (needs a token).
   useEffect(() => {
-    if (viewMode !== '3d' || !mbToken) {
+    if (viewMode !== 'mapbox' || !mbToken) {
       if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; }
       return;
     }
@@ -1354,7 +1429,12 @@ function App() {
   };
 
   const onPointerDown = (e) => {
-    if (viewMode !== '2d') return; // 2.5D/3D are view-only
+    if (viewMode === '3d') { // built-in 3D: drag to orbit
+      e.target.setPointerCapture?.(e.pointerId);
+      dragRef.current = { mode: 'orbit3d', start: getScreen(e), cam: { ...cam3d } };
+      return;
+    }
+    if (viewMode !== '2d') return; // 2.5D / Mapbox are view-only
     if (e.button === 2) return;    // right-click handled by onContextMenu (add vertex)
     e.target.setPointerCapture?.(e.pointerId);
     const sp = getScreen(e);
@@ -1503,6 +1583,12 @@ function App() {
       }
       if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') setHover({ stallPreview: stallAt(snapStallCenter(wp), result.angleUsed || 0) });
+      return;
+    }
+    if (drag.mode === 'orbit3d') {
+      const dx = sp.x - drag.start.x, dy = sp.y - drag.start.y;
+      const el = Math.max(0.12, Math.min(1.5, drag.cam.el - dy * 0.005));
+      setCam3d({ az: drag.cam.az - dx * 0.008, el, zoom: drag.cam.zoom });
       return;
     }
     if (drag.mode === 'pan') {
@@ -1696,6 +1782,10 @@ function App() {
     if (!canvas) return;
     const onWheelNative = (e) => {
       e.preventDefault();
+      if (vmRef.current === '3d') {
+        setCam3d((c) => ({ ...c, zoom: Math.max(0.3, Math.min(6, (c.zoom || 1) * Math.exp(-e.deltaY * 0.0015))) }));
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
       if (e.ctrlKey || e.metaKey) {
@@ -1873,7 +1963,7 @@ function App() {
   const saveJSON = () => {
     // Save the plan together with the current camera and basemap so a reload
     // returns to the exact same view and geographic location.
-    const payload = { _pp: 1, doc, view, basemapStyle, viewMode: viewMode === '3d' ? '2d' : viewMode };
+    const payload = { _pp: 1, doc, view, basemapStyle, viewMode: (viewMode === '3d' || viewMode === 'mapbox') ? '2d' : viewMode };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     downloadBlob(blob, 'parkplanner.json');
   };
@@ -2038,7 +2128,7 @@ function App() {
         <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>
         <div className="tb-sep"></div>
         <div className="seg view-seg">
-          ${[['2d', '2D'], ['2.5d', '2.5D'], ['3d', '3D']].map(([m, lbl]) => html`
+          ${[['2d', '2D'], ['2.5d', '2.5D'], ['3d', '3D'], ['mapbox', '🛰 Kaart']].map(([m, lbl]) => html`
             <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
         </div>
         <div className="tb-spacer"></div>
@@ -2165,10 +2255,11 @@ function App() {
         <canvas ref=${canvasRef}
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
           onDoubleClick=${onDoubleClick} onContextMenu=${onContextMenu}
-          style=${{ cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
+          style=${{ cursor: viewMode === '3d' ? 'grab' : tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
         ${viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
         ${viewMode === '2.5d' && html`<div className="hint">2.5D-weergave · alleen-lezen — schakel naar 2D om te bewerken</div>`}
-        <div className="hud" style=${{ bottom: (dealbarOpen && viewMode !== '3d' ? 96 : 12) + 'px' }}>
+        ${viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien · scroll om te zoomen · alleen-lezen</div>`}
+        <div className="hud" style=${{ bottom: (dealbarOpen && viewMode !== 'mapbox' ? 96 : 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>
           <span>schaal <b>${view.scale.toFixed(1)}</b> px/m</span>
@@ -2178,7 +2269,7 @@ function App() {
         ${basemapStyle !== 'none' && viewMode === '2d' && BASEMAPS[basemapStyle].attribution && html`
           <div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>${BASEMAPS[basemapStyle].attribution}</div>`}
 
-        ${viewMode !== '3d' && html`
+        ${viewMode !== 'mapbox' && html`
           <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
             <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾' : '▴'} Tabulatie</button>
             ${dealbarOpen && html`
@@ -2219,12 +2310,12 @@ function App() {
               </div>`}
           </div>`}
 
-        ${viewMode === '3d' && html`
+        ${viewMode === 'mapbox' && html`
           <div id="pp-map3d" className="map3d"></div>
           ${!mbToken && html`
             <div className="token-panel">
-              <h4>🧊 3D-gebouwen via Mapbox</h4>
-              <p>Voer je eigen Mapbox <b>public token</b> (pk.…) in. Die wordt alleen lokaal in je browser bewaard.</p>
+              <h4>🛰 Satellietkaart-context via Mapbox</h4>
+              <p>Optioneel: plaats je plan op een echte 3D-kaart. Voer je eigen Mapbox <b>public token</b> (pk.…) in — die blijft lokaal in je browser. Het gewone 3D (knop <b>3D</b>) werkt zonder token.</p>
               <input type="text" placeholder="pk.eyJ…" value=${mbTokenInput} onInput=${(e) => setMbTokenInput(e.target.value)} />
               <div className="sel-actions">
                 <button className="btn" onClick=${saveMbToken}>3D starten</button>
