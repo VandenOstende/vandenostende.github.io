@@ -9,8 +9,7 @@ import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
 } from './geometry.js';
-import * as basemap from './basemap.js';
-import { BASEMAPS, geocode, latLonToLocal } from './basemap.js';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js';
 import { toGeoJSON, toDXF, toCSV } from './exporters.js';
 import { parseParcel, simplifyRing } from './importers.js';
 
@@ -209,6 +208,17 @@ function makeTransform(view) {
   return { w2s, s2w };
 }
 
+// Translate our flat canvas camera (view) into a Mapbox {center, zoom} so the
+// basemap tracks it exactly in 2D. Web-mercator: mpp = 40075016.686·cos(lat)/(512·2^z).
+function mapCamFromView(view, size, geo) {
+  const cx = size.w / 2, cy = size.h / 2;
+  const wc = { x: (cx - view.ox) / view.scale, y: (cy - view.oy) / view.scale };
+  const ll = localToLatLon(wc, geo);
+  const mpp = 1 / view.scale;
+  const zoom = Math.log2((40075016.686 * Math.cos((ll.lat * Math.PI) / 180)) / (512 * mpp));
+  return { center: [ll.lon, ll.lat], zoom: Math.max(1, Math.min(22, zoom)) };
+}
+
 function fitView(site, width, height, pad = 60) {
   const bb = boundingBox(site);
   // Can't fit before layout has a real size — signal "not yet".
@@ -225,18 +235,13 @@ function fitView(site, width, height, pad = 60) {
 
 // ---------- Rendering ----------
 function draw(ctx, opts) {
-  const { view, doc, result, layers, dpr, drawing, hover, selection, size, basemapStyle,
+  const { view, doc, result, layers, dpr, drawing, hover, selection, size,
           stallSel, aisleSel, marquee, sitePoly } = opts;
   const site = sitePoly || doc.site;
   const { w2s } = makeTransform(view);
   ctx.save();
   ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, size.w, size.h);
-
-  // Basemap tiles (under everything)
-  if (basemapStyle && basemapStyle !== 'none') {
-    basemap.drawBasemap(ctx, { style: basemapStyle, geo: doc.geo, view, size, w2s });
-  }
+  ctx.clearRect(0, 0, size.w, size.h); // transparent — the Mapbox basemap shows through
 
   const selAnnIdx = selection && selection.type === 'annot' ? selection.index : -1;
 
@@ -1000,12 +1005,10 @@ function App() {
   const [aisleSel, setAisleSel] = useState(null);         // selected aisle key
   const [result, setResult] = useState({ stalls: [], aisles: [], orientationCount: 0 });
   const [solving, setSolving] = useState(false);
-  const [basemapStyle, setBasemapStyle] = useState('none');
   const [geoSearch, setGeoSearch] = useState('');
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoMsg, setGeoMsg] = useState('');
-  const [viewMode, setViewMode] = useState('2d');            // '2d' | '2.5d' | '3d' (built-in) | 'mapbox'
-  const [cam3d, setCam3d] = useState({ az: -0.5, el: 0.95, zoom: 1 }); // built-in 3D orbit camera
+  const [viewMode, setViewMode] = useState('2d');            // '2d' (flat map) | '3d' (tilted map)
   const [mbToken, setMbToken] = useState(() => { try { return localStorage.getItem('pp_mapbox_token') || ''; } catch (e) { return ''; } });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
@@ -1032,11 +1035,9 @@ function App() {
   const reqRef = useRef(0);        // latest solve request id (stale-drop)
   const lastArgsRef = useRef(null); // last solve args (for worker-error fallback)
 
-  // Once mounted, cancel the index.html boot-failure fallback and let
-  // the tile loader trigger redraws as tiles arrive.
+  // Once mounted, cancel the index.html boot-failure fallback.
   useEffect(() => {
     if (window.__pp_boot) { clearTimeout(window.__pp_boot); window.__pp_boot = null; }
-    basemap.setRedraw(() => renderRef.current());
     mark('3-gemount');
   }, []);
 
@@ -1057,6 +1058,7 @@ function App() {
         const fv = fitView(doc.site, r.width, r.height);
         if (fv) { setView(fv); fittedRef.current = true; }
       }
+      if (map3dRef.current) map3dRef.current.resize();
       renderRef.current();
     });
     ro.observe(el);
@@ -1163,20 +1165,19 @@ function App() {
     if (!(sz.w > 0) || !(sz.h > 0) || !(view.scale > 0) || !isFinite(view.scale)) return;
     const ctx = canvas.getContext('2d');
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (viewMode === '2.5d') {
-      draw25D(ctx, { view, doc, result: deco, size: sizeRef.current, dpr, sitePoly });
-    } else if (viewMode === '3d') {
-      draw3D(ctx, { doc, result: deco, size: sizeRef.current, dpr, sitePoly, cam: cam3d });
-    } else {
+    // 3D is rendered by the Mapbox map (the canvas overlay is hidden); the
+    // canvas draws the editable plan only in 2D, transparently over the map.
+    if (viewMode === '3d') { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+    else {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
-        showHandles: tool === 'select', basemapStyle,
+        showHandles: tool === 'select',
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly,
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel, viewMode, sitePoly, cam3d]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly]);
 
   renderRef.current = renderNow;
   vmRef.current = viewMode;
@@ -1188,30 +1189,39 @@ function App() {
     stalls: deco.stalls, aisles: deco.aisles, annotations: doc.annotations,
   }), [sitePoly, doc.obstacles, deco, doc.annotations]);
 
-  // Create/destroy the real-world 3D map (MapLibre + OpenFreeMap, no token).
+  // The Mapbox basemap lives for the whole session once a token is set. It sits
+  // behind the canvas: flat in 2D (tracking our camera), tilted in 3D (with the
+  // plan draped as GeoJSON layers).
   useEffect(() => {
-    if (viewMode !== 'mapbox') {
-      if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; }
-      return;
-    }
+    if (!mbToken) { if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } return; }
     let cancelled = false;
     setMap3dError('');
-    const container = document.getElementById('pp-map3d');
+    const container = document.getElementById('pp-map');
     if (!container) return;
     import('./map3d.js').then(async (m) => {
       if (cancelled) return;
-      const ctrl = await m.init3D(container, doc.geo, buildPlan(), (msg) => setMap3dError(msg));
+      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg));
       if (cancelled) { if (ctrl) ctrl.destroy(); return; }
       map3dRef.current = ctrl;
-    }).catch(() => setMap3dError('3D-kaart kon niet laden.'));
+      ctrl.setMode(vmRef.current === '3d');
+      if (vmRef.current !== '3d') { const c = mapCamFromView(view, sizeRef.current, doc.geo); ctrl.follow2D(c.center, c.zoom); }
+    }).catch(() => setMap3dError('Mapbox kon niet laden.'));
     return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode]);
+  }, [mbToken]);
 
-  // Push plan updates into an existing 3D map.
+  // Keep the flat basemap locked to our canvas camera in 2D.
   useEffect(() => {
-    if (map3dRef.current && map3dRef.current.update) map3dRef.current.update(buildPlan());
-  }, [buildPlan]);
+    const ctrl = map3dRef.current;
+    if (!ctrl) return;
+    if (viewMode === '3d') return;
+    const c = mapCamFromView(view, sizeRef.current, doc.geo);
+    ctrl.follow2D(c.center, c.zoom);
+  }, [view, viewMode, doc.geo, sitePoly]);
+
+  // Tilt / plan-drape on 2D↔3D switch, and keep the draped plan fresh in 3D.
+  useEffect(() => { if (map3dRef.current) map3dRef.current.setMode(viewMode === '3d'); }, [viewMode]);
+  useEffect(() => { if (map3dRef.current && viewMode === '3d') map3dRef.current.setPlan(buildPlan()); }, [buildPlan, viewMode]);
 
   const metrics = useMemo(
     () => computeMetrics(sitePoly, doc.obstacles, deco, doc.params, doc.annotations),
@@ -1476,12 +1486,7 @@ function App() {
   };
 
   const onPointerDown = (e) => {
-    if (viewMode === '3d') { // built-in 3D: drag to orbit
-      e.target.setPointerCapture?.(e.pointerId);
-      dragRef.current = { mode: 'orbit3d', start: getScreen(e), cam: { ...cam3d } };
-      return;
-    }
-    if (viewMode !== '2d') return; // 2.5D / Mapbox are view-only
+    if (viewMode !== '2d') return; // 3D is handled by the Mapbox map (canvas is pass-through)
     if (e.button === 2) return;    // right-click handled by onContextMenu (add vertex)
     e.target.setPointerCapture?.(e.pointerId);
     const sp = getScreen(e);
@@ -1630,12 +1635,6 @@ function App() {
       }
       if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') setHover({ stallPreview: stallAt(snapStallCenter(wp), result.angleUsed || 0) });
-      return;
-    }
-    if (drag.mode === 'orbit3d') {
-      const dx = sp.x - drag.start.x, dy = sp.y - drag.start.y;
-      const el = Math.max(0.12, Math.min(1.5, drag.cam.el - dy * 0.005));
-      setCam3d({ az: drag.cam.az - dx * 0.008, el, zoom: drag.cam.zoom });
       return;
     }
     if (drag.mode === 'pan') {
@@ -1828,11 +1827,8 @@ function App() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const onWheelNative = (e) => {
+      if (vmRef.current === '3d') return; // 3D wheel is handled by the Mapbox map
       e.preventDefault();
-      if (vmRef.current === '3d') {
-        setCam3d((c) => ({ ...c, zoom: Math.max(0.3, Math.min(6, (c.zoom || 1) * Math.exp(-e.deltaY * 0.0015))) }));
-        return;
-      }
       const rect = canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
       if (e.ctrlKey || e.metaKey) {
@@ -2010,7 +2006,7 @@ function App() {
   const saveJSON = () => {
     // Save the plan together with the current camera and basemap so a reload
     // returns to the exact same view and geographic location.
-    const payload = { _pp: 1, doc, view, basemapStyle, viewMode: (viewMode === '3d' || viewMode === 'mapbox') ? '2d' : viewMode };
+    const payload = { _pp: 1, doc, view, viewMode: '2d' };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     downloadBlob(blob, 'parkplanner.json');
   };
@@ -2021,7 +2017,6 @@ function App() {
     if (!(d && d.site && d.params)) { alert('Ongeldig bestand'); return false; }
     const merged = { ...initialDoc, ...d };
     dispatch({ type: 'RESET', doc: merged });
-    if (payload && payload.basemapStyle) setBasemapStyle(payload.basemapStyle);
     // Restore the exact camera if it was saved; otherwise fit to the loaded
     // site (computed from the loaded polygon, not the stale sitePoly memo).
     fittedRef.current = true;
@@ -2056,7 +2051,6 @@ function App() {
     let site = simplifyRing(ring.map((p) => latLonToLocal(p, geo)), 0.5, 120);
     if (site.length < 3) { alert('Geen bruikbare perceelgrens gevonden.'); return; }
     dispatch({ type: 'RESET', doc: { ...initialDoc, site, geo, obstacles: [] } });
-    setBasemapStyle('satellite');
     fittedRef.current = true;
     const fv = fitView(site, sizeRef.current.w, sizeRef.current.h);
     if (fv) setView(fv);
@@ -2105,7 +2099,6 @@ function App() {
       if (!hit) { setGeoMsg('Niet gevonden'); }
       else {
         centerOnLatLon(hit.lat, hit.lon);
-        if (basemapStyle === 'none') setBasemapStyle('satellite');
         setGeoMsg(hit.label.split(',').slice(0, 3).join(', '));
       }
     } catch (err) {
@@ -2175,7 +2168,7 @@ function App() {
         <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>
         <div className="tb-sep"></div>
         <div className="seg view-seg">
-          ${[['2d', '2D'], ['2.5d', '2.5D'], ['3d', '3D'], ['mapbox', '🏙 3D-kaart']].map(([m, lbl]) => html`
+          ${[['2d', '2D'], ['3d', '3D']].map(([m, lbl]) => html`
             <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
         </div>
         <div className="tb-spacer"></div>
@@ -2199,11 +2192,7 @@ function App() {
 
       <div className="panel left">
         <div className="section">
-          <h3>Kaart (onderlaag)</h3>
-          <select className="preset" style=${{ marginBottom: '10px' }}
-            value=${basemapStyle} onChange=${(e) => setBasemapStyle(e.target.value)}>
-            ${Object.entries(BASEMAPS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
-          </select>
+          <h3>Locatie</h3>
           <form onSubmit=${(e) => { e.preventDefault(); doGeocode(); }} className="geo-form">
             <input type="text" placeholder="Zoek adres of plaats…" value=${geoSearch}
               onChange=${(e) => setGeoSearch(e.target.value)} />
@@ -2299,24 +2288,23 @@ function App() {
       </div>
 
       <div className="canvas-wrap" ref=${wrapRef}>
+        <div id="pp-map" className="pp-map"></div>
         <canvas ref=${canvasRef}
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
           onDoubleClick=${onDoubleClick} onContextMenu=${onContextMenu}
-          style=${{ cursor: viewMode === '3d' ? 'grab' : tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
+          style=${{ pointerEvents: viewMode === '3d' ? 'none' : 'auto', cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
         ${viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
-        ${viewMode === '2.5d' && html`<div className="hint">2.5D-weergave · alleen-lezen — schakel naar 2D om te bewerken</div>`}
-        ${viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien · scroll om te zoomen · alleen-lezen</div>`}
-        <div className="hud" style=${{ bottom: (dealbarOpen && viewMode !== 'mapbox' ? 96 : 12) + 'px' }}>
+        ${viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien/kantelen · scroll om te zoomen · alleen-lezen</div>`}
+        <div className="hud" style=${{ bottom: (dealbarOpen ? 96 : 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>
           <span>schaal <b>${view.scale.toFixed(1)}</b> px/m</span>
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
         </div>
-        ${basemapStyle !== 'none' && viewMode === '2d' && BASEMAPS[basemapStyle].attribution && html`
-          <div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>${BASEMAPS[basemapStyle].attribution}</div>`}
+        ${mbToken && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
 
-        ${viewMode !== 'mapbox' && html`
+        ${html`
           <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
             <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾' : '▴'} Tabulatie</button>
             ${dealbarOpen && html`
@@ -2357,17 +2345,24 @@ function App() {
               </div>`}
           </div>`}
 
-        ${viewMode === 'mapbox' && html`
-          <div id="pp-map3d" className="map3d"></div>
-          ${map3dError
-            ? html`<div className="token-panel">
-                <h4>3D-kaart niet beschikbaar</h4>
-                <p>${map3dError}</p>
-                <div className="sel-actions">
-                  <button className="btn ghost" onClick=${() => setViewMode('2d')}>Terug naar 2D</button>
-                </div>
-              </div>`
-            : html`<div className="attrib">© OpenFreeMap · OpenMapTiles · OpenStreetMap</div>`}`}
+        ${!mbToken && html`
+          <div className="token-panel">
+            <h4>🗺️ Mapbox-kaart activeren</h4>
+            <p>De planner draait op een Mapbox Standard-kaart. Voer je eigen Mapbox <b>public token</b> (pk.…) in — die blijft lokaal in je browser.</p>
+            <input type="text" placeholder="pk.eyJ…" value=${mbTokenInput} onInput=${(e) => setMbTokenInput(e.target.value)} />
+            <div className="sel-actions">
+              <button className="btn" onClick=${saveMbToken}>Kaart starten</button>
+            </div>
+            <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener">Gratis token aanmaken →</a>
+          </div>`}
+        ${mbToken && map3dError && html`
+          <div className="token-panel">
+            <h4>Kaart niet beschikbaar</h4>
+            <p>${map3dError}</p>
+            <div className="sel-actions">
+              <button className="btn" onClick=${clearMbToken}>Andere token invoeren</button>
+            </div>
+          </div>`}
       </div>
 
       <div className="panel right">
