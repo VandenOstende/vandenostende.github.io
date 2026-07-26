@@ -33,6 +33,7 @@ const DEFAULT_PARAMS = {
   angle: 90, setback: 6, padding: 0.6, maxRun: 12,
   islandWidth: 0, // width (m) of landscape islands inserted every maxRun stalls (0 = off)
   compactRatio: 0, evRatio: 0.05, ada: true,
+  mix: { compact: 0, ev: 0.05, staff: 0, visitor: 0, reserved: 0 }, // target share per type
   singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
   buildingGLA: 0, parkingRatio: 0, // GLA (m²) + stalls per 100 m² (zoning)
   layout: 'strip', // 'strip' (straight rows) | 'perimeter' (follows the curve)
@@ -923,6 +924,10 @@ function App() {
   // ---------- Param helpers ----------
   const setParam = (key, value, commit = true) =>
     dispatch({ type: commit ? 'COMMIT' : 'LIVE', updater: (d) => ({ ...d, params: { ...d.params, [key]: value } }) });
+  const setMix = (key, value) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const cur = d.params.mix || { compact: d.params.compactRatio || 0, ev: d.params.evRatio || 0, staff: 0, visitor: 0, reserved: 0 };
+    return { ...d, params: { ...d.params, mix: { ...cur, [key]: value } } };
+  } });
 
   const applyPreset = (key) => {
     const p = PRESETS[key];
@@ -2001,13 +2006,46 @@ function App() {
         </div>
 
         <div className="section">
-          <h3>Vaktypes-mix</h3>
-          ${slider('Compact', 'compactRatio', doc.params.compactRatio, 0, 0.5, 0.05, '', setParam, (v) => `${Math.round(v * 100)}%`)}
-          ${slider('EV', 'evRatio', doc.params.evRatio, 0, 0.5, 0.05, '', setParam, (v) => `${Math.round(v * 100)}%`)}
-          <div className="toggle">
-            <span>ADA-vakken (auto-tabel)</span>
-            <input type="checkbox" checked=${doc.params.ada} onChange=${(e) => setParam('ada', e.target.checked)} />
-          </div>
+          <h3>Vaktypes (mix)</h3>
+          ${(() => {
+            const keys = ['compact', 'ev', 'staff', 'visitor', 'reserved'];
+            const mix = doc.params.mix || { compact: doc.params.compactRatio || 0, ev: doc.params.evRatio || 0 };
+            const sum = keys.reduce((s, k) => s + (mix[k] || 0), 0);
+            return html`
+              <table className="mix-table">
+                <thead><tr><th>Type</th><th>Aandeel</th><th>Aantal</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.standard.color }}></span>Standaard</td>
+                    <td className="mix-rem">${Math.max(0, Math.round((1 - sum) * 100))}%</td>
+                    <td>${metrics.counts.standard || 0}</td>
+                  </tr>
+                  ${keys.map((k) => html`
+                    <tr key=${k}>
+                      <td><span className="dot" style=${{ background: STALL_TYPES[k].color }}></span>${STALL_TYPES[k].label}</td>
+                      <td><input className="mix-in" type="number" min="0" max="100" step="5" value=${Math.round((mix[k] || 0) * 100)}
+                        onChange=${(e) => setMix(k, Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) / 100)} />%</td>
+                      <td>${metrics.counts[k] || 0}</td>
+                    </tr>`)}
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.ada.color }}></span>Minder-valide</td>
+                    <td>auto</td>
+                    <td>${metrics.counts.ada || 0}</td>
+                  </tr>
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.motorcycle.color }}></span>Motor</td>
+                    <td>handmatig</td>
+                    <td>${metrics.counts.motorcycle || 0}</td>
+                  </tr>
+                </tbody>
+              </table>
+              ${sum > 1 ? html`<div className="mix-warn">Totaal ${Math.round(sum * 100)}% &gt; 100% — er blijft geen standaard over.</div>` : ''}
+              <div className="toggle">
+                <span>Minder-valide (ADA) automatisch</span>
+                <input type="checkbox" checked=${doc.params.ada} onChange=${(e) => setParam('ada', e.target.checked)} />
+              </div>
+              <div className="mix-note">Motor markeer je handmatig op een vak (telt als 3 plaatsen).</div>`;
+          })()}
         </div>
 
         <div className="section">

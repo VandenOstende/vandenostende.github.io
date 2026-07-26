@@ -416,21 +416,30 @@ function stallQuad(x, y0, y1, pitch, shear, dir) {
 function assignStallTypes(stalls, params) {
   const n = stalls.length;
   if (n === 0) return;
-  const compactRatio = params.compactRatio || 0;
-  const evRatio = params.evRatio || 0;
+  // Target mix: a table of type → share of total. Falls back to the legacy
+  // compactRatio/evRatio params when no table is supplied (older saves).
+  const mix = params.mix || { compact: params.compactRatio || 0, ev: params.evRatio || 0 };
+  const order = ['ev', 'compact', 'staff', 'visitor', 'reserved']; // assignment priority
 
-  // Deterministic spread so the mix is visually even.
-  const compactEvery = compactRatio > 0 ? Math.round(1 / compactRatio) : 0;
-  const evEvery = evRatio > 0 ? Math.round(1 / evRatio) : 0;
-  stalls.forEach((st, i) => {
-    if (evEvery && i % evEvery === evEvery - 1) st.type = 'ev';
-    else if (compactEvery && i % compactEvery === 0) st.type = 'compact';
-    else st.type = 'standard';
-  });
+  for (const st of stalls) st.type = 'standard';
+  const taken = new Array(n).fill(false);
+  for (const key of order) {
+    const r = mix[key] || 0;
+    if (r <= 0 || !STALL_TYPES[key]) continue;
+    const count = Math.min(n, Math.round(r * n));
+    if (count <= 0) continue;
+    const stride = n / count;
+    for (let k = 0; k < count; k++) {
+      let idx = Math.round(k * stride) % n, guard = 0;
+      while (taken[idx] && guard < n) { idx = (idx + 1) % n; guard++; }
+      if (guard >= n) break;
+      taken[idx] = true; stalls[idx].type = key;
+    }
+  }
 
   if (params.ada) {
     const { required } = adaRequirement(n);
-    // Mark the first `required` stalls as ADA (kept near the front row).
+    // ADA spaces sit nearest the front (first stalls), overriding the mix.
     for (let i = 0; i < Math.min(required, n); i++) stalls[i].type = 'ada';
   }
 }
