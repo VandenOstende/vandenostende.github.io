@@ -564,6 +564,9 @@ function App() {
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
   const map3dRef = useRef(null);   // Mapbox controller when in 3D view
+  const workerRef = useRef(null);  // solver web worker (null → inline solve)
+  const reqRef = useRef(0);        // latest solve request id (stale-drop)
+  const lastArgsRef = useRef(null); // last solve args (for worker-error fallback)
 
   // Once mounted, cancel the index.html boot-failure fallback and let
   // the tile loader trigger redraws as tiles arrive.
@@ -597,14 +600,41 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Solve off the main thread via a web worker, so big sites don't freeze
+  // the UI. Falls back to an inline solve if workers aren't available.
+  useEffect(() => {
+    let w;
+    try { w = new Worker(new URL('./solver.worker.js', import.meta.url), { type: 'module' }); }
+    catch (e) { w = null; }
+    if (w) {
+      w.onmessage = (e) => {
+        const { reqId, result } = e.data || {};
+        if (result && reqId === reqRef.current) { setResult(result); setSolving(false); }
+      };
+      w.onerror = () => {
+        workerRef.current = null; // give up on the worker; solve inline
+        const a = lastArgsRef.current;
+        if (a) { setResult(solveParking(a[0], a[1], a[2], a[3])); setSolving(false); }
+      };
+      workerRef.current = w;
+    }
+    return () => { if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; } };
+  }, []);
+
   // Debounced solve whenever inputs change.
   useEffect(() => {
     clearTimeout(solveTimer.current);
     setSolving(true);
     solveTimer.current = setTimeout(() => {
-      const r = solveParking(doc.site, doc.obstacles, doc.params, doc.orientationIndex);
-      setResult(r);
-      setSolving(false);
+      const args = [doc.site, doc.obstacles, doc.params, doc.orientationIndex];
+      lastArgsRef.current = args;
+      const reqId = ++reqRef.current;
+      if (workerRef.current) {
+        workerRef.current.postMessage({ reqId, site: args[0], obstacles: args[1], params: args[2], orientationIndex: args[3] });
+      } else {
+        setResult(solveParking(args[0], args[1], args[2], args[3]));
+        setSolving(false);
+      }
     }, 90);
     return () => clearTimeout(solveTimer.current);
   }, [doc.site, doc.obstacles, doc.params, doc.orientationIndex]);
