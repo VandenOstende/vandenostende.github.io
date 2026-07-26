@@ -107,14 +107,21 @@ export async function initMap(container, token, geo, plan, onError) {
   } catch (e) { onError('Kaart kon niet starten: ' + e.message); return null; }
 
   let ready = false, pending3d = false, lastPlan = plan;
+  const loadTimer = setTimeout(() => { if (!ready) onError('De kaart laadt niet — controleer je Mapbox-token en internetverbinding.'); }, 9000);
   map.on('error', (ev) => {
-    const msg = (ev && ev.error && ev.error.message) || '';
-    if (/token|unauthorized|401|403/i.test(msg)) onError('Ongeldige of geweigerde Mapbox-token.');
+    const msg = (ev && ev.error && ev.error.message) || String((ev && ev.error) || 'onbekende kaartfout');
+    // eslint-disable-next-line no-console
+    console.warn('[ParkPlanner map]', msg);
+    if (/token|unauthorized|access|401|403/i.test(msg)) onError('Ongeldige of geweigerde Mapbox-token: ' + msg);
+    else if (!ready) onError('Kaartfout: ' + msg);
   });
   map.on('style.load', () => {
     ready = true;
+    clearTimeout(loadTimer);
+    onError('');
     try { addPlanLayers(map, lastPlan, geo); } catch (e) {}
     if (pending3d) { setPlanVisible(map, true); }
+    setTimeout(() => { try { map.resize(); } catch (e) {} }, 60);
   });
 
   return {
