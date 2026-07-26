@@ -118,7 +118,7 @@ export function adaRequirement(totalStalls) {
  * (the "Row Axis change" cycle); defaults to the best.
  */
 export function solveParking(site, obstacles, params, orientationIndex = 0) {
-  const empty = { stalls: [], aisles: [], angleUsed: 0, orientationCount: 0 };
+  const empty = { stalls: [], aisles: [], islands: [], angleUsed: 0, orientationCount: 0 };
   const buildable = computeBuildable(site, params.setback);
   if (!buildable || polygonArea(buildable) < 1) return empty;
 
@@ -169,7 +169,7 @@ function packStripBest(buildable, blockers, params, orientationIndex = 0) {
   if (angleSet.length === 0) angleSet.push(0);
   const results = angleSet.map((theta) => packOrientation(buildable, blockers, params, theta));
   results.sort((a, b) => b.stalls.length - a.stalls.length);
-  const chosen = results[Math.min(orientationIndex, results.length - 1)] || { stalls: [], aisles: [], angleUsed: 0 };
+  const chosen = results[Math.min(orientationIndex, results.length - 1)] || { stalls: [], aisles: [], islands: [], angleUsed: 0 };
   return { ...chosen, orientationCount: results.length };
 }
 
@@ -250,7 +250,7 @@ function packConcentric(buildable, blockers, params) {
     if (outer.length || inner.length) for (const q of aq) aisles.push(q);
   }
   assignStallTypes(stalls, params);
-  return { stalls, aisles, angleUsed: 0 };
+  return { stalls, aisles, islands: [], angleUsed: 0 };
 }
 
 /**
@@ -279,8 +279,10 @@ function packHybrid(buildable, blockers, params) {
   for (const a of strip.aisles) {
     if (distPointToPolygonBoundary(polygonCentroid(a), buildable) > d) aisles.push(a);
   }
+  // Straight interior can carry landscape islands.
+  const islands = strip.islands ? strip.islands.filter((is) => distPointToPolygonBoundary(polygonCentroid(is), buildable) > d) : [];
   assignStallTypes(stalls, params);
-  return { stalls, aisles, angleUsed: 0 };
+  return { stalls, aisles, islands, angleUsed: 0 };
 }
 
 /**
@@ -310,16 +312,31 @@ function packOrientation(buildable, blockers, params, theta) {
 
   const stalls = [];
   const aisles = [];
+  const islands = [];
   const maxRun = params.maxRun > 0 ? params.maxRun : Infinity;
+  const islandW = params.islandWidth > 0 ? params.islandWidth : 0;
   const singleLoaded = !!params.singleLoaded;
   const deadEnd = !!params.deadEndTurnaround;
   const turn = params.turnaround > 0 ? params.turnaround : 7;
+
+  // Landscape-island columns: after every `maxRun` stalls reserve a strip of
+  // width `islandW`. Positions are constant across modules so the green
+  // islands line up in columns (like TestFit's "Max stall run" planters).
+  let islandRanges = null;
+  if (islandW > 0 && isFinite(maxRun) && maxRun >= 1) {
+    islandRanges = [];
+    const period = maxRun * pitch + islandW;
+    for (let x = bb.minX + maxRun * pitch; x + islandW <= bb.maxX + 1e-6; x += period) islandRanges.push([x, x + islandW]);
+    if (islandRanges.length === 0) islandRanges = null;
+  }
+  const overlapsIsland = (x0, x1) => islandRanges && islandRanges.some(([a, b]) => x0 < b - 1e-6 && x1 > a + 1e-6);
 
   // Place one row of stalls; returns how many were placed.
   const placeRow = (y0, y1, dir, spans) => {
     let placed = 0, run = 0;
     for (let x = bb.minX; x + pitch <= bb.maxX + 1e-6; x += pitch) {
-      if (run >= maxRun) { run = 0; continue; }                 // planter gap
+      if (overlapsIsland(x, x + pitch)) { run = 0; continue; }   // landscape island
+      if (!islandRanges && run >= maxRun) { run = 0; continue; } // planter gap (no island strip)
       if (spans && !inAllowedSpan(x, x + pitch, spans, turn)) { run = 0; continue; } // turnaround
       const quad = stallQuad(x, y0, y1, pitch, shear, dir);
       if (!quadInsidePolygon(quad, local)) { run = 0; continue; }
@@ -332,25 +349,40 @@ function packOrientation(buildable, blockers, params, theta) {
   const pushAisle = (y0, y1) => aisles.push(
     [{ x: bb.minX, y: y0 }, { x: bb.maxX, y: y0 }, { x: bb.maxX, y: y1 }, { x: bb.minX, y: y1 }]
       .map((p) => rotatePoint(p, theta, pivot)));
+  // Emit landscape islands filling a single row band (only where inside the
+  // buildable area and clear of blockers).
+  const addIslandBand = (ry0, ry1) => {
+    if (!islandRanges) return;
+    for (const [a, b] of islandRanges) {
+      const c = { x: (a + b) / 2, y: (ry0 + ry1) / 2 };
+      if (!pointInPolygon(c, local)) continue;
+      if (localBlockers.some((bl) => pointInPolygon(c, bl))) continue;
+      islands.push([{ x: a, y: ry0 }, { x: b, y: ry0 }, { x: b, y: ry1 }, { x: a, y: ry1 }]
+        .map((p) => rotatePoint(p, theta, pivot)));
+    }
+  };
 
   // Double-loaded modules bottom-to-top.
   let yBase = bb.minY;
   for (; yBase + moduleH <= bb.maxY + 1e-6; yBase += moduleH) {
     const aisleY0 = yBase + rowDepth, aisleY1 = aisleY0 + aisle;
     const spans = deadEnd ? insideSpans(local, (aisleY0 + aisleY1) / 2, bb.minX, bb.maxX, Math.min(pitch, aisle)) : null;
-    const placed = placeRow(yBase, yBase + rowDepth, 1, spans) + placeRow(aisleY1, aisleY1 + rowDepth, -1, spans);
-    if (placed > 0) pushAisle(aisleY0, aisleY1);
+    const p1 = placeRow(yBase, yBase + rowDepth, 1, spans);
+    const p2 = placeRow(aisleY1, aisleY1 + rowDepth, -1, spans);
+    if (p1 + p2 > 0) pushAisle(aisleY0, aisleY1);
+    if (p1 > 0) addIslandBand(yBase, yBase + rowDepth);
+    if (p2 > 0) addIslandBand(aisleY1, aisleY1 + rowDepth);
   }
 
   // Single-loaded module (aisle + one row) in a shallow leftover band.
   if (singleLoaded && bb.maxY - yBase >= aisle + rowDepth - 1e-6) {
     const aisleY0 = yBase, aisleY1 = yBase + aisle;
     const spans = deadEnd ? insideSpans(local, (aisleY0 + aisleY1) / 2, bb.minX, bb.maxX, Math.min(pitch, aisle)) : null;
-    if (placeRow(aisleY1, aisleY1 + rowDepth, -1, spans) > 0) pushAisle(aisleY0, aisleY1);
+    if (placeRow(aisleY1, aisleY1 + rowDepth, -1, spans) > 0) { pushAisle(aisleY0, aisleY1); addIslandBand(aisleY1, aisleY1 + rowDepth); }
   }
 
   assignStallTypes(stalls, params);
-  return { stalls, aisles, angleUsed: theta };
+  return { stalls, aisles, islands, angleUsed: theta };
 }
 
 /**

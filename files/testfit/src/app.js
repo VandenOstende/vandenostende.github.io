@@ -29,6 +29,7 @@ const PRESETS = {
 const DEFAULT_PARAMS = {
   stallWidth: 2.7, stallDepth: 5.5, aisleWidth: 7.3,
   angle: 90, setback: 6, padding: 0.6, maxRun: 12,
+  islandWidth: 0, // width (m) of landscape islands inserted every maxRun stalls (0 = off)
   compactRatio: 0, evRatio: 0.05, ada: true,
   singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
   buildingGLA: 0, parkingRatio: 0, // GLA (m²) + stalls per 100 m² (zoning)
@@ -173,6 +174,18 @@ function draw(ctx, opts) {
       ctx.lineWidth = 1.2;
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+  }
+
+  // Landscape islands (green planters that break up long rows)
+  if (layers.parking && result.islands) {
+    for (const is of result.islands) {
+      pathPoly(ctx, is, w2s, true);
+      ctx.fillStyle = 'rgba(63,155,70,0.55)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(34,110,40,0.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
   }
 
@@ -611,6 +624,7 @@ function draw25D(ctx, opts) {
   if (site.length >= 3) { path(site, 0); ctx.fillStyle = '#12161c'; ctx.fill(); ctx.strokeStyle = '#f8b500'; ctx.lineWidth = 2; ctx.stroke(); }
   (doc.annotations || []).filter((a) => a.kind === 'grass' && a.points.length >= 3).forEach((a) => { path(a.points, 0); ctx.fillStyle = hexA('#3f9b46', 0.5); ctx.fill(); });
   (result.aisles || []).forEach((a) => { path(a.poly, 0); ctx.fillStyle = '#2b3340'; ctx.fill(); });
+  (result.islands || []).forEach((is) => { path(is, 0.2); ctx.fillStyle = hexA('#3f9b46', 0.7); ctx.fill(); });
   (result.stalls || []).forEach((st) => {
     path(st.poly, 0);
     ctx.fillStyle = (STALL_TYPES[st.type] || STALL_TYPES.standard).color;
@@ -798,7 +812,7 @@ function App() {
       const o = ovAisles[key] || {};
       return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
     });
-    return { stalls, aisles, orientationCount: result.orientationCount };
+    return { stalls, aisles, islands: result.islands || [], orientationCount: result.orientationCount };
   }, [result, doc.overrides, doc.manualStalls]);
 
   const renderNow = useCallback(() => {
@@ -1744,6 +1758,7 @@ function App() {
           ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
           ${slider('Padding (buffer)', 'padding', doc.params.padding, 0, 3, 0.1, 'm', setParam)}
           ${slider('Max. rijlengte', 'maxRun', doc.params.maxRun, 0, 30, 1, 'vak', setParam)}
+          ${slider('Groeneilanden (breedte)', 'islandWidth', doc.params.islandWidth, 0, 6, 0.5, 'm', setParam, (v) => v > 0 ? `${(+v).toFixed(1)} m` : 'uit')}
           <div className="toggle">
             <span>Single-loaded reststroken</span>
             <input type="checkbox" checked=${!!doc.params.singleLoaded} onChange=${(e) => setParam('singleLoaded', e.target.checked)} />
