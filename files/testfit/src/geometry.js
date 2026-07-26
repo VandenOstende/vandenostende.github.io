@@ -212,6 +212,28 @@ export function edgeAngles(poly) {
   return set;
 }
 
+/**
+ * Closed Catmull-Rom spline through `pts`, sampled `seg` times per span,
+ * returned as a dense polygon. Used for curved site boundaries so the
+ * containment-based solver fills stalls into the curves for free.
+ */
+export function tessellateClosed(pts, seg = 12) {
+  const n = pts.length;
+  if (n < 3) return pts.slice();
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+    for (let t = 0; t < seg; t++) {
+      const s = t / seg, s2 = s * s, s3 = s2 * s;
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * s + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * s2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * s3),
+        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * s + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * s2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * s3),
+      });
+    }
+  }
+  return out;
+}
+
 /** Axis-aligned rectangle → polygon (4 CCW points). */
 export function rectPoly(x, y, w, h) {
   return [
