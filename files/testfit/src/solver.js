@@ -128,14 +128,18 @@ export function solveParking(site, obstacles, params, orientationIndex = 0) {
     .map((o) => (pad > 0 ? offsetPolygon(o, -pad) : o.slice()))
     .filter(Boolean);
 
-  // Candidate orientations: every unique edge direction and its normal.
+  // Candidate orientations: every edge direction and its normal. Edges are
+  // deduped coarsely (~2°) and capped so a many-vertex spline boundary
+  // doesn't explode into hundreds of near-identical orientations.
   const base = edgeAngles(buildable);
+  const TOL = 0.035, CAP = 40;
   const angleSet = [];
   for (const a of base) {
     for (const cand of [a, a + Math.PI / 2]) {
       const norm = ((cand % Math.PI) + Math.PI) % Math.PI;
-      if (!angleSet.some((x) => Math.abs(x - norm) < 1e-3)) angleSet.push(norm);
+      if (!angleSet.some((x) => Math.abs(x - norm) < TOL || Math.abs(x - norm) > Math.PI - TOL)) angleSet.push(norm);
     }
+    if (angleSet.length >= CAP) break;
   }
   if (angleSet.length === 0) angleSet.push(0);
 
@@ -288,7 +292,7 @@ export function computeMetrics(site, obstacles, result, params, annotations) {
   // excluding grass. Capped at the site area (overlaps inflate the raw sum).
   let paved = buildingArea;
   for (const st of result.stalls) paved += polygonArea(st.poly);
-  for (const a of result.aisles || []) paved += polygonArea(a.poly);
+  for (const a of result.aisles || []) paved += polygonArea(a.poly || a);
   for (const an of annotations || []) {
     if (!an.points || an.kind === 'grass' || an.kind === 'tree' || an.kind === 'access') continue;
     if (an.points.length >= 3 && (an.closed || an.kind === 'bikeparking')) paved += polygonArea(an.points);

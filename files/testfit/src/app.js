@@ -7,7 +7,7 @@ import htm from '../vendor/htm.mjs';
 import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis } from './solver.js';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
-  pointInPolygon, rectPoly,
+  pointInPolygon, rectPoly, tessellateClosed,
 } from './geometry.js';
 import * as basemap from './basemap.js';
 import { BASEMAPS, geocode } from './basemap.js';
@@ -65,7 +65,7 @@ export const ANNOT_TYPES = {
 // `overrides` are manual, position-keyed marks that persist across
 // re-solves: stall type per stall, one-way + direction per aisle.
 const initialDoc = {
-  site: DEFAULT_SITE, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
+  site: DEFAULT_SITE, siteCurved: false, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
   params: DEFAULT_PARAMS, orientationIndex: 0,
   overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} } },
   annotations: [], // { kind, points:[{x,y}], width, curved }
@@ -126,7 +126,8 @@ function fitView(site, width, height, pad = 60) {
 // ---------- Rendering ----------
 function draw(ctx, opts) {
   const { view, doc, result, layers, dpr, drawing, hover, selection, size, basemapStyle,
-          stallSel, aisleSel, marquee } = opts;
+          stallSel, aisleSel, marquee, sitePoly } = opts;
+  const site = sitePoly || doc.site;
   const { w2s } = makeTransform(view);
   ctx.save();
   ctx.scale(dpr, dpr);
@@ -148,19 +149,19 @@ function draw(ctx, opts) {
   }
 
   // Site fill + outline (highlighted when the whole site is selected)
-  if (layers.site && doc.site.length >= 2) {
+  if (layers.site && site.length >= 2) {
     const siteSel = selection && selection.type === 'site';
-    pathPoly(ctx, doc.site, w2s, doc.site.length >= 3);
+    pathPoly(ctx, site, w2s, site.length >= 3);
     ctx.fillStyle = siteSel ? 'rgba(248,181,0,0.12)' : 'rgba(248,181,0,0.05)';
-    if (doc.site.length >= 3) ctx.fill();
+    if (site.length >= 3) ctx.fill();
     ctx.strokeStyle = siteSel ? '#ffd24a' : '#f8b500';
     ctx.lineWidth = siteSel ? 3.5 : 2;
     ctx.stroke();
   }
 
   // Setback line (dashed inward offset)
-  if (layers.setback && doc.site.length >= 3 && doc.params.setback > 0) {
-    const off = offsetPolygon(doc.site, doc.params.setback);
+  if (layers.setback && site.length >= 3 && doc.params.setback > 0) {
+    const off = offsetPolygon(site, doc.params.setback);
     if (off) {
       pathPoly(ctx, off, w2s, true);
       ctx.setLineDash([6, 5]);
@@ -570,6 +571,7 @@ function drawGrid(ctx, view, size) {
 const ANN25_COLOR = { road: '#3b424e', walkway: '#9aa4b2', bikepath: '#b91c1c', marking: '#eab308' };
 function draw25D(ctx, opts) {
   const { view, doc, result, size, dpr } = opts;
+  const site = opts.sitePoly || doc.site;
   const YC = 0.62, ZC = 0.78;               // depth compression + height lift
   const s = view.scale, ox = view.ox, oy = view.oy;
   const proj = (p, z) => ({ x: ox + p.x * s, y: oy + p.y * s * YC - (z || 0) * s * ZC });
@@ -579,7 +581,7 @@ function draw25D(ctx, opts) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, size.w, size.h);
 
-  if (doc.site.length >= 3) { path(doc.site, 0); ctx.fillStyle = '#12161c'; ctx.fill(); ctx.strokeStyle = '#f8b500'; ctx.lineWidth = 2; ctx.stroke(); }
+  if (site.length >= 3) { path(site, 0); ctx.fillStyle = '#12161c'; ctx.fill(); ctx.strokeStyle = '#f8b500'; ctx.lineWidth = 2; ctx.stroke(); }
   (doc.annotations || []).filter((a) => a.kind === 'grass' && a.points.length >= 3).forEach((a) => { path(a.points, 0); ctx.fillStyle = hexA('#3f9b46', 0.5); ctx.fill(); });
   (result.aisles || []).forEach((a) => { path(a.poly, 0); ctx.fillStyle = '#2b3340'; ctx.fill(); });
   (result.stalls || []).forEach((st) => {
@@ -627,6 +629,13 @@ function draw25D(ctx, opts) {
 function App() {
   const [hist, dispatch] = useReducer(historyReducer, { past: [], present: initialDoc, future: [] });
   const doc = hist.present;
+  // Effective site polygon: control points, or a tessellated spline when
+  // curved. Everything geometric (solve, metrics, render, export) uses this;
+  // editing (vertex handles, move) still uses the control points doc.site.
+  const sitePoly = useMemo(
+    () => (doc.siteCurved && doc.site.length >= 3 ? tessellateClosed(doc.site, 14) : doc.site),
+    [doc.site, doc.siteCurved]
+  );
   const [tool, setTool] = useState('select');
   const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
@@ -722,7 +731,7 @@ function App() {
     clearTimeout(solveTimer.current);
     setSolving(true);
     solveTimer.current = setTimeout(() => {
-      const args = [doc.site, doc.obstacles, doc.params, doc.orientationIndex];
+      const args = [sitePoly, doc.obstacles, doc.params, doc.orientationIndex];
       lastArgsRef.current = args;
       const reqId = ++reqRef.current;
       if (workerRef.current) {
@@ -733,7 +742,7 @@ function App() {
       }
     }, 90);
     return () => clearTimeout(solveTimer.current);
-  }, [doc.site, doc.obstacles, doc.params, doc.orientationIndex]);
+  }, [sitePoly, doc.obstacles, doc.params, doc.orientationIndex]);
 
   // Apply manual overrides (stall type, aisle one-way) on top of the
   // solver output, keyed by position so marks survive re-solves.
@@ -763,26 +772,26 @@ function App() {
     const ctx = canvas.getContext('2d');
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     if (viewMode === '2.5d') {
-      draw25D(ctx, { view, doc, result: deco, size: sizeRef.current, dpr });
+      draw25D(ctx, { view, doc, result: deco, size: sizeRef.current, dpr, sitePoly });
     } else {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
         showHandles: tool === 'select', basemapStyle,
-        stallSel, aisleSel, marquee: marqueeRef.current,
+        stallSel, aisleSel, marquee: marqueeRef.current, sitePoly,
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel, viewMode]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, basemapStyle, stallSel, aisleSel, viewMode, sitePoly]);
 
   renderRef.current = renderNow;
   useEffect(() => { renderNow(); }, [renderNow]);
 
   // Snapshot of everything the 3D view draws.
   const buildPlan = useCallback(() => ({
-    site: doc.site, obstacles: doc.obstacles,
+    site: sitePoly, obstacles: doc.obstacles,
     stalls: deco.stalls, aisles: deco.aisles, annotations: doc.annotations,
-  }), [doc.site, doc.obstacles, deco, doc.annotations]);
+  }), [sitePoly, doc.obstacles, deco, doc.annotations]);
 
   // Create/destroy the Mapbox 3D map when entering/leaving 3D (needs a token).
   useEffect(() => {
@@ -810,8 +819,8 @@ function App() {
   }, [buildPlan]);
 
   const metrics = useMemo(
-    () => computeMetrics(doc.site, doc.obstacles, deco, doc.params, doc.annotations),
-    [doc.site, doc.obstacles, deco, doc.params, doc.annotations]
+    () => computeMetrics(sitePoly, doc.obstacles, deco, doc.params, doc.annotations),
+    [sitePoly, doc.obstacles, deco, doc.params, doc.annotations]
   );
 
   // ---------- Param helpers ----------
@@ -954,10 +963,10 @@ function App() {
 
   // Is the screen point near the site's boundary line (not a vertex)?
   const hitSiteEdge = (sp) => {
-    if (!doc.site || doc.site.length < 2) return false;
+    if (!sitePoly || sitePoly.length < 2) return false;
     const { w2s } = makeTransform(view);
-    for (let i = 0; i < doc.site.length; i++) {
-      const a = w2s(doc.site[i]), b = w2s(doc.site[(i + 1) % doc.site.length]);
+    for (let i = 0; i < sitePoly.length; i++) {
+      const a = w2s(sitePoly[i]), b = w2s(sitePoly[(i + 1) % sitePoly.length]);
       if (distPointSegment(sp, a, b) < 7) return true;
     }
     return false;
@@ -1219,7 +1228,7 @@ function App() {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, orientationIndex: (d.orientationIndex + 1) % Math.max(1, result.orientationCount || 1) }) });
   const resetAxis = () => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, orientationIndex: 0 }) });
   const fitToSite = () => {
-    const fv = fitView(doc.site, sizeRef.current.w, sizeRef.current.h);
+    const fv = fitView(sitePoly, sizeRef.current.w, sizeRef.current.h);
     if (fv) setView(fv);
   };
   const zoomBy = (factor) => setView((v) => {
@@ -1389,6 +1398,14 @@ function App() {
                   <input type="checkbox" checked=${annotCurved} onChange=${(e) => setAnnotCurved(e.target.checked)} />
                 </label>`}
             </div>`}
+        </div>
+        <div className="section">
+          <h3>Site-vorm</h3>
+          <div className="toggle" style=${{ marginBottom: 0 }}>
+            <span>Vloeiende bochten (spline)</span>
+            <input type="checkbox" checked=${!!doc.siteCurved}
+              onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, siteCurved: e.target.checked }) })} />
+          </div>
         </div>
         <div className="section">
           <h3>Lagen</h3>
