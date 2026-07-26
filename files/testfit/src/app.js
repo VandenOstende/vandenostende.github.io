@@ -1463,7 +1463,7 @@ function App() {
   return html`
     <div className="app">
       <div className="toolbar">
-        <div className="brand"><span className="logo">🅿️</span><span>ParkPlanner<br/><small>TestFit-kloon</small></span></div>
+        <div className="brand"><span className="logo">🅿️</span><span>ParkPlanner</span></div>
         <div className="tb-sep"></div>
         ${toolBtn('select', 'Selecteer', 'V', tool, setTool, setDrawing)}
         ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
