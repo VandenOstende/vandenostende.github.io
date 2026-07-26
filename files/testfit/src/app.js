@@ -60,6 +60,7 @@ const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 export const ANNOT_TYPES = {
   road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: true, under: true, blocks: true },
   driveway:    { label: 'In/uitrit',    color: '#525b68', width: 6.5, depth: 12, mode: 'driveway', under: true, blocks: true },
+  drivethru:   { label: 'Drive-thru',   color: '#f97316', width: 3.5, mode: 'line', curved: true, under: true, blocks: true },
   walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true },
   bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true },
   crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross' },
@@ -105,6 +106,16 @@ function makeDriveway(frame, width, depth) {
   ];
   return { kind: 'driveway', points, closed: true, anchor: { x: c.x, y: c.y }, nx, ny, tx, ty, width, depth };
 }
+
+const CAR_LEN = 6; // metres of queue per stacked vehicle in a drive-thru
+
+// Total length of an open polyline (metres).
+function polylineLen(pts) {
+  let L = 0;
+  for (let i = 0; i < (pts || []).length - 1; i++) L += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  return L;
+}
+function drivethruStacks(pts) { return Math.max(0, Math.floor(polylineLen(pts) / CAR_LEN)); }
 
 // A circle approximated as an n-gon polygon (so all polygon code just works).
 function circlePoly(cx, cy, r, n = 40) {
@@ -618,6 +629,54 @@ function drawDriveway(ctx, ann, w2s, scale, selected) {
   }
 }
 
+// Drive-thru lane: an orange queue lane with per-car tick marks, a direction
+// arrow, a pickup window at the end, and the stacking count.
+function drawDriveThru(ctx, ann, w2s, scale, selected) {
+  const P = ann.points; if (!P || P.length < 2) return;
+  const pts = P.map(w2s), hw = (ann.width || 3.5) / 2;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.strokeStyle = selected ? 'rgba(249,115,22,0.55)' : 'rgba(249,115,22,0.42)';
+  ctx.lineWidth = Math.max(3, (ann.width || 3.5) * scale); ctx.stroke();
+  ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.strokeStyle = '#f97316'; ctx.lineWidth = selected ? 2 : 1.2; ctx.stroke();
+  ctx.lineCap = 'butt';
+  // Per-car tick marks (queue positions) every CAR_LEN along the path.
+  let acc = 0, next = CAR_LEN * 0.5;
+  for (let i = 0; i < P.length - 1; i++) {
+    const a = P[i], b = P[i + 1], dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len, px = -uy, py = ux;
+    while (next <= acc + len) {
+      const t = next - acc, cx = a.x + ux * t, cy = a.y + uy * t;
+      const e1 = w2s({ x: cx + px * hw * 0.85, y: cy + py * hw * 0.85 }), e2 = w2s({ x: cx - px * hw * 0.85, y: cy - py * hw * 0.85 });
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(e1.x, e1.y); ctx.lineTo(e2.x, e2.y); ctx.stroke();
+      next += CAR_LEN;
+    }
+    acc += len;
+  }
+  // Pickup window marker at the last point.
+  const end = pts[pts.length - 1], prev = pts[pts.length - 2] || end, r = Math.max(4, scale * 1.3);
+  ctx.fillStyle = '#f97316'; ctx.beginPath(); ctx.arc(end.x, end.y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = `${Math.max(8, r)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('W', end.x, end.y);
+  // Direction arrow just before the window.
+  const ang = Math.atan2(end.y - prev.y, end.x - prev.x), h = Math.max(5, scale * 1.2);
+  const ax = end.x - Math.cos(ang) * r * 1.6, ay = end.y - Math.sin(ang) * r * 1.6;
+  ctx.strokeStyle = '#fdba74'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(ax - h * Math.cos(ang - 0.5), ay - h * Math.sin(ang - 0.5));
+  ctx.lineTo(ax, ay);
+  ctx.lineTo(ax - h * Math.cos(ang + 0.5), ay - h * Math.sin(ang + 0.5));
+  ctx.stroke();
+  // Stacking count label at the midpoint.
+  const mid = pts[Math.floor(pts.length / 2)] || pts[0], label = drivethruStacks(P) + ' auto\'s';
+  ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const w = ctx.measureText(label).width + 8;
+  ctx.fillStyle = 'rgba(15,18,22,0.85)'; ctx.fillRect(mid.x - w / 2, mid.y - 18, w, 15);
+  ctx.fillStyle = '#fdba74'; ctx.fillText(label, mid.x, mid.y - 10);
+  ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+}
+
 function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   const t = ANNOT_TYPES[ann.kind];
   if (!t || !ann.points || ann.points.length < 1) return;
@@ -629,6 +688,7 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
     return;
   }
   if (t.mode === 'driveway') { drawDriveway(ctx, ann, w2s, scale, selected); return; }
+  if (ann.kind === 'drivethru') { if (ann.points.length >= 2) drawDriveThru(ctx, ann, w2s, scale, selected); return; }
   if (ann.points.length < 2) return;
 
   if (t.mode === 'cross') {
@@ -1333,6 +1393,10 @@ function App() {
           return;
         }
       }
+      // Infrastructure annotation (checked before aisles so a lane drawn over
+      // a drive aisle is still selectable)?
+      const ai = hitAnnotation(sp);
+      if (ai >= 0) { setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null); return; }
       // Aisle?
       for (let i = deco.aisles.length - 1; i >= 0; i--) {
         if (pointInPolygon(wp, deco.aisles[i].poly)) {
@@ -1346,9 +1410,6 @@ function App() {
           setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null); return;
         }
       }
-      // Infrastructure annotation?
-      const ai = hitAnnotation(sp);
-      if (ai >= 0) { setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null); return; }
       // Empty space → marquee-select stalls (drag a box).
       const addSel = e.shiftKey || e.metaKey || e.ctrlKey;
       if (!addSel) { setSelection(null); setStallSel([]); setAisleSel(null); }
@@ -2205,6 +2266,16 @@ function App() {
                 <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
               </div>
             </div>`}
+          ${doc.annotations[selection.index].kind === 'drivethru' && (() => {
+            const a = doc.annotations[selection.index];
+            const len = polylineLen(a.points);
+            return html`<table className="sum-table" style=${{ marginBottom: '8px' }}>
+              <tr><td>Lengte</td><td>${len.toFixed(1)} m</td></tr>
+              <tr className="sum-tot"><td>Wachtplaatsen</td><td>${drivethruStacks(a.points)}</td></tr>
+              <tr><td>Afhaalpunt</td><td>einde (W)</td></tr>
+            </table>
+            <div className="mix-note" style=${{ marginTop: 0 }}>Sleep de hoeken om de wachtrij te verlengen (~6 m per auto).</div>`;
+          })()}
           <div className="sel-actions" style=${{ flexWrap: 'wrap' }}>
             <button className="btn ghost" onClick=${duplicateSelection}>⧉ Dupliceer</button>
             <button className="btn" onClick=${() => { deleteAnnotation(selection.index); setSelection(null); }}>🗑 Verwijder</button>
