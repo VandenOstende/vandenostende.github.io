@@ -19,7 +19,12 @@ rijstroken en metrics — geïnspireerd op TestFit's *Parking Solver*.
 - **Rijbanen als eenrichting** — selecteer een rijbaan en zet 'm op eenrichting;
   richtingspijlen verschijnen op de baan (met omkeer-knop).
 - **Infrastructuur tekenen** — wegen (met bochten), wandelpaden, fietspaden,
-  zebrapaden, fietsparking (met capaciteit) en vrije markeringen.
+  zebrapaden, fietsparking (met capaciteit), **gras**, **bomen** en markeringen.
+  Wegen/paden **snappen** aan bestaande hoekpunten en kunnen tot een **gesloten
+  vlak/plein** worden gesloten; **afmetingen** verschijnen live tijdens het tekenen.
+- **Site verplaatsen/verwijderen** — klik de site-rand om de hele site te
+  selecteren, sleep om te verplaatsen, Delete om te verwijderen.
+- **Navigatie** — twee-vinger trackpad pant, pinch/Ctrl+scroll zoomt.
 - **Site tekenen** — polygoon-tool met sleepbare hoekpunten en numerieke oppervlakte.
 - **Gebouwen / uitsluitingszones** — sleep rechthoeken die de solver respecteert.
 - **Automatische parkeergeneratie** — dubbel-belaste modules, live herberekend.

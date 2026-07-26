@@ -45,19 +45,28 @@ function lineFeature(pts, geo, props) {
 }
 
 function planToGeoJSON(plan, geo) {
+  const anns = plan.annotations || [];
   const stalls = { type: 'FeatureCollection', features: (plan.stalls || []).map((s) =>
     polyFeature(s.poly, geo, { color: (STALL_TYPES[s.type] || STALL_TYPES.standard).color })) };
   const aisles = { type: 'FeatureCollection', features: (plan.aisles || []).map((a) => polyFeature(a.poly, geo, {})) };
   const buildings = { type: 'FeatureCollection', features: (plan.obstacles || []).map((o) => polyFeature(o, geo, { height: 12 })) };
   const site = { type: 'FeatureCollection', features: plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : [] };
-  const lines = { type: 'FeatureCollection', features: (plan.annotations || [])
-    .filter((an) => an.points && an.points.length >= 2 && an.kind !== 'bikeparking')
+  // Filled areas: grass, bike parking, and closed line-annotations (pleinen).
+  const areas = { type: 'FeatureCollection', features: anns
+    .filter((an) => an.points && an.points.length >= 3 && (an.kind === 'grass' || an.kind === 'bikeparking' || an.closed))
+    .map((an) => polyFeature(an.points, geo, { color: annColor(an.kind) })) };
+  const lines = { type: 'FeatureCollection', features: anns
+    .filter((an) => an.points && an.points.length >= 2 && !an.closed && ['road', 'walkway', 'bikepath', 'crosswalk', 'marking'].includes(an.kind))
     .map((an) => lineFeature(an.points, geo, { color: annColor(an.kind), width: an.width || 1 })) };
-  return { stalls, aisles, buildings, site, lines };
+  const trees = { type: 'FeatureCollection', features: anns
+    .filter((an) => an.kind === 'tree' && an.points && an.points[0])
+    .map((an) => { const ll = localToLatLon(an.points[0], geo); return { type: 'Feature', properties: { r: (an.width || 5) / 2 }, geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] } }; }) };
+  return { stalls, aisles, buildings, site, areas, lines, trees };
 }
 
 function annColor(kind) {
-  return ({ road: '#3b424e', walkway: '#9aa4b2', bikepath: '#b91c1c', crosswalk: '#e5e7eb', marking: '#eab308' })[kind] || '#eab308';
+  return ({ road: '#3b424e', walkway: '#9aa4b2', bikepath: '#b91c1c', crosswalk: '#e5e7eb',
+    marking: '#eab308', grass: '#3f9b46', bikeparking: '#0e7490', tree: '#2f9e44' })[kind] || '#eab308';
 }
 
 function addLayers(map, plan, geo) {
@@ -65,7 +74,10 @@ function addLayers(map, plan, geo) {
   const src = (id, data) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data }); };
   src('pp-site', g.site); src('pp-aisles', g.aisles); src('pp-stalls', g.stalls);
   src('pp-buildings', g.buildings); src('pp-lines', g.lines);
+  src('pp-areas', g.areas); src('pp-trees', g.trees);
 
+  if (!map.getLayer('pp-areas-fill')) map.addLayer({ id: 'pp-areas-fill', type: 'fill', source: 'pp-areas',
+    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 } });
   if (!map.getLayer('pp-site-line')) map.addLayer({ id: 'pp-site-line', type: 'line', source: 'pp-site',
     paint: { 'line-color': '#f8b500', 'line-width': 2 } });
   if (!map.getLayer('pp-aisles-fill')) map.addLayer({ id: 'pp-aisles-fill', type: 'fill', source: 'pp-aisles',
@@ -76,6 +88,9 @@ function addLayers(map, plan, geo) {
     paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.9, 'fill-outline-color': 'rgba(0,0,0,0.4)' } });
   if (!map.getLayer('pp-buildings-3d')) map.addLayer({ id: 'pp-buildings-3d', type: 'fill-extrusion', source: 'pp-buildings',
     paint: { 'fill-extrusion-color': '#8a97a8', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.9 } });
+  // Trees as green cylinders (canopy radius drives base width).
+  if (!map.getLayer('pp-trees-3d')) map.addLayer({ id: 'pp-trees-3d', type: 'circle', source: 'pp-trees',
+    paint: { 'circle-color': '#2f9e44', 'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 3, 20, ['*', ['get', 'r'], 6]], 'circle-stroke-color': '#14532d', 'circle-stroke-width': 1, 'circle-opacity': 0.9 } });
 }
 
 function setData(map, plan, geo) {
@@ -84,6 +99,7 @@ function setData(map, plan, geo) {
   const set = (id, data) => { const s = map.getSource(id); if (s) s.setData(data); };
   set('pp-site', g.site); set('pp-aisles', g.aisles); set('pp-stalls', g.stalls);
   set('pp-buildings', g.buildings); set('pp-lines', g.lines);
+  set('pp-areas', g.areas); set('pp-trees', g.trees);
 }
 
 /**

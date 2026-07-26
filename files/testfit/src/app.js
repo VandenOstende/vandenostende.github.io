@@ -53,6 +53,8 @@ export const ANNOT_TYPES = {
   bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true },
   crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross' },
   bikeparking: { label: 'Fietsparking', color: '#0e7490', width: 0,   mode: 'area', under: true },
+  grass:       { label: 'Gras',         color: '#3f9b46', width: 0,   mode: 'area', under: true },
+  tree:        { label: 'Boom',         color: '#2f9e44', width: 5,   mode: 'point' },
   marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false },
 };
 
@@ -346,6 +348,49 @@ function drawDims(ctx, pts, w2s) {
   ctx.restore();
 }
 
+// Tree sprites: empty by default (procedural trees are drawn). Once the
+// user supplies tree images, register them here and they're used instead.
+// e.g. window.ParkPlanner.setTreeImages(['data:image/png;base64,…', …])
+const TREE_SPRITES = [];
+if (typeof window !== 'undefined') {
+  window.ParkPlanner = window.ParkPlanner || {};
+  window.ParkPlanner.setTreeImages = (urls) => {
+    TREE_SPRITES.length = 0;
+    (urls || []).forEach((u) => { const im = new Image(); im.src = u; TREE_SPRITES.push(im); });
+  };
+}
+
+function drawTree(ctx, s, rpx, index, selected) {
+  const sprite = TREE_SPRITES.length ? TREE_SPRITES[index % TREE_SPRITES.length] : null;
+  // soft ground shadow
+  ctx.beginPath();
+  ctx.ellipse(s.x, s.y + rpx * 0.25, rpx * 0.95, rpx * 0.5, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.fill();
+  if (sprite && sprite.complete && sprite.naturalWidth) {
+    const d = rpx * 2;
+    ctx.drawImage(sprite, s.x - rpx, s.y - d + rpx * 0.6, d, d);
+  } else {
+    const g = ctx.createRadialGradient(s.x - rpx * 0.3, s.y - rpx * 0.3, rpx * 0.2, s.x, s.y, rpx);
+    g.addColorStop(0, '#5fd97f');
+    g.addColorStop(1, '#166534');
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, rpx, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  if (selected) {
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, rpx + 3, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+}
+
 // ---- Annotation (infrastructure) rendering ----
 function buildAnnotPath(ctx, pts, curved) {
   ctx.beginPath();
@@ -365,9 +410,16 @@ function buildAnnotPath(ctx, pts, curved) {
   }
 }
 
-function drawAnnotation(ctx, ann, w2s, scale, selected) {
+function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   const t = ANNOT_TYPES[ann.kind];
-  if (!t || !ann.points || ann.points.length < 2) return;
+  if (!t || !ann.points || ann.points.length < 1) return;
+
+  if (t.mode === 'point') {
+    const rpx = Math.max(3, ((ann.width || t.width || 5) / 2) * scale);
+    drawTree(ctx, w2s(ann.points[0]), rpx, index || 0, selected);
+    return;
+  }
+  if (ann.points.length < 2) return;
 
   if (t.mode === 'cross') {
     const A = ann.points[0], B = ann.points[1];
@@ -397,11 +449,12 @@ function drawAnnotation(ctx, ann, w2s, scale, selected) {
     ctx.beginPath();
     pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
     ctx.closePath();
-    ctx.fillStyle = 'rgba(14,116,144,0.35)';
+    ctx.fillStyle = ann.kind === 'grass' ? hexA(t.color, 0.5) : 'rgba(14,116,144,0.35)';
     ctx.fill();
     ctx.strokeStyle = selected ? '#ffffff' : t.color;
     ctx.lineWidth = selected ? 2.5 : 1.5;
     ctx.stroke();
+    if (ann.kind !== 'bikeparking') return;
     const cap = Math.floor(polygonArea(ann.points) / 1.5); // ~1.5 m² per bike
     const c = w2s(polygonCentroid(ann.points));
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
@@ -452,7 +505,7 @@ function drawAnnotations(ctx, anns, w2s, scale, under, selIdx) {
   for (let i = 0; i < anns.length; i++) {
     const t = ANNOT_TYPES[anns[i].kind];
     if (!t || !!t.under !== under) continue;
-    drawAnnotation(ctx, anns[i], w2s, scale, i === selIdx);
+    drawAnnotation(ctx, anns[i], w2s, scale, i === selIdx, i);
   }
 }
 
@@ -712,7 +765,12 @@ function App() {
     for (let i = anns.length - 1; i >= 0; i--) {
       const ann = anns[i];
       const t = ANNOT_TYPES[ann.kind];
-      if (!t || !ann.points || ann.points.length < 2) continue;
+      if (!t || !ann.points || ann.points.length < 1) continue;
+      if (t.mode === 'point') {
+        if (dist(w2s(ann.points[0]), sp) < Math.max(8, ((ann.width || 5) / 2) * view.scale)) return i;
+        continue;
+      }
+      if (ann.points.length < 2) continue;
       const pts = ann.points.map(w2s);
       const tol = Math.max(6, ((ann.width || 1) * view.scale) / 2 + 4);
       if (t.mode === 'area' || ann.closed) {
@@ -820,6 +878,7 @@ function App() {
     if (tool === 'annot') {
       const t = ANNOT_TYPES[annotKind];
       const snap = snapPoint(sp);
+      if (t.mode === 'point') { addAnnotation({ kind: annotKind, points: [snap], width: annotWidth }); return; }
       if (t.mode === 'area') { dragRef.current = { mode: 'annotArea', start: snap, cur: snap }; return; }
       // line / cross: accumulate points; clicking the first point closes it
       // into a filled area (weg/plein).
@@ -1064,7 +1123,9 @@ function App() {
     site: 'Klik om punten te plaatsen · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
     obstacle: 'Sleep een rechthoek voor een gebouw / uitsluitingszone',
     pan: 'Sleep om te verschuiven',
-    annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'area'
+    annot: ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'point'
+      ? `${ANNOT_TYPES[annotKind].label}: klik om te plaatsen · Esc stopt`
+      : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'area'
       ? `${ANNOT_TYPES[annotKind].label}: sleep een rechthoek`
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'cross'
         ? `${ANNOT_TYPES[annotKind].label}: klik begin- en eindpunt van de oversteek`
@@ -1128,8 +1189,8 @@ function App() {
           </div>
           ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
-              <label>Breedte<span className="val">${annotWidth.toFixed(1)} m</span></label>
-              <input type="range" min="0.2" max="12" step="0.1" value=${annotWidth}
+              <label>${ANNOT_TYPES[annotKind].mode === 'point' ? 'Kroondiameter' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
+              <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
                 onInput=${(e) => setAnnotWidth(parseFloat(e.target.value))} />
               ${ANNOT_TYPES[annotKind].mode === 'line' && html`
                 <label className="toggle" style=${{ marginTop: '8px' }}>
