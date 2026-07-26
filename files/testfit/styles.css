@@ -433,3 +433,39 @@ select.preset {
     grid-template-areas: 'toolbar' 'right' 'canvas' 'left'; }
   .panel.left, .panel.right { max-height: 34vh; }
 }
+
+/* ---- Onboarding overlay ---- */
+.onboard-backdrop { background: rgba(8, 11, 15, 0.82); backdrop-filter: blur(3px); }
+.modal.onboard { max-width: 640px; width: calc(100vw - 40px); }
+.onboard-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.onboard-logo {
+  width: 46px; height: 46px; flex: none; border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), #6d28d9);
+  color: #fff; font-weight: 800; font-size: 24px;
+  display: grid; place-items: center;
+}
+.onboard-sub { color: var(--muted); font-size: 12.5px; line-height: 1.45; max-width: 460px; }
+.onboard-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;
+}
+.onboard-card {
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+  padding: 14px 13px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text); cursor: pointer; font: inherit;
+}
+.onboard-card:hover { border-color: var(--accent); background: #232a34; }
+.onboard-card .oc-ico { font-size: 22px; line-height: 1; margin-bottom: 4px; }
+.onboard-card .oc-t { font-weight: 600; font-size: 13px; }
+.onboard-card .oc-d { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.onboard-search { border-top: 1px solid var(--border); padding-top: 14px; }
+.onboard-row { display: flex; gap: 8px; }
+.onboard-row input[type=text] {
+  flex: 1; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font: inherit;
+}
+.onboard-msg { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.onboard-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+@media (max-width: 640px) {
+  .onboard-grid { grid-template-columns: 1fr; }
+}

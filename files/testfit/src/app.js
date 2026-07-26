@@ -14,6 +14,7 @@ import { BASEMAPS, geocode } from './basemap.js';
 import { toGeoJSON, toDXF, toCSV } from './exporters.js';
 
 const html = htm.bind(React.createElement);
+const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
 const mark = (s) => { try { window.__pp_mark && window.__pp_mark(s); } catch (e) {} };
 mark('1-module-uitgevoerd');
 
@@ -380,7 +381,10 @@ function drawDims(ctx, pts, w2s) {
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len < 0.05) continue;
     const m = w2s({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-    const label = len.toFixed(1) + ' m';
+    // Bearing in degrees (0° = east, CCW positive), normalised to 0–360.
+    let deg = (-Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+    if (deg < 0) deg += 360;
+    const label = len.toFixed(1) + ' m · ' + Math.round(deg) + '°';
     const w = ctx.measureText(label).width + 8;
     ctx.fillStyle = 'rgba(15,18,22,0.85)';
     ctx.fillRect(m.x - w / 2, m.y - 9, w, 16);
@@ -682,6 +686,7 @@ function App() {
   const [map3dError, setMap3dError] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -888,6 +893,24 @@ function App() {
     (doc.site || []).forEach(consider);
     (doc.obstacles || []).forEach((o) => o.forEach(consider));
     return best ? { x: best.x, y: best.y } : s2w(sp);
+  };
+
+  // Constrain a segment (prev → wp) to the nearest 15° increment, keeping its
+  // length — used while a modifier key is held during drawing.
+  const angleSnap = (prev, wp) => {
+    const dx = wp.x - prev.x, dy = wp.y - prev.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return { x: wp.x, y: wp.y };
+    const ang = Math.round(Math.atan2(dy, dx) / ANGLE_SNAP) * ANGLE_SNAP;
+    return { x: prev.x + Math.cos(ang) * len, y: prev.y + Math.sin(ang) * len };
+  };
+  // Point for the in-progress line: vertex-snap by default, or angle-snap from
+  // the previous vertex while Shift is held.
+  const drawPoint = (sp, useAngle) => {
+    const pts = drawing && drawing.points;
+    const prev = pts && pts.length ? pts[pts.length - 1] : null;
+    if (useAngle && prev) return angleSnap(prev, makeTransform(view).s2w(sp));
+    return snapPoint(sp);
   };
 
   // Closest point on the site boundary (for placing access points).
@@ -1122,7 +1145,8 @@ function App() {
       if (first && drawing.points.length >= 3 && dist(w2s(first), sp) < 12) {
         commitSite(drawing.points); setDrawing(null); setTool('select'); return;
       }
-      setDrawing((d) => ({ points: [...(d ? d.points : []), snapPoint(sp)] }));
+      const pt = drawPoint(sp, e.shiftKey);
+      setDrawing((d) => ({ points: [...(d ? d.points : []), pt] }));
       return;
     }
 
@@ -1147,7 +1171,7 @@ function App() {
       if (t.mode === 'line' && first && drawing.points.length >= 2 && dist(w2s(first), sp) < 12) {
         finishAnnotLine(drawing.points, true); return;
       }
-      const pts = [...((drawing && drawing.points) || []), snap];
+      const pts = [...((drawing && drawing.points) || []), drawPoint(sp, e.shiftKey)];
       if (t.mode === 'cross' && pts.length >= 2) { finishAnnotLine(pts, false); return; }
       setDrawing({ points: pts });
       return;
@@ -1160,7 +1184,7 @@ function App() {
     const drag = dragRef.current;
 
     if (!drag) {
-      if ((tool === 'site' || tool === 'annot') && drawing) setHover(snapPoint(sp));
+      if ((tool === 'site' || tool === 'annot') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') setHover({ stallPreview: stallAt(snapStallCenter(wp), result.angleUsed || 0) });
       return;
     }
@@ -1321,18 +1345,41 @@ function App() {
   });
 
   const saveJSON = () => {
-    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+    // Save the plan together with the current camera and basemap so a reload
+    // returns to the exact same view and geographic location.
+    const payload = { _pp: 1, doc, view, basemapStyle, viewMode: viewMode === '3d' ? '2d' : viewMode };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     downloadBlob(blob, 'parkplanner.json');
+  };
+  // Apply a loaded file. Accepts the new wrapped format ({_pp, doc, view,
+  // basemapStyle}) as well as a bare document from older saves.
+  const applyLoaded = (payload) => {
+    const d = payload && payload.doc && payload.doc.site ? payload.doc : payload;
+    if (!(d && d.site && d.params)) { alert('Ongeldig bestand'); return false; }
+    const merged = { ...initialDoc, ...d };
+    dispatch({ type: 'RESET', doc: merged });
+    if (payload && payload.basemapStyle) setBasemapStyle(payload.basemapStyle);
+    // Restore the exact camera if it was saved; otherwise fit to the loaded
+    // site (computed from the loaded polygon, not the stale sitePoly memo).
+    fittedRef.current = true;
+    const sv = payload && payload.view;
+    if (sv && isFinite(sv.scale) && sv.scale > 0 && isFinite(sv.ox) && isFinite(sv.oy)) {
+      setView({ scale: sv.scale, ox: sv.ox, oy: sv.oy });
+    } else {
+      const poly = merged.siteCurved && merged.site.length >= 3 ? tessellateClosed(merged.site, 14) : merged.site;
+      const fv = fitView(poly, sizeRef.current.w, sizeRef.current.h);
+      if (fv) setView(fv);
+    }
+    setOnboardOpen(false);
+    return true;
   };
   const loadJSON = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      try {
-        const d = JSON.parse(reader.result);
-        if (d.site && d.params) { dispatch({ type: 'RESET', doc: { ...initialDoc, ...d } }); fitToSite(); }
-      } catch (err) { alert('Ongeldig bestand'); }
+      try { applyLoaded(JSON.parse(reader.result)); }
+      catch (err) { alert('Ongeldig bestand'); }
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -1375,6 +1422,12 @@ function App() {
       setGeoMsg('Zoeken mislukt (netwerk/CORS)');
     } finally { setGeoBusy(false); }
   };
+  // From the onboarding overlay: search a location, then dismiss the overlay.
+  const onboardGeocode = async () => {
+    if (!geoSearch.trim()) return;
+    await doGeocode();
+    setOnboardOpen(false);
+  };
 
   // ---------- Mapbox 3D token ----------
   const saveMbToken = () => {
@@ -1390,7 +1443,7 @@ function App() {
 
   // ---------- Render UI ----------
   const hintText = {
-    site: 'Klik om punten te plaatsen · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
+    site: 'Klik om punten te plaatsen · Shift ingedrukt = uitlijnen per 15° · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
     obstacle: 'Sleep een rechthoek voor een gebouw / uitsluitingszone',
     pan: 'Sleep om te verschuiven',
     placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
@@ -1400,7 +1453,7 @@ function App() {
       ? `${ANNOT_TYPES[annotKind].label}: sleep een rechthoek`
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'cross'
         ? `${ANNOT_TYPES[annotKind].label}: klik begin- en eindpunt van de oversteek`
-        : `${ANNOT_TYPES[annotKind] ? ANNOT_TYPES[annotKind].label : ''}: klik punten (snapt aan bestaande) · dubbelklik = lijn · klik beginpunt = gesloten vlak/plein · Esc annuleert`,
+        : `${ANNOT_TYPES[annotKind] ? ANNOT_TYPES[annotKind].label : ''}: klik punten (snapt aan bestaande) · Shift = uitlijnen per 15° · dubbelklik = lijn · klik beginpunt = gesloten vlak/plein · Esc annuleert`,
     select: (stallSel.length || aisleSel || (selection && selection.type)) ? null
       : (doc.site.length < 3
         ? 'Geen site — kies "Site" (P) om er een te tekenen'
@@ -1772,6 +1825,55 @@ function App() {
               </table>`}
             <div className="sel-actions" style=${{ marginTop: '14px' }}>
               <button className="btn" onClick=${() => setSummaryOpen(false)}>Sluiten</button>
+            </div>
+          </div>
+        </div>`}
+
+      ${onboardOpen && html`
+        <div className="modal-backdrop onboard-backdrop">
+          <div className="modal onboard">
+            <div className="onboard-hero">
+              <div className="onboard-logo">P</div>
+              <div>
+                <h2 style=${{ margin: '0 0 2px' }}>ParkPlanner</h2>
+                <div className="onboard-sub">Parametrische parkeerplanner — teken een terrein, genereer parkeervakken en bekijk de cijfers live.</div>
+              </div>
+            </div>
+
+            <div className="onboard-grid">
+              <button className="onboard-card" onClick=${() => setOnboardOpen(false)}>
+                <div className="oc-ico">▦</div>
+                <div className="oc-t">Voorbeeldsite</div>
+                <div className="oc-d">Start met de meegeleverde demo en pas alles aan.</div>
+              </button>
+              <button className="onboard-card" onClick=${() => { newRect(); setOnboardOpen(false); }}>
+                <div className="oc-ico">＋</div>
+                <div className="oc-t">Leeg terrein</div>
+                <div className="oc-d">Begin met een blanco rechthoek en teken je eigen site.</div>
+              </button>
+              <label className="onboard-card">
+                <div className="oc-ico">📂</div>
+                <div className="oc-t">Project laden</div>
+                <div className="oc-d">Open een eerder opgeslagen .json — locatie en camera worden hersteld.</div>
+                <input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} />
+              </label>
+            </div>
+
+            <div className="onboard-search">
+              <div className="sum-h" style=${{ marginTop: 0 }}>Zoek een locatie</div>
+              <div className="onboard-row">
+                <input type="text" placeholder="Adres of plaats…" value=${geoSearch}
+                  onInput=${(e) => setGeoSearch(e.target.value)}
+                  onKeyDown=${(e) => { if (e.key === 'Enter') onboardGeocode(); }} />
+                <button className="btn" disabled=${geoBusy} onClick=${onboardGeocode}>
+                  ${geoBusy ? '…' : 'Zoek'}
+                </button>
+              </div>
+              ${geoMsg && html`<div className="onboard-msg">${geoMsg}</div>`}
+            </div>
+
+            <div className="onboard-foot">
+              <button className="btn ghost" onClick=${() => setOnboardOpen(false)}>Overslaan</button>
             </div>
           </div>
         </div>`}
