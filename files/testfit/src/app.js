@@ -1205,6 +1205,7 @@ function App() {
       map3dRef.current = ctrl;
       ctrl.setMode(vmRef.current === '3d');
       if (vmRef.current !== '3d') { const c = mapCamFromView(view, sizeRef.current, doc.geo); ctrl.follow2D(c.center, c.zoom); }
+      setTimeout(() => ctrl.resize(), 100);
     }).catch(() => setMap3dError('Mapbox kon niet laden.'));
     return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2200,6 +2201,10 @@ function App() {
           </form>
           ${geoMsg && html`<div className="geo-msg">${geoMsg}</div>`}
           <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
+          <div className="geo-coord" style=${{ marginTop: '6px' }}>
+            ${mbToken ? html`🗺️ Kaart-token ✓ · <a href="#" onClick=${(e) => { e.preventDefault(); clearMbToken(); }} style=${{ color: 'var(--accent)' }}>wijzigen</a>` : '🗺️ Geen kaart-token'}
+          </div>
+          ${map3dError && html`<div className="geo-msg" style=${{ color: 'var(--danger)' }}>${map3dError}</div>`}
         </div>
         <div className="section">
           <h3>Teken (infrastructuur)</h3>
