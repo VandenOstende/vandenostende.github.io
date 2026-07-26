@@ -31,6 +31,7 @@ const DEFAULT_PARAMS = {
   compactRatio: 0, evRatio: 0.05, ada: true,
   singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
   buildingGLA: 0, parkingRatio: 0, // GLA (m²) + stalls per 100 m² (zoning)
+  layout: 'strip', // 'strip' (straight rows) | 'perimeter' (follows the curve)
 };
 
 // Default demo site: an L-shaped parcel (rectangle with a building in the corner).
@@ -1628,6 +1629,13 @@ function App() {
 
         <div className="section">
           <h3>Vak & rijstrook</h3>
+          <div className="field">
+            <label>Layout</label>
+            <div className="seg">
+              <button className=${(doc.params.layout || 'strip') === 'strip' ? 'active' : ''} onClick=${() => setParam('layout', 'strip')}>Rechte rijen</button>
+              <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')}>Volgt de rand</button>
+            </div>
+          </div>
           ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
           ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
           ${slider('Rijstrook', 'aisleWidth', doc.params.aisleWidth, 5, 8, 0.1, 'm', setParam)}

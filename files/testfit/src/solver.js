@@ -143,6 +143,11 @@ export function solveParking(site, obstacles, params, orientationIndex = 0) {
   }
   if (angleSet.length === 0) angleSet.push(0);
 
+  // Perimeter / concentric layout: rows follow the boundary curve.
+  if (params.layout === 'perimeter') {
+    return { ...packConcentric(buildable, blockers, params), orientationCount: 1 };
+  }
+
   // Pack once per orientation; rank by stall count.
   const results = angleSet.map((theta) =>
     packOrientation(buildable, blockers, params, theta)
@@ -151,6 +156,95 @@ export function solveParking(site, obstacles, params, orientationIndex = 0) {
 
   const chosen = results[Math.min(orientationIndex, results.length - 1)] || empty;
   return { ...chosen, orientationCount: results.length };
+}
+
+// Sample a polygon perimeter every `step`, returning points with an inward
+// unit normal (oriented toward `interior`). Used for curved parking rows.
+function sampleRing(poly, step, interior) {
+  const out = [];
+  const n = poly.length;
+  let carry = 0; // distance already consumed into the current edge
+  for (let i = 0; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n];
+    const ex = b.x - a.x, ey = b.y - a.y, len = Math.hypot(ex, ey);
+    if (len < 1e-9) continue;
+    const ux = ex / len, uy = ey / len;
+    let nx = -uy, ny = ux;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if ((interior.x - mx) * nx + (interior.y - my) * ny < 0) { nx = -nx; ny = -ny; }
+    let dpos = carry;
+    while (dpos <= len + 1e-9) {
+      out.push({ x: a.x + ux * dpos, y: a.y + uy * dpos, nx, ny });
+      dpos += step;
+    }
+    carry = dpos - len; // leftover carried into the next edge
+  }
+  return out;
+}
+
+/**
+ * Concentric / perimeter parking: offset the boundary inward in
+ * double-loaded modules and lay curved rows of stalls (perpendicular to
+ * the boundary) that follow the site's curves, with curved drive aisles.
+ */
+function packConcentric(buildable, blockers, params) {
+  const w = params.stallWidth, d = params.stallDepth, aisle = params.aisleWidth;
+  const moduleH = 2 * d + aisle;
+  const interior = polygonCentroid(buildable);
+  const stalls = [], aisles = [];
+  const centroids = []; // for overlap rejection (e.g. at sharp corners)
+  const minSep = 0.6 * Math.min(w, d);
+  const overlaps = (cx, cy) => centroids.some((c) => Math.hypot(c.x - cx, c.y - cy) < minSep);
+
+  // Lay a curved band of stalls whose outer edge is offset(poly, outerInset),
+  // extending inward by depth `dep`.
+  const band = (outerInset, dep, collect, isStall) => {
+    const ring = outerInset === 0 ? buildable : offsetPolygon(buildable, outerInset);
+    if (!ring || polygonArea(ring) < 4) return 0;
+    const samples = sampleRing(ring, w, interior);
+    let placed = 0;
+    for (let i = 0; i < samples.length - 1; i++) {
+      const p0 = samples[i], p1 = samples[i + 1];
+      // Skip the wrap seam where consecutive samples jump far apart.
+      if (Math.hypot(p1.x - p0.x, p1.y - p0.y) > w * 2.2) continue;
+      const quad = [
+        { x: p0.x, y: p0.y },
+        { x: p1.x, y: p1.y },
+        { x: p1.x + p1.nx * dep, y: p1.y + p1.ny * dep },
+        { x: p0.x + p0.nx * dep, y: p0.y + p0.ny * dep },
+      ];
+      const cx = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
+      const cy = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+      if (isStall && overlaps(cx, cy)) continue;
+      // The outer corners hug the boundary (unreliable for point-in-polygon),
+      // so validate the interior side: centre + inner-edge midpoint inside.
+      const imx = (quad[2].x + quad[3].x) / 2, imy = (quad[2].y + quad[3].y) / 2;
+      if (!pointInPolygon({ x: cx, y: cy }, buildable)) continue;
+      if (!pointInPolygon({ x: imx, y: imy }, buildable)) continue;
+      if (blockers.some((b) => quadIntersectsPolygon(quad, b))) continue;
+      if (isStall) centroids.push({ x: cx, y: cy });
+      collect.push(quad);
+      placed++;
+    }
+    return placed;
+  };
+
+  for (let k = 0; k < 60; k++) {
+    const o0 = k * moduleH;
+    const outer = [];
+    const inner = [];
+    const aq = [];
+    const nOuter = band(o0, d, outer, true);
+    band(o0 + d, aisle, aq, false);          // curved drive aisle band
+    const nInner = band(o0 + d + aisle, d, inner, true);
+    if (nOuter === 0 && nInner === 0) break;
+    for (const q of outer) stalls.push({ poly: q, type: 'standard' });
+    for (const q of inner) stalls.push({ poly: q, type: 'standard' });
+    if (nOuter > 0 || nInner > 0) for (const q of aq) aisles.push(q);
+  }
+
+  assignStallTypes(stalls, params);
+  return { stalls, aisles, angleUsed: 0 };
 }
 
 /**
