@@ -845,6 +845,7 @@ function App() {
   const solveTimer = useRef(null);
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
+  const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
   const map3dRef = useRef(null);   // Mapbox controller when in 3D view
@@ -1573,6 +1574,33 @@ function App() {
   }) });
   const deleteObs = (index) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== index) }) });
 
+  // Duplicate whatever is selected (building, annotation, or stalls), offset a
+  // little so the copy is visible, and select the copy.
+  const offsetPts = (pts, dx, dy) => pts.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  const duplicateSelection = () => {
+    const D = 4;
+    if (selection && selection.type === 'obs' && doc.obstacles[selection.index]) {
+      const o = doc.obstacles[selection.index];
+      const copy = Array.isArray(o) ? offsetPts(o, D, D) : { ...o, poly: offsetPts(polyOf(o), D, D) };
+      const idx = doc.obstacles.length;
+      dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, copy] }) });
+      setSelection({ type: 'obs', index: idx });
+    } else if (selection && selection.type === 'annot' && (doc.annotations || [])[selection.index]) {
+      const a = doc.annotations[selection.index];
+      const copy = { ...a, points: offsetPts(a.points, D, D) };
+      if (a.anchor) copy.anchor = { x: a.anchor.x + D, y: a.anchor.y + D };
+      const idx = (doc.annotations || []).length;
+      dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: [...(d.annotations || []), copy] }) });
+      setSelection({ type: 'annot', index: idx });
+    } else if (stallSel.length) {
+      const copies = stallSel.map((k) => { const st = deco.stalls.find((s) => s.key === k); return st ? { poly: offsetPts(st.poly, D, D), type: st.type } : null; }).filter(Boolean);
+      if (!copies.length) return;
+      dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, manualStalls: [...(d.manualStalls || []), ...copies] }) });
+      setStallSel(copies.map((c) => stallKey(c.poly)));
+    }
+  };
+  dupRef.current = duplicateSelection;
+
   // Wheel handling is attached natively (passive:false) so preventDefault
   // works — see the effect below. Pinch/Ctrl+wheel zooms; two-finger
   // trackpad scroll pans.
@@ -1604,6 +1632,7 @@ function App() {
       const meta = e.ctrlKey || e.metaKey;
       if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); dispatch({ type: e.shiftKey ? 'REDO' : 'UNDO' }); return; }
       if (meta && e.key.toLowerCase() === 'y') { e.preventDefault(); dispatch({ type: 'REDO' }); return; }
+      if (meta && e.key.toLowerCase() === 'd') { e.preventDefault(); dupRef.current(); return; }
       switch (e.key.toLowerCase()) {
         case 'v': setTool('select'); break;
         case 'p': setTool('site'); setDrawing({ points: [] }); break;
@@ -2139,7 +2168,8 @@ function App() {
                 <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
               </div>
             </div>`}
-          <div className="sel-actions">
+          <div className="sel-actions" style=${{ flexWrap: 'wrap' }}>
+            <button className="btn ghost" onClick=${duplicateSelection}>⧉ Dupliceer</button>
             <button className="btn" onClick=${() => { deleteAnnotation(selection.index); setSelection(null); }}>🗑 Verwijder</button>
             <button className="btn ghost" onClick=${() => setSelection(null)}>Deselecteer</button>
           </div>
@@ -2165,7 +2195,8 @@ function App() {
             <tr><td>Vloeroppervlak (GLA)</td><td>${fmt(footprint * floors)} m²</td></tr>
             <tr><td>Hoogte</td><td>${(floors * FLOOR_H).toFixed(1)} m</td></tr>
           </table>
-          <div className="sel-actions" style=${{ marginTop: '10px' }}>
+          <div className="sel-actions" style=${{ marginTop: '10px', flexWrap: 'wrap' }}>
+            <button className="btn ghost" onClick=${duplicateSelection}>⧉ Dupliceer</button>
             <button className="btn" onClick=${() => { deleteObs(selection.index); setSelection(null); }}>🗑 Verwijder</button>
             <button className="btn ghost" onClick=${() => setSelection(null)}>Deselecteer</button>
           </div>
@@ -2193,6 +2224,7 @@ function App() {
               const allLocked = stallSel.every((k) => lockedSet[k]);
               return html`<div className="sel-actions" style=${{ flexWrap: 'wrap' }}>
                 <button className="btn ghost" onClick=${() => setStallTypes(stallSel, null)}>↺ Wis</button>
+                <button className="btn ghost" onClick=${duplicateSelection}>⧉ Dupliceer</button>
                 <button className="btn ghost" onClick=${() => toggleLockStalls(stallSel, !allLocked)}>${allLocked ? '🔓' : '🔒'}</button>
                 <button className="btn ghost" onClick=${() => { deleteStalls(stallSel); setStallSel([]); }}>🗑 Verwijder</button>
                 <button className="btn ghost" onClick=${clearSel}>✕</button>
