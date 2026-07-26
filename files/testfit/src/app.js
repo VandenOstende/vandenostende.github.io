@@ -11,6 +11,7 @@ import {
 } from './geometry.js';
 import * as basemap from './basemap.js';
 import { BASEMAPS, geocode } from './basemap.js';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js';
 
 const html = htm.bind(React.createElement);
 const mark = (s) => { try { window.__pp_mark && window.__pp_mark(s); } catch (e) {} };
@@ -551,6 +552,7 @@ function App() {
   const [mbToken, setMbToken] = useState(() => { try { return localStorage.getItem('pp_mapbox_token') || ''; } catch (e) { return ''; } });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -1076,6 +1078,12 @@ function App() {
   const exportPNG = () => {
     canvasRef.current.toBlob((blob) => downloadBlob(blob, 'parkplanner.png'));
   };
+  const exportGeoJSON = () =>
+    downloadBlob(new Blob([JSON.stringify(toGeoJSON(buildPlan(), doc.geo), null, 2)], { type: 'application/geo+json' }), 'parkplanner.geojson');
+  const exportDXF = () =>
+    downloadBlob(new Blob([toDXF(buildPlan())], { type: 'application/dxf' }), 'parkplanner.dxf');
+  const exportCSV = () =>
+    downloadBlob(new Blob([toCSV(buildPlan(), metrics)], { type: 'text/csv;charset=utf-8' }), 'parkplanner.csv');
   const newRect = () => {
     dispatch({ type: 'RESET', doc: { ...initialDoc, site: rectPoly(0, 0, 80, 50), obstacles: [] } });
     setTimeout(fitToSite, 0);
@@ -1160,7 +1168,16 @@ function App() {
         <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>
         <button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
         <label className="btn ghost">Laden<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
-        <button className="btn ghost" onClick=${exportPNG}>PNG</button>
+        <div className="dropdown">
+          <button className="btn ghost" onClick=${() => setExportOpen((o) => !o)}>Export ▾</button>
+          ${exportOpen && html`
+            <div className="menu" onMouseLeave=${() => setExportOpen(false)}>
+              <button onClick=${() => { exportPNG(); setExportOpen(false); }}>PNG-afbeelding</button>
+              <button onClick=${() => { exportGeoJSON(); setExportOpen(false); }}>GeoJSON</button>
+              <button onClick=${() => { exportDXF(); setExportOpen(false); }}>DXF (CAD)</button>
+              <button onClick=${() => { exportCSV(); setExportOpen(false); }}>CSV (takeoff)</button>
+            </div>`}
+        </div>
       </div>
 
       <div className="panel left">
