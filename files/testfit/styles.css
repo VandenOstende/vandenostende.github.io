@@ -507,3 +507,31 @@ select.preset {
   background: #16241a; border: 1px solid var(--accent-2); border-radius: 6px; color: var(--text);
 }
 .opt-result .opt-up { color: var(--accent-2); font-weight: 600; }
+
+/* ---- Deal tabulation bar (TestFit-style bottom strip) ---- */
+.dealbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 8; }
+.dealbar:not(.closed) {
+  background: rgba(15, 18, 22, 0.94);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(4px);
+}
+.dealbar-toggle {
+  position: absolute; right: 12px; top: -23px; height: 23px;
+  background: rgba(15, 18, 22, 0.94); border: 1px solid var(--border); border-bottom: none;
+  color: var(--muted); font-size: 11px; padding: 0 12px; border-radius: 6px 6px 0 0;
+  cursor: pointer; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.dealbar-toggle:hover { color: var(--text); }
+.dealbar-cols { display: flex; overflow-x: auto; padding: 9px 14px; gap: 0; }
+.deal-col { min-width: 148px; padding: 0 18px; border-right: 1px solid var(--border); flex: 0 0 auto; }
+.deal-col:first-child { padding-left: 0; }
+.deal-col:last-child { border-right: none; }
+.deal-h {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--accent); margin-bottom: 6px; font-weight: 700;
+}
+.deal-row { display: flex; justify-content: space-between; gap: 16px; font-size: 12px; padding: 1.5px 0; }
+.deal-row span { color: var(--muted); white-space: nowrap; }
+.deal-row b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.deal-row b.ok { color: var(--accent-2); }
+.deal-row b.bad { color: var(--danger); }
