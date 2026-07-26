@@ -79,6 +79,10 @@ function historyReducer(state, action) {
       const next = typeof action.updater === 'function' ? action.updater(present) : action.updater;
       return { ...state, present: next };
     }
+    case 'CHECKPOINT': {
+      // Snapshot present into history before a live drag, so it's undoable.
+      return { past: [...past, present].slice(-60), present, future: [] };
+    }
     case 'UNDO': {
       if (!past.length) return state;
       return { past: past.slice(0, -1), present: past[past.length - 1], future: [present, ...future] };
@@ -137,13 +141,14 @@ function draw(ctx, opts) {
     drawAnnotations(ctx, doc.annotations, w2s, view.scale, true, selAnnIdx);
   }
 
-  // Site fill + outline
+  // Site fill + outline (highlighted when the whole site is selected)
   if (layers.site && doc.site.length >= 2) {
+    const siteSel = selection && selection.type === 'site';
     pathPoly(ctx, doc.site, w2s, doc.site.length >= 3);
-    ctx.fillStyle = 'rgba(248,181,0,0.05)';
+    ctx.fillStyle = siteSel ? 'rgba(248,181,0,0.12)' : 'rgba(248,181,0,0.05)';
     if (doc.site.length >= 3) ctx.fill();
-    ctx.strokeStyle = '#f8b500';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = siteSel ? '#ffd24a' : '#f8b500';
+    ctx.lineWidth = siteSel ? 3.5 : 2;
     ctx.stroke();
   }
 
@@ -217,7 +222,7 @@ function draw(ctx, opts) {
     drawAnnotations(ctx, doc.annotations, w2s, view.scale, false, selAnnIdx);
   }
 
-  // Rectangle preview (obstacle / bike-parking area drag)
+  // Rectangle preview (obstacle / bike-parking area drag) with dimensions
   if (hover && hover.preview) {
     const r = hover.preview;
     const a = w2s({ x: r.x, y: r.y }), b = w2s({ x: r.x + r.w, y: r.y + r.h });
@@ -226,6 +231,9 @@ function draw(ctx, opts) {
     ctx.lineWidth = 1.4;
     ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
     ctx.setLineDash([]);
+    drawDims(ctx, [
+      { x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h },
+    ], w2s);
   }
 
   // Marquee selection box
@@ -240,9 +248,10 @@ function draw(ctx, opts) {
     ctx.strokeRect(x, y, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
   }
 
-  // In-progress polygon
+  // In-progress polygon / polyline with live dimension labels
   if (drawing && drawing.points.length) {
-    const pts = hover ? [...drawing.points, hover] : drawing.points;
+    const hoverPt = hover && hover.x != null ? hover : null;
+    const pts = hoverPt ? [...drawing.points, hoverPt] : drawing.points;
     pathPoly(ctx, pts, w2s, false);
     ctx.strokeStyle = '#22c55e';
     ctx.lineWidth = 1.8;
@@ -250,6 +259,7 @@ function draw(ctx, opts) {
     ctx.stroke();
     ctx.setLineDash([]);
     for (const p of drawing.points) drawHandle(ctx, w2s(p), '#22c55e');
+    drawDims(ctx, pts, w2s);
   }
 
   // Vertex handles for site (select tool)
@@ -306,6 +316,34 @@ function drawAisleArrows(ctx, aisle, w2s, scale) {
     ctx.moveTo(bl.x, bl.y); ctx.lineTo(tip.x, tip.y); ctx.lineTo(br.x, br.y);
     ctx.stroke();
   }
+}
+
+// Translucent fill colour from a #rrggbb hex.
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+// Live segment-length labels while drawing (metres).
+function drawDims(ctx, pts, w2s) {
+  if (pts.length < 2) return;
+  ctx.save();
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 0.05) continue;
+    const m = w2s({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    const label = len.toFixed(1) + ' m';
+    const w = ctx.measureText(label).width + 8;
+    ctx.fillStyle = 'rgba(15,18,22,0.85)';
+    ctx.fillRect(m.x - w / 2, m.y - 9, w, 16);
+    ctx.fillStyle = '#a7f3d0';
+    ctx.fillText(label, m.x, m.y);
+  }
+  ctx.restore();
 }
 
 // ---- Annotation (infrastructure) rendering ----
@@ -374,21 +412,33 @@ function drawAnnotation(ctx, ann, w2s, scale, selected) {
     return;
   }
 
-  // Line kinds (road, walkway, bikepath, marking)
+  // Line kinds (road, walkway, bikepath, marking); `closed` = filled area (plein).
   const pts = ann.points.map(w2s);
-  const wpx = Math.max(1.5, (ann.width || 0.3) * scale);
+  const closed = !!ann.closed;
+  const wpx = closed ? 2 : Math.max(1.5, (ann.width || 0.3) * scale);
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (closed) {
+    buildAnnotPath(ctx, pts, false); ctx.closePath();
+    ctx.fillStyle = hexA(t.color, 0.55);
+    ctx.fill();
+    const c = w2s(polygonCentroid(ann.points));
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(Math.round(polygonArea(ann.points)) + ' m²', c.x, c.y);
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+  }
   if (selected) {
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = wpx + 4;
-    buildAnnotPath(ctx, pts, ann.curved);
+    ctx.lineWidth = (closed ? 2 : wpx) + 4;
+    buildAnnotPath(ctx, pts, ann.curved && !closed); if (closed) ctx.closePath();
     ctx.stroke();
   }
   ctx.strokeStyle = t.color;
   ctx.lineWidth = wpx;
-  buildAnnotPath(ctx, pts, ann.curved);
+  buildAnnotPath(ctx, pts, ann.curved && !closed); if (closed) ctx.closePath();
   ctx.stroke();
-  if (ann.kind === 'bikepath') { // dashed centre line
+  if (ann.kind === 'bikepath' && !closed) { // dashed centre line
     ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = Math.max(1, wpx * 0.12);
     ctx.setLineDash([6, 6]);
@@ -599,6 +649,18 @@ function App() {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // Snap a screen point to the nearest existing vertex (infrastructure,
+  // site, obstacles) within ~11px; otherwise return the plain world point.
+  const snapPoint = (sp) => {
+    const { w2s, s2w } = makeTransform(view);
+    let best = null, bestD = 11;
+    const consider = (pt) => { const d = dist(w2s(pt), sp); if (d < bestD) { bestD = d; best = pt; } };
+    (doc.annotations || []).forEach((a) => (a.points || []).forEach(consider));
+    (doc.site || []).forEach(consider);
+    (doc.obstacles || []).forEach((o) => o.forEach(consider));
+    return best ? { x: best.x, y: best.y } : s2w(sp);
+  };
+
   // ---------- Override actions (manual marks) ----------
   const ovOf = (d) => ({ stalls: { ...(d.overrides && d.overrides.stalls) }, aisles: { ...(d.overrides && d.overrides.aisles) } });
   const setStallTypes = (keys, type) => dispatch({ type: 'COMMIT', updater: (d) => {
@@ -631,10 +693,14 @@ function App() {
     setAnnotCurved(!!t.curved);
     setTool('annot'); setDrawing(null); clearSel();
   };
-  const finishAnnotLine = (points) => {
+  const finishAnnotLine = (points, closed = false) => {
     const t = ANNOT_TYPES[annotKind];
-    if (points.length >= 2) {
-      addAnnotation({ kind: annotKind, points, width: annotWidth, curved: t.mode === 'line' ? annotCurved : false });
+    if (points.length >= (closed ? 3 : 2)) {
+      addAnnotation({
+        kind: annotKind, points, width: annotWidth,
+        curved: t.mode === 'line' && !closed ? annotCurved : false,
+        closed: !!closed,
+      });
     }
     setDrawing(null);
   };
@@ -649,15 +715,26 @@ function App() {
       if (!t || !ann.points || ann.points.length < 2) continue;
       const pts = ann.points.map(w2s);
       const tol = Math.max(6, ((ann.width || 1) * view.scale) / 2 + 4);
-      if (t.mode === 'area') {
+      if (t.mode === 'area' || ann.closed) {
         if (pointInPolygon(makeTransform(view).s2w(sp), ann.points)) return i;
-        continue;
+        if (t.mode === 'area') continue;
       }
       for (let s = 0; s < pts.length - 1; s++) {
         if (distPointSegment(sp, pts[s], pts[s + 1]) < tol) return i;
       }
     }
     return -1;
+  };
+
+  // Is the screen point near the site's boundary line (not a vertex)?
+  const hitSiteEdge = (sp) => {
+    if (!doc.site || doc.site.length < 2) return false;
+    const { w2s } = makeTransform(view);
+    for (let i = 0; i < doc.site.length; i++) {
+      const a = w2s(doc.site[i]), b = w2s(doc.site[(i + 1) % doc.site.length]);
+      if (distPointSegment(sp, a, b) < 7) return true;
+    }
+    return false;
   };
 
   const hitVertex = (sp) => {
@@ -684,6 +761,13 @@ function App() {
     if (tool === 'select') {
       const v = hitVertex(sp);
       if (v) { dragRef.current = { mode: 'vertex', target: v }; return; }
+      // Site boundary → select the whole site; drag the border to move it.
+      if (hitSiteEdge(sp)) {
+        setSelection({ type: 'site' }); setStallSel([]); setAisleSel(null);
+        dispatch({ type: 'CHECKPOINT' });
+        dragRef.current = { mode: 'siteMove', start: wp, orig: doc.site };
+        return;
+      }
       // Stall? (topmost first) — click selects, shift+click toggles.
       for (let i = deco.stalls.length - 1; i >= 0; i--) {
         if (pointInPolygon(wp, deco.stalls[i].poly)) {
@@ -724,7 +808,7 @@ function App() {
       if (first && drawing.points.length >= 3 && dist(w2s(first), sp) < 12) {
         commitSite(drawing.points); setDrawing(null); setTool('select'); return;
       }
-      setDrawing((d) => ({ points: [...(d ? d.points : []), wp] }));
+      setDrawing((d) => ({ points: [...(d ? d.points : []), snapPoint(sp)] }));
       return;
     }
 
@@ -735,15 +819,17 @@ function App() {
 
     if (tool === 'annot') {
       const t = ANNOT_TYPES[annotKind];
-      if (t.mode === 'area') { dragRef.current = { mode: 'annotArea', start: wp, cur: wp }; return; }
-      // line / cross: accumulate points
+      const snap = snapPoint(sp);
+      if (t.mode === 'area') { dragRef.current = { mode: 'annotArea', start: snap, cur: snap }; return; }
+      // line / cross: accumulate points; clicking the first point closes it
+      // into a filled area (weg/plein).
       const first = drawing && drawing.points[0];
       const { w2s } = makeTransform(view);
       if (t.mode === 'line' && first && drawing.points.length >= 2 && dist(w2s(first), sp) < 12) {
-        finishAnnotLine(drawing.points); return;
+        finishAnnotLine(drawing.points, true); return;
       }
-      const pts = [...((drawing && drawing.points) || []), wp];
-      if (t.mode === 'cross' && pts.length >= 2) { finishAnnotLine(pts); return; }
+      const pts = [...((drawing && drawing.points) || []), snap];
+      if (t.mode === 'cross' && pts.length >= 2) { finishAnnotLine(pts, false); return; }
       setDrawing({ points: pts });
       return;
     }
@@ -755,12 +841,15 @@ function App() {
     const drag = dragRef.current;
 
     if (!drag) {
-      if ((tool === 'site' || tool === 'annot') && drawing) setHover(wp);
+      if ((tool === 'site' || tool === 'annot') && drawing) setHover(snapPoint(sp));
       return;
     }
     if (drag.mode === 'pan') {
       const dx = sp.x - drag.start.x, dy = sp.y - drag.start.y;
       setView({ ...drag.view, ox: drag.view.ox + dx, oy: drag.view.oy + dy });
+    } else if (drag.mode === 'siteMove') {
+      const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
+      dispatch({ type: 'LIVE', updater: (d) => ({ ...d, site: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })) }) });
     } else if (drag.mode === 'annotArea') {
       drag.cur = wp;
       setHover({ preview: rectFrom(drag.start, wp) });
@@ -829,22 +918,36 @@ function App() {
     if (tool === 'site' && drawing && drawing.points.length >= 3) {
       commitSite(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'annot' && drawing && drawing.points.length >= 2) {
-      finishAnnotLine(drawing.points);
+      finishAnnotLine(drawing.points, false);
     }
   };
 
   const commitSite = (points) =>
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: points, obstacles: [] }) });
 
-  const onWheel = (e) => {
-    e.preventDefault();
-    const rect = canvasRef.current.getBoundingClientRect();
-    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    const newScale = Math.max(1, Math.min(60, view.scale * factor));
-    const k = newScale / view.scale;
-    setView({ scale: newScale, ox: cx - (cx - view.ox) * k, oy: cy - (cy - view.oy) * k });
-  };
+  // Wheel handling is attached natively (passive:false) so preventDefault
+  // works — see the effect below. Pinch/Ctrl+wheel zooms; two-finger
+  // trackpad scroll pans.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheelNative = (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      if (e.ctrlKey || e.metaKey) {
+        setView((v) => {
+          const s = Math.max(1, Math.min(60, v.scale * Math.exp(-e.deltaY * 0.01)));
+          const k = s / v.scale;
+          return { scale: s, ox: cx - (cx - v.ox) * k, oy: cy - (cy - v.oy) * k };
+        });
+      } else {
+        setView((v) => ({ ...v, ox: v.ox - e.deltaX, oy: v.oy - e.deltaY }));
+      }
+    };
+    canvas.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheelNative);
+  }, []);
 
   // ---------- Keyboard ----------
   useEffect(() => {
@@ -859,6 +962,8 @@ function App() {
         case 'b': setTool('obstacle'); break;
         case ' ': setTool('pan'); break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
+        case '+': case '=': zoomBy(1.2); break;
+        case '-': case '_': zoomBy(1 / 1.2); break;
         case 'escape': setDrawing(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); break;
         case 'delete': case 'backspace':
           if (selection && selection.type === 'obs') {
@@ -866,6 +971,8 @@ function App() {
             setSelection(null);
           } else if (selection && selection.type === 'annot') {
             deleteAnnotation(selection.index); setSelection(null);
+          } else if (selection && selection.type === 'site') {
+            dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: [] }) }); setSelection(null);
           }
           break;
         default: break;
@@ -883,6 +990,12 @@ function App() {
     const fv = fitView(doc.site, sizeRef.current.w, sizeRef.current.h);
     if (fv) setView(fv);
   };
+  const zoomBy = (factor) => setView((v) => {
+    const cx = sizeRef.current.w / 2, cy = sizeRef.current.h / 2;
+    const s = Math.max(1, Math.min(60, v.scale * factor));
+    const k = s / v.scale;
+    return { scale: s, ox: cx - (cx - v.ox) * k, oy: cy - (cy - v.oy) * k };
+  });
 
   const saveJSON = () => {
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
@@ -955,9 +1068,11 @@ function App() {
       ? `${ANNOT_TYPES[annotKind].label}: sleep een rechthoek`
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'cross'
         ? `${ANNOT_TYPES[annotKind].label}: klik begin- en eindpunt van de oversteek`
-        : `${ANNOT_TYPES[annotKind] ? ANNOT_TYPES[annotKind].label : ''}: klik punten · dubbelklik of klik beginpunt om te eindigen · Esc annuleert`,
-    select: (stallSel.length || aisleSel) ? null
-      : 'Klik een vak of rijbaan om te markeren · sleep een kader om meerdere vakken te selecteren · Shift = bij selectie voegen',
+        : `${ANNOT_TYPES[annotKind] ? ANNOT_TYPES[annotKind].label : ''}: klik punten (snapt aan bestaande) · dubbelklik = lijn · klik beginpunt = gesloten vlak/plein · Esc annuleert`,
+    select: (stallSel.length || aisleSel || (selection && selection.type)) ? null
+      : (doc.site.length < 3
+        ? 'Geen site — kies "Site" (P) om er een te tekenen'
+        : 'Klik de site-rand om te verplaatsen/verwijderen · klik een vak of rijbaan om te markeren · sleep een kader voor meerdere vakken'),
   }[tool];
 
   return html`
@@ -979,6 +1094,8 @@ function App() {
         <div className="tb-sep"></div>
         <button className=${'btn' + (viewMode === '3d' ? ' active' : '')} onClick=${() => setViewMode(viewMode === '3d' ? '2d' : '3d')} title="Wissel 2D/3D">${viewMode === '3d' ? '🧊 3D' : '🗺 2D'}</button>
         <div className="tb-spacer"></div>
+        <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
+        <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
         <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>
         <button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
         <label className="btn ghost">Laden<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
@@ -1046,7 +1163,7 @@ function App() {
       <div className="canvas-wrap" ref=${wrapRef}>
         <canvas ref=${canvasRef}
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
-          onDoubleClick=${onDoubleClick} onWheel=${onWheel}
+          onDoubleClick=${onDoubleClick}
           style=${{ cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
         ${hintText && html`<div className="hint">${hintText}</div>`}
         <div className="hud">
@@ -1085,6 +1202,15 @@ function App() {
       </div>
 
       <div className="panel right">
+        ${selection && selection.type === 'site' && html`
+        <div className="section sel-section">
+          <h3>Site geselecteerd</h3>
+          <p style=${{ fontSize: '12px', color: 'var(--muted)', margin: '0 0 10px' }}>Sleep de rand om te verplaatsen · Delete om te verwijderen.</p>
+          <div className="sel-actions">
+            <button className="btn" onClick=${() => { dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: [] }) }); setSelection(null); }}>🗑 Verwijder site</button>
+            <button className="btn ghost" onClick=${() => setSelection(null)}>Deselecteer</button>
+          </div>
+        </div>`}
         ${selection && selection.type === 'annot' && doc.annotations[selection.index] && html`
         <div className="section sel-section">
           <h3>${ANNOT_TYPES[doc.annotations[selection.index].kind].label} geselecteerd</h3>
