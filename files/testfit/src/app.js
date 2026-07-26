@@ -1111,6 +1111,7 @@ function App() {
 
   const onPointerDown = (e) => {
     if (viewMode !== '2d') return; // 2.5D/3D are view-only
+    if (e.button === 2) return;    // right-click handled by onContextMenu (add vertex)
     e.target.setPointerCapture?.(e.pointerId);
     const sp = getScreen(e);
     const wp = getWorld(e);
@@ -1257,6 +1258,53 @@ function App() {
     } else if (drag.mode === 'marquee') {
       marqueeRef.current.x1 = wp.x; marqueeRef.current.y1 = wp.y;
       renderRef.current();
+    }
+  };
+
+  // Right-click on a site or building edge inserts a new vertex there.
+  const onContextMenu = (e) => {
+    if (viewMode !== '2d') return;
+    const sp = getScreen(e);
+    const wp = getWorld(e);
+    const { w2s } = makeTransform(view);
+    const TOL = 14;
+    const projectOnSeg = (p, a, b) => {
+      const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+      let t = len2 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      return { x: a.x + t * dx, y: a.y + t * dy };
+    };
+    let best = null; // { kind, oi, i, d }
+    const site = doc.site;
+    if (site && site.length >= 2) {
+      for (let i = 0; i < site.length; i++) {
+        const d = distPointSegment(sp, w2s(site[i]), w2s(site[(i + 1) % site.length]));
+        if (d < TOL && (!best || d < best.d)) best = { kind: 'site', i, d };
+      }
+    }
+    doc.obstacles.forEach((o, oi) => {
+      const op = polyOf(o);
+      for (let i = 0; i < op.length; i++) {
+        const d = distPointSegment(sp, w2s(op[i]), w2s(op[(i + 1) % op.length]));
+        if (d < TOL && (!best || d < best.d)) best = { kind: 'obs', oi, i, d };
+      }
+    });
+    if (!best) return; // not near an edge → leave the native menu alone
+    e.preventDefault();
+    if (best.kind === 'site') {
+      const a = site[best.i], b = site[(best.i + 1) % site.length];
+      const np = projectOnSeg(wp, a, b);
+      dispatch({ type: 'COMMIT', updater: (d) => { const s = d.site.slice(); s.splice(best.i + 1, 0, np); return { ...d, site: s }; } });
+      setSelection({ type: 'site' });
+    } else {
+      const op = polyOf(doc.obstacles[best.oi]);
+      const a = op[best.i], b = op[(best.i + 1) % op.length];
+      const np = projectOnSeg(wp, a, b);
+      dispatch({ type: 'COMMIT', updater: (d) => {
+        const obs = d.obstacles.map((o, k) => { if (k !== best.oi) return o; const p = polyOf(o).slice(); p.splice(best.i + 1, 0, np); return Array.isArray(o) ? p : { ...o, poly: p }; });
+        return { ...d, obstacles: obs };
+      } });
+      setSelection({ type: 'obs', index: best.oi });
     }
   };
 
@@ -1580,7 +1628,7 @@ function App() {
     select: (stallSel.length || aisleSel || (selection && selection.type)) ? null
       : (doc.site.length < 3
         ? 'Geen site — kies "Site" (P) om er een te tekenen'
-        : 'Klik de site-rand om te verplaatsen/verwijderen · klik een vak of rijbaan om te markeren · sleep een kader voor meerdere vakken'),
+        : 'Klik de site-rand om te verplaatsen/verwijderen · rechtermuisklik op een rand voegt een punt toe · klik een vak of rijbaan om te markeren · sleep een kader voor meerdere vakken'),
   }[tool];
 
   return html`
@@ -1700,7 +1748,7 @@ function App() {
       <div className="canvas-wrap" ref=${wrapRef}>
         <canvas ref=${canvasRef}
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
-          onDoubleClick=${onDoubleClick}
+          onDoubleClick=${onDoubleClick} onContextMenu=${onContextMenu}
           style=${{ cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
         ${viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
         ${viewMode === '2.5d' && html`<div className="hint">2.5D-weergave · alleen-lezen — schakel naar 2D om te bewerken</div>`}
