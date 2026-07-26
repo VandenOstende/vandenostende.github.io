@@ -106,6 +106,13 @@ function makeDriveway(frame, width, depth) {
   return { kind: 'driveway', points, closed: true, anchor: { x: c.x, y: c.y }, nx, ny, tx, ty, width, depth };
 }
 
+// A circle approximated as an n-gon polygon (so all polygon code just works).
+function circlePoly(cx, cy, r, n = 40) {
+  const pts = [];
+  for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }); }
+  return pts;
+}
+
 // Turn a blocking annotation (road / driveway) into a clearance polygon the
 // parking solver must avoid. Closed pleinen block their whole area; open lines
 // become a ribbon of their width.
@@ -344,6 +351,17 @@ function draw(ctx, opts) {
   // Driveway placement preview (snapped to the site edge)
   if (hover && hover.driveway) {
     drawDriveway(ctx, hover.driveway, w2s, view.scale, true);
+  }
+
+  // Circle area preview
+  if (hover && hover.circle) {
+    const c = w2s(hover.circle.c), rpx = hover.circle.r * view.scale;
+    ctx.beginPath(); ctx.arc(c.x, c.y, rpx, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(63,155,70,0.3)'; ctx.fill();
+    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#a7f3d0'; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('r ' + hover.circle.r.toFixed(1) + ' m', c.x, c.y);
+    ctx.textAlign = 'start';
   }
 
   // Manual stall placement preview
@@ -795,6 +813,7 @@ function App() {
   const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
+  const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
   const [annotCurved, setAnnotCurved] = useState(true);
   const [view, setView] = useState({ scale: 8, ox: 60, oy: 60 });
   const [drawing, setDrawing] = useState(null); // { points: [] }
@@ -1203,6 +1222,11 @@ function App() {
     }
     setDrawing(null);
   };
+  // Finish an area drawn as a free polygon (grass/fietsparking via points).
+  const finishAreaPoly = (points) => {
+    if (points && points.length >= 3) addAnnotation({ kind: annotKind, points: points.slice(), closed: true, width: 0 });
+    setDrawing(null);
+  };
 
   // Nearest annotation to a screen point (for selection), or -1.
   const hitAnnotation = (sp) => {
@@ -1358,7 +1382,16 @@ function App() {
         addAnnotation({ kind: annotKind, points: [at], width: annotWidth });
         return;
       }
-      if (t.mode === 'area') { dragRef.current = { mode: 'annotArea', start: snap, cur: snap }; return; }
+      if (t.mode === 'area') {
+        if (areaShape === 'rect') { dragRef.current = { mode: 'annotArea', start: snap, cur: snap }; return; }
+        if (areaShape === 'circle') { dragRef.current = { mode: 'annotCircle', center: snap, cur: snap }; return; }
+        // polygon by points: click points, close on the first point / double-click
+        const f0 = drawing && drawing.points[0];
+        const { w2s: w2sA } = makeTransform(view);
+        if (f0 && drawing.points.length >= 3 && dist(w2sA(f0), sp) < 12) { finishAreaPoly(drawing.points); return; }
+        setDrawing({ points: [...((drawing && drawing.points) || []), drawPoint(sp, e.shiftKey)] });
+        return;
+      }
       // line / cross: accumulate points; clicking the first point closes it
       // into a filled area (weg/plein).
       const first = drawing && drawing.points[0];
@@ -1399,6 +1432,9 @@ function App() {
     } else if (drag.mode === 'annotArea') {
       drag.cur = wp;
       setHover({ preview: rectFrom(drag.start, wp) });
+    } else if (drag.mode === 'annotCircle') {
+      drag.cur = wp;
+      setHover({ circle: { c: drag.center, r: Math.hypot(wp.x - drag.center.x, wp.y - drag.center.y) } });
     } else if (drag.mode === 'vertex') {
       const t = drag.target;
       dispatch({ type: 'LIVE', updater: (d) => {
@@ -1488,6 +1524,10 @@ function App() {
         addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0 });
       }
       setHover(null);
+    } else if (drag.mode === 'annotCircle') {
+      const rad = Math.hypot(drag.cur.x - drag.center.x, drag.cur.y - drag.center.y);
+      if (rad > 0.5) addAnnotation({ kind: annotKind, points: circlePoly(drag.center.x, drag.center.y, rad), closed: true, width: 0 });
+      setHover(null);
     } else if (drag.mode === 'marquee') {
       const m = marqueeRef.current;
       marqueeRef.current = null;
@@ -1514,6 +1554,8 @@ function App() {
       commitSite(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'obstaclepoly' && drawing && drawing.points.length >= 3) {
       commitObstaclePoly(drawing.points); setDrawing(null); setTool('select');
+    } else if (tool === 'annot' && ANNOT_TYPES[annotKind].mode === 'area' && drawing && drawing.points.length >= 3) {
+      finishAreaPoly(drawing.points);
     } else if (tool === 'annot' && drawing && drawing.points.length >= 2) {
       finishAnnotLine(drawing.points, false);
     }
@@ -1848,7 +1890,7 @@ function App() {
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'point'
       ? `${ANNOT_TYPES[annotKind].label}: klik om te plaatsen · Esc stopt`
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'area'
-      ? `${ANNOT_TYPES[annotKind].label}: sleep een rechthoek`
+      ? `${ANNOT_TYPES[annotKind].label}: ${areaShape === 'poly' ? 'klik punten · dubbelklik/beginpunt sluit' : areaShape === 'circle' ? 'klik midden + sleep straal' : 'sleep een rechthoek'}`
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'cross'
         ? `${ANNOT_TYPES[annotKind].label}: klik begin- en eindpunt van de oversteek`
         : `${ANNOT_TYPES[annotKind] ? ANNOT_TYPES[annotKind].label : ''}: klik punten (snapt aan bestaande) · Shift = uitlijnen per 15° · dubbelklik = lijn · klik beginpunt = gesloten vlak/plein · Esc annuleert`,
@@ -1933,6 +1975,16 @@ function App() {
                 <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
               </div>
               <div className="mix-note">Klik op de siterand om te plaatsen — de in/uitrit snapt op de rand.</div>
+            </div>`}
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode === 'area' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Vorm</label>
+              <div className="seg">
+                <button className=${areaShape === 'poly' ? 'active' : ''} onClick=${() => setAreaShape('poly')}>Veelhoek</button>
+                <button className=${areaShape === 'rect' ? 'active' : ''} onClick=${() => setAreaShape('rect')}>Rechthoek</button>
+                <button className=${areaShape === 'circle' ? 'active' : ''} onClick=${() => setAreaShape('circle')}>Cirkel</button>
+              </div>
+              <div className="mix-note">${areaShape === 'poly' ? 'Klik punten · klik beginpunt of dubbelklik om te sluiten.' : areaShape === 'circle' ? 'Klik het midden en sleep voor de straal.' : 'Sleep een rechthoek.'}</div>
             </div>`}
           ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
