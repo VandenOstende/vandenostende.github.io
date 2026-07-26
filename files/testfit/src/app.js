@@ -130,8 +130,8 @@ function annotationBlocker(ann) {
 // re-solves: stall type per stall, one-way + direction per aisle.
 const initialDoc = {
   site: DEFAULT_SITE, siteCurved: false, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
-  params: DEFAULT_PARAMS, orientationIndex: 0,
-  overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} }, removed: {} },
+  params: DEFAULT_PARAMS, orientationIndex: 0, autoParking: true,
+  overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} }, removed: {}, angles: {} },
   annotations: [], // { kind, points:[{x,y}], width, curved }
   manualStalls: [], // hand-placed stalls: { poly, type }
 };
@@ -889,6 +889,13 @@ function App() {
   // Debounced solve whenever inputs change.
   useEffect(() => {
     clearTimeout(solveTimer.current);
+    // Auto-parking off: keep the canvas free for manual placement only.
+    if (!doc.autoParking) {
+      reqRef.current++;
+      setResult({ stalls: [], aisles: [], islands: [], orientationCount: 0 });
+      setSolving(false);
+      return;
+    }
     setSolving(true);
     solveTimer.current = setTimeout(() => {
       // Align rows to the site's longest (control-point) edge when requested.
@@ -907,23 +914,38 @@ function App() {
       }
     }, 90);
     return () => clearTimeout(solveTimer.current);
-  }, [sitePoly, doc.obstacles, roadBlockers, doc.params, doc.orientationIndex]);
+  }, [sitePoly, doc.obstacles, roadBlockers, doc.params, doc.orientationIndex, doc.autoParking]);
 
   // Apply manual overrides (stall type, aisle one-way) on top of the
   // solver output, keyed by position so marks survive re-solves.
   const deco = useMemo(() => {
     const ov = doc.overrides || {};
-    const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {};
+    const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {}, ovAngles = ov.angles || {};
     const locks = ov.locks || {}, lockS = locks.stalls || {}, lockA = locks.aisles || {};
     const removed = ov.removed || {};
+    const w = doc.params.stallWidth, d = doc.params.stallDepth;
+    // Re-orient a stall to an absolute angle about its own centre (the key is
+    // centroid-based, so it's unchanged by the rotation and the override sticks).
+    const reangle = (poly, key) => {
+      const deg = ovAngles[key];
+      if (deg == null) return poly;
+      const c = polygonCentroid(poly), th = (deg * Math.PI) / 180;
+      const ux = Math.cos(th), uy = Math.sin(th), vx = -Math.sin(th), vy = Math.cos(th), hw = w / 2, hd = d / 2;
+      return [
+        { x: c.x - ux * hw - vx * hd, y: c.y - uy * hw - vy * hd },
+        { x: c.x + ux * hw - vx * hd, y: c.y + uy * hw - vy * hd },
+        { x: c.x + ux * hw + vx * hd, y: c.y + uy * hw + vy * hd },
+        { x: c.x - ux * hw + vx * hd, y: c.y - uy * hw + vy * hd },
+      ];
+    };
     const stalls = result.stalls.map((st) => {
       const key = stallKey(st.poly);
-      return { ...st, key, type: ovStalls[key] || st.type, locked: !!lockS[key], manual: false };
+      return { ...st, key, poly: reangle(st.poly, key), type: ovStalls[key] || st.type, locked: !!lockS[key], angle: ovAngles[key], manual: false };
     }).filter((st) => !removed[st.key]);
     // Hand-placed stalls, markable/lockable like solver stalls.
     for (const ms of doc.manualStalls || []) {
       const key = stallKey(ms.poly);
-      stalls.push({ poly: ms.poly, key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], manual: true });
+      stalls.push({ poly: reangle(ms.poly, key), key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], angle: ovAngles[key], manual: true });
     }
     const aisles = result.aisles.map((q) => {
       const key = aisleKey(q);
@@ -931,7 +953,7 @@ function App() {
       return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
     });
     return { stalls, aisles, islands: result.islands || [], orientationCount: result.orientationCount };
-  }, [result, doc.overrides, doc.manualStalls]);
+  }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
   const renderNow = useCallback(() => {
     const canvas = canvasRef.current;
@@ -997,6 +1019,7 @@ function App() {
   // ---------- Param helpers ----------
   const setParam = (key, value, commit = true) =>
     dispatch({ type: commit ? 'COMMIT' : 'LIVE', updater: (d) => ({ ...d, params: { ...d.params, [key]: value } }) });
+  const setAutoParking = (v) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, autoParking: v }) });
   const setMix = (key, value) => dispatch({ type: 'COMMIT', updater: (d) => {
     const cur = d.params.mix || { compact: d.params.compactRatio || 0, ev: d.params.evRatio || 0, staff: 0, visitor: 0, reserved: 0 };
     return { ...d, params: { ...d.params, mix: { ...cur, [key]: value } } };
@@ -1071,7 +1094,7 @@ function App() {
     return {
       stalls: { ...o.stalls }, aisles: { ...o.aisles },
       locks: { stalls: { ...l.stalls }, aisles: { ...l.aisles } },
-      removed: { ...o.removed },
+      removed: { ...o.removed }, angles: { ...o.angles },
     };
   };
   const setStallTypes = (keys, type) => dispatch({ type: 'COMMIT', updater: (d) => {
@@ -1080,6 +1103,12 @@ function App() {
       if (type === null) { if (!ov.locks.stalls[k]) delete ov.stalls[k]; } // keep locked marks
       else ov.stalls[k] = type;
     }
+    return { ...d, overrides: ov };
+  } });
+  // Per-stall angle override (null = back to the solver's angle).
+  const setStallAngles = (keys, deg) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const ov = ovOf(d);
+    for (const k of keys) { if (deg == null) delete ov.angles[k]; else ov.angles[k] = deg; }
     return { ...d, overrides: ov };
   } });
   const toggleLockStalls = (keys, lock) => dispatch({ type: 'COMMIT', updater: (d) => {
@@ -1257,7 +1286,8 @@ function App() {
         if (pointInPolygon(wp, deco.stalls[i].poly)) {
           const key = deco.stalls[i].key;
           setSelection(null); setAisleSel(null);
-          setStallSel((cur) => e.shiftKey
+          const multi = e.shiftKey || e.metaKey || e.ctrlKey;
+          setStallSel((cur) => multi
             ? (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key])
             : [key]);
           return;
@@ -1280,9 +1310,10 @@ function App() {
       const ai = hitAnnotation(sp);
       if (ai >= 0) { setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null); return; }
       // Empty space → marquee-select stalls (drag a box).
-      if (!e.shiftKey) { setSelection(null); setStallSel([]); setAisleSel(null); }
+      const addSel = e.shiftKey || e.metaKey || e.ctrlKey;
+      if (!addSel) { setSelection(null); setStallSel([]); setAisleSel(null); }
       marqueeRef.current = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
-      dragRef.current = { mode: 'marquee', add: e.shiftKey };
+      dragRef.current = { mode: 'marquee', add: addSel };
       return;
     }
 
@@ -2098,6 +2129,13 @@ function App() {
                   <span className="dot" style=${{ background: t.color }}></span>${t.label}
                 </button>`)}
             </div>
+            <div className="field" style=${{ marginTop: '4px', marginBottom: '8px' }}>
+              <label>Hoek van deze vak(ken)</label>
+              <div className="seg">
+                ${[30, 45, 60, 75, 90].map((a) => html`<button key=${a} onClick=${() => setStallAngles(stallSel, a)}>${a}°</button>`)}
+                <button onClick=${() => setStallAngles(stallSel, null)} title="Terug naar automatische hoek">Auto</button>
+              </div>
+            </div>
             ${(() => {
               const lockedSet = (doc.overrides.locks && doc.overrides.locks.stalls) || {};
               const allLocked = stallSel.every((k) => lockedSet[k]);
@@ -2163,6 +2201,11 @@ function App() {
 
         <div className="section">
           <h3>Vak & rijstrook</h3>
+          <div className="toggle" style=${{ marginBottom: '10px' }}>
+            <span>Automatisch parkeren</span>
+            <input type="checkbox" checked=${doc.autoParking !== false} onChange=${(e) => setAutoParking(e.target.checked)} />
+          </div>
+          ${doc.autoParking === false && html`<div className="mix-note" style=${{ marginTop: 0, marginBottom: '10px' }}>Uit — teken je site vrij; plaats vakken met de Vak-tool (K).</div>`}
           <div className="field">
             <label>Layout</label>
             <div className="seg">
