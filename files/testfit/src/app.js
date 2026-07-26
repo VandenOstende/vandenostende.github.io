@@ -1472,7 +1472,13 @@ function App() {
           <div className="toggle" style=${{ marginBottom: 0 }}>
             <span>Vloeiende bochten (spline)</span>
             <input type="checkbox" checked=${!!doc.siteCurved}
-              onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, siteCurved: e.target.checked }) })} />
+              onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({
+                ...d, siteCurved: e.target.checked,
+                // On enabling curves, switch a straight layout to the hybrid
+                // "edge follows the curve + straight middle" default.
+                params: e.target.checked && (d.params.layout || 'strip') === 'strip'
+                  ? { ...d.params, layout: 'hybrid' } : d.params,
+              }) })} />
           </div>
         </div>
         <div className="section">
@@ -1632,8 +1638,9 @@ function App() {
           <div className="field">
             <label>Layout</label>
             <div className="seg">
-              <button className=${(doc.params.layout || 'strip') === 'strip' ? 'active' : ''} onClick=${() => setParam('layout', 'strip')}>Rechte rijen</button>
-              <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')}>Volgt de rand</button>
+              <button className=${(doc.params.layout || 'strip') === 'strip' ? 'active' : ''} onClick=${() => setParam('layout', 'strip')} title="Rechte rijen">Recht</button>
+              <button className=${doc.params.layout === 'hybrid' ? 'active' : ''} onClick=${() => setParam('layout', 'hybrid')} title="Rand volgt de curve + recht in het midden">Rand+midden</button>
+              <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')} title="Volledig concentrisch, volgt de rand">Concentrisch</button>
             </div>
           </div>
           ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
