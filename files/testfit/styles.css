@@ -360,6 +360,39 @@ select.preset {
 .legend .dot { width: 11px; height: 11px; border-radius: 3px; }
 .legend .row .count { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
 
+/* ---- Modal (summary) ---- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px 16px;
+  width: min(92%, 440px);
+  max-height: 84vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+.modal h3 { font-size: 15px; }
+.sum-h {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 14px 0 6px;
+}
+.sum-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sum-table td { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.sum-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.sum-table td:first-child { color: var(--muted); }
+.sum-table tr.sum-tot td { font-weight: 700; color: var(--text); border-bottom: 2px solid var(--border); }
+
 /* ---- Selection panel ---- */
 .sel-section { background: #131a24; border-bottom: 1px solid var(--border); }
 .sel-section h3 { color: var(--accent); }

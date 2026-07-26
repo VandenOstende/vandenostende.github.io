@@ -50,7 +50,7 @@ export const STALL_TYPES = {
   staff:      { key: 'staff',      label: 'Personeel',    color: '#f59e0b', glyph: 'P' },
   visitor:    { key: 'visitor',    label: 'Bezoeker',     color: '#ec4899', glyph: 'B' },
   reserved:   { key: 'reserved',   label: 'Gereserveerd', color: '#ef4444', glyph: 'R' },
-  motorcycle: { key: 'motorcycle', label: 'Motor',        color: '#a855f7', glyph: 'M' },
+  motorcycle: { key: 'motorcycle', label: 'Motor',        color: '#a855f7', glyph: 'M', spaces: 3 },
 };
 
 // Stable position keys so manual overrides survive re-solves. Stalls are
@@ -133,19 +133,38 @@ export function solveParking(site, obstacles, params, orientationIndex = 0) {
   return packStripBest(buildable, blockers, params, orientationIndex);
 }
 
+/** Direction (rad, in [0,PI)) of the longest edge of a polygon. */
+export function longestEdgeAngle(poly) {
+  let best = 0, bestLen = -1;
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len > bestLen) { bestLen = len; best = Math.atan2(b.y - a.y, b.x - a.x); }
+  }
+  return ((best % Math.PI) + Math.PI) % Math.PI;
+}
+
 // Straight strip packing across candidate orientations; returns the best.
 // Orientations = each edge direction (+ normal), deduped ~2° and capped so a
 // many-vertex spline boundary doesn't explode into hundreds of them.
+// If params.alignAngle is set, only that angle (+ its normal) is tried, so
+// rows line up with the chosen site edge.
 function packStripBest(buildable, blockers, params, orientationIndex = 0) {
-  const base = edgeAngles(buildable);
-  const TOL = 0.035, CAP = 40;
-  const angleSet = [];
-  for (const a of base) {
-    for (const cand of [a, a + Math.PI / 2]) {
-      const norm = ((cand % Math.PI) + Math.PI) % Math.PI;
-      if (!angleSet.some((x) => Math.abs(x - norm) < TOL || Math.abs(x - norm) > Math.PI - TOL)) angleSet.push(norm);
+  let angleSet;
+  if (typeof params.alignAngle === 'number') {
+    const a = ((params.alignAngle % Math.PI) + Math.PI) % Math.PI;
+    angleSet = [a, ((a + Math.PI / 2) % Math.PI + Math.PI) % Math.PI];
+  } else {
+    const base = edgeAngles(buildable);
+    const TOL = 0.035, CAP = 40;
+    angleSet = [];
+    for (const a of base) {
+      for (const cand of [a, a + Math.PI / 2]) {
+        const norm = ((cand % Math.PI) + Math.PI) % Math.PI;
+        if (!angleSet.some((x) => Math.abs(x - norm) < TOL || Math.abs(x - norm) > Math.PI - TOL)) angleSet.push(norm);
+      }
+      if (angleSet.length >= CAP) break;
     }
-    if (angleSet.length >= CAP) break;
   }
   if (angleSet.length === 0) angleSet.push(0);
   const results = angleSet.map((theta) => packOrientation(buildable, blockers, params, theta));
@@ -388,15 +407,17 @@ function assignStallTypes(stalls, params) {
 export function computeMetrics(site, obstacles, result, params, annotations) {
   const siteArea = site && site.length >= 3 ? polygonArea(site) : 0;
   const buildingArea = (obstacles || []).reduce((s, o) => s + polygonArea(o), 0);
+  // Counts are in parking *spaces*: a motorcycle stall provides 3 spaces.
   const counts = {};
   for (const k of Object.keys(STALL_TYPES)) counts[k] = 0;
-  for (const st of result.stalls) counts[st.type] = (counts[st.type] || 0) + 1;
-  const total = result.stalls.length;
+  for (const st of result.stalls) counts[st.type] = (counts[st.type] || 0) + (STALL_TYPES[st.type] ? STALL_TYPES[st.type].spaces || 1 : 1);
+  const physicalStalls = result.stalls.length;               // stall footprints
+  const total = Object.values(counts).reduce((a, b) => a + b, 0); // spaces (motor ×3)
   const buildable = computeBuildable(site, params.setback);
   const buildableArea = buildable ? polygonArea(buildable) : 0;
-  // Gross area per stall (lower is a denser, more efficient layout).
-  const areaPerStall = total > 0 ? buildableArea / total : 0;
-  const ada = adaRequirement(total);
+  // Gross area per stall footprint (lower is a denser, more efficient layout).
+  const areaPerStall = physicalStalls > 0 ? buildableArea / physicalStalls : 0;
+  const ada = adaRequirement(physicalStalls);
   const onewayAisles = (result.aisles || []).filter((a) => a.oneway).length;
 
   // Impervious (paved) coverage: buildings + parking + paved infrastructure,
@@ -422,7 +443,7 @@ export function computeMetrics(site, obstacles, result, params, annotations) {
   const accessCount = (annotations || []).filter((a) => a.kind === 'access').length;
 
   return {
-    siteArea, buildingArea, buildableArea, total, counts,
+    siteArea, buildingArea, buildableArea, total, physicalStalls, counts,
     areaPerStall,
     coverage: siteArea > 0 ? buildingArea / siteArea : 0,
     imperviousPct,

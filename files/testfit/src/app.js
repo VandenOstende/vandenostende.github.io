@@ -4,7 +4,7 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis } from './solver.js';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed,
@@ -32,6 +32,7 @@ const DEFAULT_PARAMS = {
   singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
   buildingGLA: 0, parkingRatio: 0, // GLA (m²) + stalls per 100 m² (zoning)
   layout: 'strip', // 'strip' (straight rows) | 'perimeter' (follows the curve)
+  alignLongestEdge: false, // align rows to the site's longest edge
 };
 
 // Default demo site: an L-shaped parcel (rectangle with a building in the corner).
@@ -226,6 +227,16 @@ function draw(ctx, opts) {
         ctx.lineWidth = 1.4;
         ctx.stroke();
         ctx.setLineDash([]);
+      }
+      if (st.type === 'motorcycle') { // subdivide into 3 motorcycle bays
+        const p = st.poly;
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 0.8;
+        for (const t of [1 / 3, 2 / 3]) {
+          const a = w2s({ x: p[0].x + (p[1].x - p[0].x) * t, y: p[0].y + (p[1].y - p[0].y) * t });
+          const b = w2s({ x: p[3].x + (p[2].x - p[3].x) * t, y: p[3].y + (p[2].y - p[3].y) * t });
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
       }
       if (showGlyph && info.glyph) {
         const s = w2s(polygonCentroid(st.poly));
@@ -670,6 +681,7 @@ function App() {
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -743,7 +755,11 @@ function App() {
     clearTimeout(solveTimer.current);
     setSolving(true);
     solveTimer.current = setTimeout(() => {
-      const args = [sitePoly, doc.obstacles, doc.params, doc.orientationIndex];
+      // Align rows to the site's longest (control-point) edge when requested.
+      const solveP = doc.params.alignLongestEdge && doc.site.length >= 2
+        ? { ...doc.params, alignAngle: longestEdgeAngle(doc.site) }
+        : doc.params;
+      const args = [sitePoly, doc.obstacles, solveP, doc.orientationIndex];
       lastArgsRef.current = args;
       const reqId = ++reqRef.current;
       if (workerRef.current) {
@@ -1602,7 +1618,10 @@ function App() {
           })()}
         </div>`}
         <div className="section">
-          <h3>Metrics</h3>
+          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Metrics</span>
+            <button className="btn ghost" style=${{ padding: '3px 8px', fontSize: '11px' }} onClick=${() => setSummaryOpen(true)}>📋 Samenvatting</button>
+          </h3>
           <div className="metric-grid">
             <div className="metric big"><div className="k">Totaal vakken</div><div className="v">${metrics.total}</div></div>
             <div className="metric"><div className="k">Site</div><div className="v">${fmt(metrics.siteArea)}<small> m²</small></div></div>
@@ -1642,6 +1661,10 @@ function App() {
               <button className=${doc.params.layout === 'hybrid' ? 'active' : ''} onClick=${() => setParam('layout', 'hybrid')} title="Rand volgt de curve + recht in het midden">Rand+midden</button>
               <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')} title="Volledig concentrisch, volgt de rand">Concentrisch</button>
             </div>
+          </div>
+          <div className="toggle">
+            <span>Lijn rijen uit met langste rand</span>
+            <input type="checkbox" checked=${!!doc.params.alignLongestEdge} onChange=${(e) => setParam('alignLongestEdge', e.target.checked)} />
           </div>
           ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
           ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
@@ -1709,6 +1732,49 @@ function App() {
             : html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)' }}>Vul GLA en ratio in voor een zoning-check.</div>`}
         </div>
       </div>
+
+      ${summaryOpen && html`
+        <div className="modal-backdrop" onClick=${() => setSummaryOpen(false)}>
+          <div className="modal" onClick=${(e) => e.stopPropagation()}>
+            <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 0 }}>
+              <span>Samenvatting</span>
+              <button className="btn ghost" style=${{ padding: '2px 8px' }} onClick=${() => setSummaryOpen(false)}>✕</button>
+            </h3>
+            <div className="sum-h">Parkeerplaatsen per type</div>
+            <table className="sum-table">
+              ${Object.values(STALL_TYPES).map((t) => (metrics.counts[t.key] > 0) ? html`
+                <tr key=${t.key}>
+                  <td><span className="dot" style=${{ background: t.color, display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', marginRight: '6px' }}></span>${t.label}${t.spaces ? ` (${t.spaces}/vak)` : ''}</td>
+                  <td>${metrics.counts[t.key]}</td>
+                </tr>` : '')}
+              <tr className="sum-tot"><td>Totaal plaatsen</td><td>${metrics.total}</td></tr>
+              <tr><td>Fysieke vakken</td><td>${metrics.physicalStalls}</td></tr>
+            </table>
+            <div className="sum-h">Oppervlaktes</div>
+            <table className="sum-table">
+              <tr><td>Site</td><td>${fmt(metrics.siteArea)} m²</td></tr>
+              <tr><td>Bebouwd</td><td>${fmt(metrics.buildingArea)} m² · ${(metrics.coverage * 100).toFixed(0)}%</td></tr>
+              <tr><td>Beschikbaar</td><td>${fmt(metrics.buildableArea)} m²</td></tr>
+              <tr><td>m² per vak</td><td>${metrics.areaPerStall ? metrics.areaPerStall.toFixed(1) : '—'}</td></tr>
+              <tr><td>Verhard</td><td>${(metrics.imperviousPct * 100).toFixed(0)}%</td></tr>
+            </table>
+            <div className="sum-h">Toegankelijkheid & circulatie</div>
+            <table className="sum-table">
+              <tr><td>Minder-valide</td><td>${metrics.adaProvided} / ${metrics.adaRequired} vereist · ${metrics.adaVan} van</td></tr>
+              <tr><td>Rijstroken</td><td>${metrics.aisleCount} · ${metrics.onewayAisles} eenrichting</td></tr>
+              <tr><td>Toegangspunten</td><td>${metrics.accessCount}</td></tr>
+              <tr><td>Oriëntaties</td><td>${metrics.orientationCount}</td></tr>
+            </table>
+            ${metrics.requiredStalls != null && html`
+              <div className="sum-h">Zoning</div>
+              <table className="sum-table">
+                <tr><td>Geleverd / vereist</td><td>${metrics.total} / ${metrics.requiredStalls}${metrics.total >= metrics.requiredStalls ? ' ✓' : ''}</td></tr>
+              </table>`}
+            <div className="sel-actions" style=${{ marginTop: '14px' }}>
+              <button className="btn" onClick=${() => setSummaryOpen(false)}>Sluiten</button>
+            </div>
+          </div>
+        </div>`}
     </div>
   `;
 }
