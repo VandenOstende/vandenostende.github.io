@@ -4,17 +4,17 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=814d3036';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=adb69ce8';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=814d3036';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=814d3036';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=814d3036';
-import { parseParcel, simplifyRing } from './importers.js?v=814d3036';
-import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=814d3036';
-import { BUILD_ID } from './build.js?v=814d3036';
+} from './geometry.js?v=adb69ce8';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=adb69ce8';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=adb69ce8';
+import { parseParcel, simplifyRing } from './importers.js?v=adb69ce8';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=adb69ce8';
+import { BUILD_ID } from './build.js?v=adb69ce8';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -154,6 +154,7 @@ const initialDoc = {
   overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} }, removed: {}, angles: {} },
   annotations: [], // { kind, points:[{x,y}], width, curved }
   manualStalls: [], // hand-placed stalls: { poly, type }
+  assets: [], // imported symbols used by this plan: { id, name, src, w, h, height }
 };
 
 // Simple history wrapper: { past[], present, future[] }.
@@ -240,6 +241,7 @@ export const UI_PARTS = [
 
   { id: 'secLocation', group: 'Linkerpaneel', label: 'Locatie' },
   { id: 'secDraw', group: 'Linkerpaneel', label: 'Teken (infrastructuur)' },
+  { id: 'secAssets', group: 'Linkerpaneel', label: 'Eigen assets' },
   { id: 'secObjects', group: 'Linkerpaneel', label: 'Objecten' },
   { id: 'secSiteShape', group: 'Linkerpaneel', label: 'Site-vorm' },
   { id: 'secLayers', group: 'Linkerpaneel', label: 'Lagen' },
@@ -775,6 +777,122 @@ const PICTOS = {
   signEV: (ctx) => { plate(ctx, 'rect', '#15803d'); ctx.save(); ctx.scale(0.62, 0.62); PICTOS.ev(ctx); ctx.restore(); },
 };
 
+// ---------- Imported assets ----------
+// An imported symbol becomes an ordinary point annotation with a painter that
+// happens to draw a bitmap, so the palette, selection, the inspector sliders,
+// the object list, copy/paste and the exporters need no special case at all.
+const ASSET_MAX_PX = 512;              // long side after normalisation
+const ASSET_MAX_CHARS = 256 * 1024;    // per asset, as stored (data-URL text)
+const ASSET_LIB_MAX_CHARS = 2 * 1024 * 1024; // whole library
+const ASSET_DEF_H = 2.5;               // default height in metres, for 3D
+const ASSETS_KEY = 'pp_assets';
+
+const ASSET_IMAGES = new Map(); // id → HTMLImageElement
+let assetRepaint = () => {};    // wired to the canvas renderer once it exists
+
+function assetPainter(id) {
+  return (ctx) => {
+    const img = ASSET_IMAGES.get(id);
+    if (!img || !img.complete || !img.naturalWidth) return;
+    const a = img.naturalHeight / img.naturalWidth;
+    // The halo exists to keep thin white road paint legible on pale asphalt;
+    // on a photo or a logo it only smears the edges.
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+    ctx.drawImage(img, -1, -a, 2, 2 * a);
+  };
+}
+
+// Idempotent: called on boot, after loading a file, and from the effect that
+// watches doc.assets — all three can fire for an asset that is already live.
+// `inPalette` false keeps a type registered (so placed instances keep drawing)
+// while hiding it from the palette.
+function installAsset(asset, inPalette) {
+  if (!asset || !asset.id) return;
+  const kind = registerAsset(asset);
+  ANNOT_TYPES[kind].hidden = !inPalette;
+  PICTOS[kind] = assetPainter(asset.id);
+  if (ASSET_IMAGES.has(asset.id)) return;
+  const img = new Image();
+  // A bitmap finishes decoding after the render pass that wanted it, and
+  // nothing else re-triggers the canvas — without this the asset stays
+  // invisible until the user happens to pan. (TREE_SPRITES has exactly this
+  // bug, which is why tree images never appear until something else redraws.)
+  img.onload = () => { try { assetRepaint(); } catch (e) {} };
+  img.src = asset.src;
+  ASSET_IMAGES.set(asset.id, img);
+}
+
+function readAssetLib() {
+  try { return JSON.parse(localStorage.getItem(ASSETS_KEY) || '[]') || []; } catch (e) { return []; }
+}
+// The one localStorage write in this app that must not swallow its error.
+// Everything else here (workspaces, panel widths, clipboard, theme) fails
+// silently, so a quota blown by a fat image would break all of them at once
+// with no visible cause. Returns '' on success, a message on failure.
+function writeAssetLib(list) {
+  try { localStorage.setItem(ASSETS_KEY, JSON.stringify(list)); return ''; }
+  catch (e) { return 'Opslag zit vol — verwijder een asset en probeer opnieuw.'; }
+}
+const assetLibChars = (list) => list.reduce((n, a) => n + (a.src || '').length, 0);
+
+// Read a file into a decoded image. SVG arrives as a data URL too, so the same
+// path serves both.
+function fileToImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('lezen mislukt'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('geen geldig beeld'));
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Re-encode until the stored text fits the budget. A photo blows a PNG budget
+// long before its detail matters at plan scale, so stepping the raster down is
+// the right trade — silently storing 2 MB is not.
+function encodeWithin(canvas) {
+  let src = canvas.toDataURL('image/png');
+  let w = canvas.width, h = canvas.height;
+  while (src.length > ASSET_MAX_CHARS && Math.max(w, h) > 96) {
+    w = Math.max(1, Math.round(w * 0.75)); h = Math.max(1, Math.round(h * 0.75));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(canvas, 0, 0, w, h);
+    src = c.toDataURL('image/png');
+  }
+  return { src, w, h };
+}
+
+// Normalise any supported image to a single PNG of at most ASSET_MAX_PX on the
+// long side. One code path for PNG/JPG/WebP/SVG, and it fixes SVGs that carry
+// no intrinsic size (browsers fall back to 0×0 or 300×150 for those).
+async function normalizeAsset(file) {
+  const img = await fileToImage(file);
+  const isSvg = /svg/i.test(file.type || '') || /\.svg$/i.test(file.name || '');
+  let iw = img.naturalWidth || 0, ih = img.naturalHeight || 0;
+  if (!(iw > 0 && ih > 0)) { iw = ASSET_MAX_PX; ih = ASSET_MAX_PX; }
+  // A viewBox-only SVG reports the browser's 300×150 placeholder, and a logo
+  // drawn as an icon reports whatever tiny size it was authored at. Vectors
+  // re-rasterise cleanly, so always take them at full resolution rather than
+  // freezing in whatever the intrinsic size happened to be.
+  const k = isSvg ? ASSET_MAX_PX / Math.max(iw, ih) : Math.min(1, ASSET_MAX_PX / Math.max(iw, ih));
+  const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(img, 0, 0, w, h);
+  const enc = encodeWithin(c);
+  return {
+    id: 'a' + Math.random().toString(36).slice(2, 9),
+    name: (file.name || 'asset').replace(/\.[^.]+$/, '').slice(0, 40) || 'asset',
+    src: enc.src, w: enc.w, h: enc.h,
+    mWidth: 2, height: ASSET_DEF_H,
+  };
+}
+
 // Haaientanden: triangles along one side of the line, points facing the
 // traffic that must give way — the Belgian "voorrang verlenen" marking.
 function drawSharkTeeth(ctx, ann, w2s, scale, selected) {
@@ -1239,6 +1357,10 @@ function App() {
   const [annotCurved, setAnnotCurved] = useState(true);
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
+  // Imported symbols. The library is per-browser; a document carries its own
+  // copies so a shared plan is not full of holes.
+  const [assetLib, setAssetLib] = useState(() => readAssetLib());
+  const [assetMsg, setAssetMsg] = useState('');
   // Saved layout. Absent id => visible, so a part added later is on by default
   // rather than silently missing for everyone who already saved a layout.
   const [hidden, setHidden] = useState(() => {
@@ -1364,7 +1486,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=814d3036', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=adb69ce8', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1483,6 +1605,21 @@ function App() {
   geoRef.current = doc.geo;
   useEffect(() => { renderNow(); }, [renderNow]);
 
+  // Asset types must exist in ANNOT_TYPES before anything tries to draw them:
+  // drawAnnotation bails without a sound on an unknown kind, so a document
+  // loaded ahead of its registrations renders a blank spot where the objects
+  // should be. This runs on every library/document change, which also covers
+  // undo, redo and paste.
+  useEffect(() => { assetRepaint = () => renderRef.current(); }, []);
+  useEffect(() => {
+    const inLib = new Set();
+    assetLib.forEach((a) => { inLib.add(a.id); installAsset(a, true); });
+    // Assets that arrived with a document but are not in this browser's library
+    // stay drawable while staying out of the palette.
+    (doc.assets || []).forEach((a) => { if (!inLib.has(a.id)) installAsset(a, false); });
+    renderRef.current();
+  }, [assetLib, doc.assets]);
+
   // Snapshot of everything the 3D view draws.
   const buildPlan = useCallback(() => ({
     site: sitePoly, obstacles: doc.obstacles,
@@ -1499,7 +1636,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=814d3036').then(async (m) => {
+    import('./map3d.js?v=adb69ce8').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -1766,8 +1903,21 @@ function App() {
   } });
 
   // ---------- Annotation (infrastructure) actions ----------
+  // A placed asset carries its own definition into the document, so a saved
+  // plan still draws on a machine whose asset library has never seen it.
+  const embedAssets = (d, anns) => {
+    const have = new Set((d.assets || []).map((a) => a.id));
+    const add = [];
+    for (const an of anns || []) {
+      const id = assetIdOf(an && an.kind);
+      if (!id || have.has(id)) continue;
+      const t = ANNOT_TYPES[an.kind];
+      if (t && t.asset) { have.add(id); add.push(t.asset); }
+    }
+    return add.length ? { ...d, assets: [...(d.assets || []), ...add] } : d;
+  };
   const addAnnotation = (ann) =>
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: [...(d.annotations || []), ann] }) });
+    dispatch({ type: 'COMMIT', updater: (d) => embedAssets({ ...d, annotations: [...(d.annotations || []), ann] }, [ann]) });
   // selection is {type, index} against a live array, so removing an entry has
   // to move the selection with it — otherwise the inspector silently starts
   // showing a different object.
@@ -2368,7 +2518,7 @@ function App() {
     (doc.annotations || []).forEach((a, i) => {
       const t = ANNOT_TYPES[a.kind] || {};
       push(t.group || 'Overig', {
-        key: 'a' + i, kind: 'annot', index: i, color: t.color || '#94a3b8',
+        key: 'a' + i, kind: 'annot', index: i, color: t.color || '#94a3b8', type: t,
         label: t.label || a.kind, sub: a.points && a.points.length > 1 ? a.points.length + ' punten' : '',
       });
     });
@@ -2394,6 +2544,12 @@ function App() {
     }
     return out;
   }, [doc.annotations, doc.obstacles, doc.manualStalls, deco.stalls, objQuery]);
+
+  // An imported symbol shows its own thumbnail where the built-in kinds show a
+  // colour dot — otherwise every custom asset is the same grey circle.
+  const dotStyle = (t) => (t && t.asset
+    ? { backgroundImage: 'url(' + t.asset.src + ')', backgroundSize: 'contain', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', borderRadius: 0 }
+    : { background: (t && t.color) || '#94a3b8' });
 
   // Bring an object into view without changing the zoom more than needed.
   const focusPoly = (poly) => {
@@ -2498,12 +2654,12 @@ function App() {
       } else if (it.what === 'obs') obs.push({ ...it.data, poly: shift(it.data.poly) });
       else if (it.what === 'stall') stalls.push({ ...it.data, poly: shift(it.data.poly) });
     }
-    dispatch({ type: 'COMMIT', updater: (d) => ({
+    dispatch({ type: 'COMMIT', updater: (d) => embedAssets({
       ...d,
       annotations: anns.length ? [...(d.annotations || []), ...anns] : d.annotations,
       obstacles: obs.length ? [...d.obstacles, ...obs] : d.obstacles,
       manualStalls: stalls.length ? [...(d.manualStalls || []), ...stalls] : d.manualStalls,
-    }) });
+    }, anns) });
     // Select what was just pasted, matching duplicateSelection's behaviour.
     if (anns.length) { setSelection({ type: 'annot', index: (doc.annotations || []).length + anns.length - 1 }); setStallSel([]); }
     else if (obs.length) { setSelection({ type: 'obs', index: doc.obstacles.length + obs.length - 1 }); setStallSel([]); }
@@ -2754,6 +2910,11 @@ function App() {
     const d = payload && payload.doc && payload.doc.site ? payload.doc : payload;
     if (!(d && d.site && d.params)) { alert('Ongeldig bestand'); return false; }
     const merged = { ...initialDoc, ...d };
+    // Register the document's own symbols before the first draw. The effect on
+    // doc.assets would catch up a frame later, but that frame is a plan with
+    // visible holes in it.
+    const lib = new Set(assetLib.map((a) => a.id));
+    (merged.assets || []).forEach((a) => installAsset(a, lib.has(a.id)));
     dispatch({ type: 'RESET', doc: merged });
     // Restore the exact camera if it was saved; otherwise fit to the loaded
     // site (computed from the loaded polygon, not the stale sitePoly memo).
@@ -2793,6 +2954,44 @@ function App() {
     const fv = fitView(site, sizeRef.current.w, sizeRef.current.h);
     if (fv) setView(fv);
     setOnboardOpen(false);
+  };
+  // ---------- Asset library ----------
+  const saveAssetLib = (list) => {
+    setAssetLib(list);
+    const err = writeAssetLib(list);
+    setAssetMsg(err);
+    return !err;
+  };
+  const importAsset = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setAssetMsg('');
+    let asset;
+    try { asset = await normalizeAsset(file); }
+    catch (err) { setAssetMsg('Kon dit bestand niet lezen als beeld (PNG, JPG, WebP of SVG).'); return; }
+    if (assetLibChars(assetLib) + asset.src.length > ASSET_LIB_MAX_CHARS) {
+      setAssetMsg('De bibliotheek zit vol (max ' + Math.round(ASSET_LIB_MAX_CHARS / 1024) + ' kB). Verwijder eerst een asset.');
+      return;
+    }
+    // Install before saving: even if the write fails on quota, the symbol is
+    // usable this session and the message says why it will not come back.
+    installAsset(asset, true);
+    saveAssetLib([...assetLib, asset]);
+    startAnnot(assetKindOf(asset.id));
+  };
+  const patchAsset = (id, patch) => {
+    const next = assetLib.map((a) => (a.id === id ? { ...a, ...patch } : a));
+    const hit = next.find((a) => a.id === id);
+    if (hit) installAsset(hit, true);
+    saveAssetLib(next);
+    renderRef.current();
+  };
+  const removeAsset = (id) => {
+    hideAsset(id);
+    saveAssetLib(assetLib.filter((a) => a.id !== id));
+    // Placed instances stay: the document keeps its own copy of the definition.
+    if (tool === 'annot' && annotKind === assetKindOf(id)) setTool('select');
   };
   const importParcel = (e) => {
     const file = e.target.files[0];
@@ -2873,12 +3072,14 @@ function App() {
     const q = toolQuery.trim().toLowerCase();
     const out = [];
     for (const grp of ANNOT_GROUPS) {
-      const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp
+      const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp && !t.hidden
         && (!q || (t.label + ' ' + k + ' ' + (t.keywords || '')).toLowerCase().includes(q)));
       if (items.length) out.push([grp, items]);
     }
     return out;
-  }, [toolQuery]);
+    // assetLib is not read here, but importing or removing a symbol changes
+    // which types ANNOT_TYPES holds — without it the palette keeps the old set.
+  }, [toolQuery, assetLib]);
   const toggleGroup = (grp) => setOpenGroups((cur) => {
     const next = { ...cur, [grp]: cur[grp] === false };
     try { localStorage.setItem('pp_tool_groups', JSON.stringify(next)); } catch (e) {}
@@ -3190,7 +3391,7 @@ function App() {
                     <button key=${k} title=${t.keywords || t.label}
                       className=${'type-btn' + (tool === 'annot' && annotKind === k ? ' active' : '')}
                       onClick=${() => startAnnot(k)}>
-                      <span className="dot" style=${{ background: t.color }}></span>${t.label}
+                      <span className="dot" style=${dotStyle(t)}></span>${t.label}
                     </button>`)}
                 </div>`}
             </div>`)}
@@ -3235,6 +3436,42 @@ function App() {
                 </label>`}
             </div>`}
         </div>`}
+        ${vis('secAssets') && html`
+        <div className="section">
+          <h3>Eigen assets <span className="obj-count">${assetLib.length}</span></h3>
+          <label className="btn ghost asset-import">
+            Symbool importeren…
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              onChange=${importAsset} style=${{ display: 'none' }} />
+          </label>
+          ${assetMsg && html`<div className="asset-msg">${assetMsg}</div>`}
+          ${assetLib.length === 0 && html`<div className="mix-note">
+            PNG, JPG, WebP of SVG. Het beeld wordt verkleind tot ${ASSET_MAX_PX} px en verschijnt in het palet onder "Eigen".
+          </div>`}
+          ${assetLib.map((a) => html`
+            <div className="asset-row" key=${a.id}>
+              <span className="asset-thumb" style=${{ backgroundImage: 'url(' + a.src + ')' }}></span>
+              <div className="asset-body">
+                <input className="asset-name" type="text" value=${a.name}
+                  onChange=${(e) => patchAsset(a.id, { name: e.target.value.slice(0, 40) })} />
+                <div className="asset-meta">
+                  <span>${a.w}×${a.h}</span>
+                  <label>H
+                    <input type="number" min="0" max="60" step="0.5" value=${a.height}
+                      onChange=${(e) => patchAsset(a.id, { height: Math.max(0, Math.min(60, parseFloat(e.target.value) || 0)) })} />
+                    m
+                  </label>
+                  <span>${Math.round((a.src || '').length / 1024)} kB</span>
+                </div>
+              </div>
+              <button className="obj-x" title="Uit bibliotheek verwijderen"
+                onClick=${() => removeAsset(a.id)}>✕</button>
+            </div>`)}
+          ${assetLib.length > 0 && html`<div className="mix-note">
+            ${Math.round(assetLibChars(assetLib) / 1024)} van ${Math.round(ASSET_LIB_MAX_CHARS / 1024)} kB gebruikt ·
+            verwijderen laat geplaatste exemplaren staan · hoogte geldt voor 3D.
+          </div>`}
+        </div>`}
         ${vis('secObjects') && html`
         <div className="section">
           <h3>Objecten <span className="obj-count">${objectRows.reduce((n, g) => n + g[1].length, 0)}</span></h3>
@@ -3251,7 +3488,7 @@ function App() {
                   onClick=${() => selectRow(r)}
                   onDoubleClick=${() => { selectRow(r); focusPoly(rowPoly(r)); }}
                   title="Klik selecteert · dubbelklik brengt in beeld">
-                  <span className="dot" style=${{ background: r.color }}></span>
+                  <span className="dot" style=${r.type ? dotStyle(r.type) : { background: r.color }}></span>
                   <span className="obj-label">${r.label}</span>
                   <span className="obj-sub">${r.sub}</span>
                   ${r.kind !== 'stallGroup' && html`

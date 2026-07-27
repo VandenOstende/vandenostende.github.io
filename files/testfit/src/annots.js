@@ -13,7 +13,7 @@
 // `under: true` draws beneath the parking (roads, bike parking).
 // `group` buckets the palette; `keywords` are extra search terms so you can find
 // a tool by what you call it rather than by its label.
-export const ANNOT_GROUPS = ['Rijden', 'Markeringen', 'Pictogrammen', 'Borden', 'Retail', 'Langzaam verkeer', 'Groen', 'Overig'];
+export const ANNOT_GROUPS = ['Rijden', 'Markeringen', 'Pictogrammen', 'Borden', 'Retail', 'Langzaam verkeer', 'Groen', 'Eigen', 'Overig'];
 // Belgian road markings and signage. `picto` names a painter in PICTOS;
 // `sign` marks a plate-on-a-post rather than paint on the asphalt; `value`
 // gives an editable number (speed limits). Point markings carry an `angle`.
@@ -74,3 +74,42 @@ export const ANNOT_TYPES = {
   clickCollect: { label: 'Click & collect', color: '#a78bfa', width: 0, mode: 'area', under: true, group: 'Retail', keywords: 'afhaal ophalen bestelling collect pickup' },
   familyBay:   PICTO('Familieplaats', 'family', 'gezin kind kinderwagen zwanger familie', { group: 'Retail', color: '#f472b6' }),
 };
+
+// ---------- Imported assets ----------
+// An imported symbol is not a new kind of object — it is a point annotation
+// whose painter happens to draw a bitmap. Registering it here means the palette,
+// the object list, selection, copy/paste, the exporters and the 3D drape all
+// pick it up without a single extra branch.
+//
+// The catalogue is mutated at runtime on purpose: it is the one place every
+// consumer already reads from, and a parallel registry would have to be
+// threaded through modules that only import ANNOT_TYPES.
+export const ASSET_PREFIX = 'asset:';
+export const assetKindOf = (id) => ASSET_PREFIX + id;
+export const isAssetKind = (kind) => typeof kind === 'string' && kind.startsWith(ASSET_PREFIX);
+export const assetIdOf = (kind) => (isAssetKind(kind) ? kind.slice(ASSET_PREFIX.length) : '');
+
+export function registerAsset(asset) {
+  if (!asset || !asset.id) return null;
+  const kind = assetKindOf(asset.id);
+  ANNOT_TYPES[kind] = {
+    label: asset.name || 'Asset',
+    // Only used for the palette dot when the thumbnail hasn't decoded yet.
+    color: '#94a3b8',
+    width: asset.mWidth || 2,
+    mode: 'point',
+    picto: kind,
+    group: 'Eigen',
+    keywords: 'eigen asset symbool import ' + (asset.name || '').toLowerCase(),
+    asset,
+  };
+  return kind;
+}
+// Removing an asset from the library must not blank out instances already
+// placed in the document, so the type stays registered and is only hidden from
+// the palette. Deleting the entry outright would make drawAnnotation bail on an
+// unknown kind and silently erase the objects from the canvas.
+export function hideAsset(id) {
+  const t = ANNOT_TYPES[assetKindOf(id)];
+  if (t) t.hidden = true;
+}
