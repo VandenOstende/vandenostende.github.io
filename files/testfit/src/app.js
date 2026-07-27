@@ -4,16 +4,16 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=c72fd0ef';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=9cd2635d';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=c72fd0ef';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=c72fd0ef';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=c72fd0ef';
-import { parseParcel, simplifyRing } from './importers.js?v=c72fd0ef';
-import { BUILD_ID } from './build.js?v=c72fd0ef';
+} from './geometry.js?v=9cd2635d';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=9cd2635d';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=9cd2635d';
+import { parseParcel, simplifyRing } from './importers.js?v=9cd2635d';
+import { BUILD_ID } from './build.js?v=9cd2635d';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -59,18 +59,21 @@ const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 //   mode 'cross' → 2 clicks define a crossing centreline (zebra stripes)
 //   mode 'area'  → drag a rectangle
 // `under: true` draws beneath the parking (roads, bike parking).
+// `group` buckets the palette; `keywords` are extra search terms so you can find
+// a tool by what you call it rather than by its label.
+export const ANNOT_GROUPS = ['Rijden', 'Langzaam verkeer', 'Groen', 'Overig'];
 export const ANNOT_TYPES = {
-  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: false, under: true, blocks: true },
-  driveway:    { label: 'In/uitrit',    color: '#525b68', width: 6.5, depth: 12, mode: 'driveway', under: true, blocks: true },
-  drivethru:   { label: 'Drive-thru',   color: '#f97316', width: 3.5, mode: 'line', curved: true, under: true, blocks: true },
-  walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true },
-  bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true },
-  crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross' },
-  bikeparking: { label: 'Fietsparking', color: '#0e7490', width: 0,   mode: 'area', under: true },
-  grass:       { label: 'Gras',         color: '#3f9b46', width: 0,   mode: 'area', under: true },
-  tree:        { label: 'Boom',         color: '#2f9e44', width: 5,   mode: 'point' },
-  access:      { label: 'Toegang',      color: '#22d3ee', width: 6,   mode: 'point' },
-  marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false },
+  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: false, under: true, blocks: true, group: 'Rijden', keywords: 'straat rijbaan asfalt baan' },
+  driveway:    { label: 'In/uitrit',    color: '#525b68', width: 6.5, depth: 12, mode: 'driveway', under: true, blocks: true, group: 'Rijden', keywords: 'oprit inrit uitrit toegang entree' },
+  drivethru:   { label: 'Drive-thru',   color: '#f97316', width: 3.5, mode: 'line', curved: true, under: true, blocks: true, group: 'Rijden', keywords: 'drive through afhaal loket wachtrij' },
+  walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true, group: 'Langzaam verkeer', keywords: 'voetpad trottoir stoep voetganger' },
+  bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true, group: 'Langzaam verkeer', keywords: 'fiets bike cyclepad' },
+  crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross', group: 'Langzaam verkeer', keywords: 'zebra oversteek voetganger kruising' },
+  bikeparking: { label: 'Fietsparking', color: '#0e7490', width: 0,   mode: 'area', under: true, group: 'Langzaam verkeer', keywords: 'fietsenstalling fietsrek stalling' },
+  grass:       { label: 'Gras',         color: '#3f9b46', width: 0,   mode: 'area', under: true, group: 'Groen', keywords: 'groen gazon berm perk' },
+  tree:        { label: 'Boom',         color: '#2f9e44', width: 5,   mode: 'point', group: 'Groen', keywords: 'bomen beplanting groen' },
+  access:      { label: 'Toegang',      color: '#22d3ee', width: 6,   mode: 'point', group: 'Overig', keywords: 'toegangspunt poort ingang' },
+  marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false, group: 'Overig', keywords: 'belijning streep lijn verf' },
 };
 
 // Nearest point on a polygon boundary, with the local edge tangent and the
@@ -243,10 +246,54 @@ function fitView(site, width, height, pad = 60) {
   return { scale, ox, oy };
 }
 
+// ---------- Canvas theme ----------
+// Only the colours that actually break when the backdrop flips. Meaning-bearing
+// colours (STALL_TYPES, ANNOT_TYPES, the green previews, the orange drive-thru)
+// stay as they are — they read on both. Roles, not hues, so a future theme is a
+// data change.
+const THEMES = {
+  dark: {
+    grid: 'rgba(255,255,255,0.045)',
+    ink: 'rgba(255,255,255,0.95)',      // glyphs and labels drawn on the plan
+    inkSoft: 'rgba(255,255,255,0.7)',
+    inkFaint: 'rgba(255,255,255,0.5)',
+    onStall: 'rgba(255,255,255,0.85)',  // dividers/arrows painted on filled shapes
+    outline: 'rgba(0,0,0,0.35)',
+    sel: '#ffffff',                     // selection halo
+    plate: 'rgba(15,18,22,0.85)',       // small label plates
+    plateInk: '#a7f3d0',
+    handleCore: '#0f1216',
+    aisle: 'rgba(43,51,64,0.9)',
+    building: 'rgba(100,116,139,0.5)',
+    buildingLine: '#7c8896',
+    badge: 'rgba(230,234,239,0.9)',
+  },
+  light: {
+    grid: 'rgba(15,23,42,0.07)',
+    ink: 'rgba(17,24,39,0.92)',
+    inkSoft: 'rgba(17,24,39,0.62)',
+    inkFaint: 'rgba(17,24,39,0.45)',
+    onStall: 'rgba(255,255,255,0.9)',   // stalls stay saturated, so keep white here
+    outline: 'rgba(0,0,0,0.28)',
+    sel: '#111827',
+    plate: 'rgba(255,255,255,0.92)',
+    plateInk: '#047857',
+    handleCore: '#ffffff',
+    aisle: 'rgba(148,163,184,0.45)',
+    building: 'rgba(100,116,139,0.35)',
+    buildingLine: '#64748b',
+    badge: 'rgba(30,41,59,0.9)',
+  },
+};
+// Set once per frame by draw(). Module-level so the paint helpers don't each
+// need a theme parameter threaded through them; rendering is synchronous.
+let TH = THEMES.dark;
+
 // ---------- Rendering ----------
 function draw(ctx, opts) {
   const { view, doc, result, layers, dpr, drawing, hover, selection, size,
           stallSel, aisleSel, marquee, sitePoly } = opts;
+  TH = THEMES[opts.theme] || THEMES.dark;
   const site = sitePoly || doc.site;
   const { w2s } = makeTransform(view);
   ctx.save();
@@ -303,7 +350,7 @@ function draw(ctx, opts) {
   if (layers.parking) {
     for (const a of result.aisles) {
       pathPoly(ctx, a.poly, w2s, true);
-      ctx.fillStyle = aisleSel === a.key ? 'rgba(59,130,246,0.32)' : 'rgba(43,51,64,0.9)';
+      ctx.fillStyle = aisleSel === a.key ? 'rgba(59,130,246,0.32)' : TH.aisle;
       ctx.fill();
       if (aisleSel === a.key) { ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2; ctx.stroke(); }
       if (a.oneway) drawAisleArrows(ctx, a, w2s, view.scale);
@@ -323,16 +370,16 @@ function draw(ctx, opts) {
       const op = polyOf(o);
       pathPoly(ctx, op, w2s, true);
       ctx.fillStyle = selection && selection.type === 'obs' && selection.index === i
-        ? 'rgba(239,68,68,0.28)' : 'rgba(100,116,139,0.5)';
+        ? 'rgba(239,68,68,0.28)' : TH.building;
       ctx.fill();
-      ctx.strokeStyle = selection && selection.type === 'obs' && selection.index === i ? '#ef4444' : '#7c8896';
+      ctx.strokeStyle = selection && selection.type === 'obs' && selection.index === i ? '#ef4444' : TH.buildingLine;
       ctx.lineWidth = 1.5;
       ctx.stroke();
       // Floor count badge when zoomed in.
       const floors = (o && o.floors) || 1;
       if (view.scale >= 4 && op.length >= 3) {
         const c = w2s(polygonCentroid(op));
-        ctx.fillStyle = 'rgba(230,234,239,0.9)';
+        ctx.fillStyle = TH.badge;
         ctx.font = '11px system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(floors + (floors > 1 ? ' verd.' : ' verd.'), c.x, c.y);
@@ -353,19 +400,19 @@ function draw(ctx, opts) {
       ctx.fill();
       ctx.globalAlpha = 1;
       const selected = selSet.has(st.key);
-      ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0,0,0,0.35)';
+      ctx.strokeStyle = selected ? TH.sel : TH.outline;
       ctx.lineWidth = selected ? 2 : 0.6;
       ctx.stroke();
       if (st.locked) { // dashed white outline marks a locked stall
         ctx.setLineDash([3, 2]);
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.strokeStyle = TH.onStall;
         ctx.lineWidth = 1.4;
         ctx.stroke();
         ctx.setLineDash([]);
       }
       if (st.type === 'motorcycle') { // subdivide into 3 motorcycle bays
         const p = st.poly;
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.strokeStyle = TH.onStall;
         ctx.lineWidth = 0.8;
         for (const t of [1 / 3, 2 / 3]) {
           const a = w2s({ x: p[0].x + (p[1].x - p[0].x) * t, y: p[0].y + (p[1].y - p[0].y) * t });
@@ -375,7 +422,7 @@ function draw(ctx, opts) {
       }
       if (showGlyph && info.glyph) {
         const s = w2s(polygonCentroid(st.poly));
-        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.fillStyle = TH.onStall;
         ctx.font = Math.max(8, view.scale * 1.15) + 'px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -402,7 +449,7 @@ function draw(ctx, opts) {
     ctx.beginPath(); ctx.arc(c.x, c.y, rpx, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(63,155,70,0.3)'; ctx.fill();
     ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#a7f3d0'; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = TH.plateInk; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('r ' + hover.circle.r.toFixed(1) + ' m', c.x, c.y);
     ctx.textAlign = 'start';
   }
@@ -484,7 +531,7 @@ function pathPoly(ctx, poly, w2s, close) {
 function drawHandle(ctx, s, color) {
   ctx.beginPath();
   ctx.arc(s.x, s.y, 4.5, 0, Math.PI * 2);
-  ctx.fillStyle = '#0f1216';
+  ctx.fillStyle = TH.handleCore;
   ctx.fill();
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
@@ -502,7 +549,7 @@ function drawAisleArrows(ctx, aisle, w2s, scale) {
   const n = Math.max(1, Math.round(ax.length / spacing));
   const L = Math.min(2.6, ax.width * 0.55);         // arrow length (m)
   const W = Math.min(1.8, ax.width * 0.42);         // arrow half-span (m)
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.strokeStyle = TH.onStall;
   ctx.lineWidth = Math.max(1.2, scale * 0.13);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -541,9 +588,9 @@ function drawDims(ctx, pts, w2s) {
     if (deg < 0) deg += 360;
     const label = len.toFixed(1) + ' m · ' + Math.round(deg) + '°';
     const w = ctx.measureText(label).width + 8;
-    ctx.fillStyle = 'rgba(15,18,22,0.85)';
+    ctx.fillStyle = TH.plate;
     ctx.fillRect(m.x - w / 2, m.y - 9, w, 16);
-    ctx.fillStyle = '#a7f3d0';
+    ctx.fillStyle = TH.plateInk;
     ctx.fillText(label, m.x, m.y);
   }
   ctx.restore();
@@ -586,7 +633,7 @@ function drawTree(ctx, s, rpx, index, selected) {
   if (selected) {
     ctx.beginPath();
     ctx.arc(s.x, s.y, rpx + 3, 0, Math.PI * 2);
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = TH.sel;
     ctx.lineWidth = 2;
     ctx.stroke();
   }
@@ -599,7 +646,7 @@ function drawAccess(ctx, s, rpx, selected) {
   ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
   ctx.fillStyle = '#22d3ee';
   ctx.fill();
-  ctx.strokeStyle = selected ? '#ffffff' : 'rgba(0,0,0,0.4)';
+  ctx.strokeStyle = selected ? TH.sel : TH.outline;
   ctx.lineWidth = selected ? 2 : 1;
   ctx.stroke();
   ctx.strokeStyle = '#06323a';
@@ -680,7 +727,7 @@ function drawDriveThru(ctx, ann, w2s, scale, selected) {
     while (next <= acc + len) {
       const t = next - acc, cx = a.x + ux * t, cy = a.y + uy * t;
       const e1 = w2s({ x: cx + px * hw * 0.85, y: cy + py * hw * 0.85 }), e2 = w2s({ x: cx - px * hw * 0.85, y: cy - py * hw * 0.85 });
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
+      ctx.strokeStyle = TH.inkFaint; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(e1.x, e1.y); ctx.lineTo(e2.x, e2.y); ctx.stroke();
       next += CAR_LEN;
     }
@@ -728,7 +775,7 @@ function drawDriveThru(ctx, ann, w2s, scale, selected) {
   const mid = pts[Math.floor(pts.length / 2)] || pts[0], label = drivethruStacks(P) + ' auto\'s';
   ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const w = ctx.measureText(label).width + 8;
-  ctx.fillStyle = 'rgba(15,18,22,0.85)'; ctx.fillRect(mid.x - w / 2, mid.y - 18, w, 15);
+  ctx.fillStyle = TH.plate; ctx.fillRect(mid.x - w / 2, mid.y - 18, w, 15);
   ctx.fillStyle = '#fdba74'; ctx.fillText(label, mid.x, mid.y - 10);
   ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
 }
@@ -753,7 +800,7 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
     if (len < 0.1) return;
     const ux = dx / len, uy = dy / len, px = -uy, py = ux, half = (ann.width || 3.5) / 2;
     const step = 1.2, stripe = 0.6;
-    ctx.fillStyle = selected ? '#ffffff' : '#e9edf2';
+    ctx.fillStyle = selected ? TH.sel : '#e9edf2';
     for (let s = 0; s < len; s += step) {
       const s2 = Math.min(s + stripe, len);
       const q = [
@@ -777,13 +824,13 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
     ctx.closePath();
     ctx.fillStyle = ann.kind === 'grass' ? hexA(t.color, 0.5) : 'rgba(14,116,144,0.35)';
     ctx.fill();
-    ctx.strokeStyle = selected ? '#ffffff' : t.color;
+    ctx.strokeStyle = selected ? TH.sel : t.color;
     ctx.lineWidth = selected ? 2.5 : 1.5;
     ctx.stroke();
     if (ann.kind !== 'bikeparking') return;
     const cap = Math.floor(polygonArea(ann.points) / 1.5); // ~1.5 m² per bike
     const c = w2s(polygonCentroid(ann.points));
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fillStyle = TH.ink;
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('~' + cap + ' fietsen', c.x, c.y);
@@ -801,14 +848,14 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
     ctx.fillStyle = hexA(t.color, 0.55);
     ctx.fill();
     const c = w2s(polygonCentroid(ann.points));
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillStyle = TH.ink;
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(Math.round(polygonArea(ann.points)) + ' m²', c.x, c.y);
     ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
   }
   if (selected) {
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = TH.sel;
     ctx.lineWidth = (closed ? 2 : wpx) + 4;
     buildAnnotPath(ctx, pts, ann.curved && !closed); if (closed) ctx.closePath();
     ctx.stroke();
@@ -818,7 +865,7 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   buildAnnotPath(ctx, pts, ann.curved && !closed); if (closed) ctx.closePath();
   ctx.stroke();
   if (ann.kind === 'bikepath' && !closed) { // dashed centre line
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.strokeStyle = TH.inkSoft;
     ctx.lineWidth = Math.max(1, wpx * 0.12);
     ctx.setLineDash([6, 6]);
     buildAnnotPath(ctx, pts, ann.curved);
@@ -844,142 +891,12 @@ function drawGrid(ctx, view, size) {
   if (!(px > 0) || !isFinite(px)) return;
   const startX = ((view.ox % px) + px) % px;
   const startY = ((view.oy % px) + px) % px;
-  ctx.strokeStyle = 'rgba(255,255,255,0.045)';
+  ctx.strokeStyle = TH.grid;
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let x = startX; x < size.w; x += px) { ctx.moveTo(x, 0); ctx.lineTo(x, size.h); }
   for (let y = startY; y < size.h; y += px) { ctx.moveTo(0, y); ctx.lineTo(size.w, y); }
   ctx.stroke();
-}
-
-// ---------- 2.5D (view-only oblique/axonometric render) ----------
-const ANN25_COLOR = { road: '#3b424e', walkway: '#9aa4b2', bikepath: '#b91c1c', marking: '#eab308' };
-function draw25D(ctx, opts) {
-  const { view, doc, result, size, dpr } = opts;
-  const site = opts.sitePoly || doc.site;
-  const YC = 0.62, ZC = 0.78;               // depth compression + height lift
-  const s = view.scale, ox = view.ox, oy = view.oy;
-  const proj = (p, z) => ({ x: ox + p.x * s, y: oy + p.y * s * YC - (z || 0) * s * ZC });
-  const path = (pts, z) => { ctx.beginPath(); pts.forEach((p, i) => { const q = proj(p, z); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }); ctx.closePath(); };
-
-  ctx.save();
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, size.w, size.h);
-
-  if (site.length >= 3) { path(site, 0); ctx.fillStyle = '#12161c'; ctx.fill(); ctx.strokeStyle = '#f8b500'; ctx.lineWidth = 2; ctx.stroke(); }
-  (doc.annotations || []).filter((a) => a.kind === 'grass' && a.points.length >= 3).forEach((a) => { path(a.points, 0); ctx.fillStyle = hexA('#3f9b46', 0.5); ctx.fill(); });
-  (result.aisles || []).forEach((a) => { path(a.poly, 0); ctx.fillStyle = '#2b3340'; ctx.fill(); });
-  (result.islands || []).forEach((is) => { path(is, 0.2); ctx.fillStyle = hexA('#3f9b46', 0.7); ctx.fill(); });
-  (result.stalls || []).forEach((st) => {
-    path(st.poly, 0);
-    ctx.fillStyle = (STALL_TYPES[st.type] || STALL_TYPES.standard).color;
-    ctx.globalAlpha = 0.9; ctx.fill(); ctx.globalAlpha = 1;
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.5; ctx.stroke();
-  });
-  (doc.annotations || []).filter((a) => ANN25_COLOR[a.kind] && !a.closed && a.points.length >= 2).forEach((a) => {
-    ctx.beginPath(); a.points.forEach((p, i) => { const q = proj(p, 0); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
-    ctx.strokeStyle = ANN25_COLOR[a.kind]; ctx.lineWidth = Math.max(1.5, (a.width || 1) * s * 0.9);
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
-  });
-
-  // Extruded buildings, far → near. Height scales with floor count.
-  (doc.obstacles || []).map((o) => { const p = polyOf(o); return { p, floors: (o && o.floors) || 1, cy: p.reduce((t, q) => t + q.y, 0) / (p.length || 1) }; })
-    .sort((a, b) => a.cy - b.cy)
-    .forEach(({ p, floors }) => {
-      const H = floors * FLOOR_H;
-      for (let i = 0; i < p.length; i++) {
-        const a = p[i], b = p[(i + 1) % p.length];
-        const a0 = proj(a, 0), b0 = proj(b, 0), b1 = proj(b, H), a1 = proj(a, H);
-        ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(b0.x, b0.y); ctx.lineTo(b1.x, b1.y); ctx.lineTo(a1.x, a1.y); ctx.closePath();
-        ctx.fillStyle = '#5b6675'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.5; ctx.stroke();
-      }
-      path(p, H); ctx.fillStyle = '#8a97a8'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.6; ctx.stroke();
-    });
-
-  // Trees, far → near.
-  (doc.annotations || []).filter((a) => a.kind === 'tree' && a.points && a.points[0])
-    .map((a) => ({ a, cy: a.points[0].y })).sort((x, y) => x.cy - y.cy)
-    .forEach(({ a }) => {
-      const base = proj(a.points[0], 0), top = proj(a.points[0], 4);
-      const r = Math.max(3, ((a.width || 5) / 2) * s * 0.7);
-      ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = Math.max(2, r * 0.25);
-      ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(top.x, top.y); ctx.stroke();
-      const g = ctx.createRadialGradient(top.x - r * 0.3, top.y - r * 0.3, r * 0.2, top.x, top.y, r);
-      g.addColorStop(0, '#5fd97f'); g.addColorStop(1, '#166534');
-      ctx.beginPath(); ctx.arc(top.x, top.y, r, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
-    });
-
-  ctx.restore();
-}
-
-// Built-in interactive 3D (no external deps). Orbit camera + painter's-algorithm
-// face sort. cam = { az, el, dist } (dist<=0 → auto-fit).
-function draw3D(ctx, opts) {
-  const { doc, result, size, dpr, cam } = opts;
-  const site = opts.sitePoly || doc.site;
-  ctx.save(); ctx.scale(dpr, dpr);
-  const bg = ctx.createLinearGradient(0, 0, 0, size.h);
-  bg.addColorStop(0, '#131c28'); bg.addColorStop(1, '#0a0d12');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, size.w, size.h);
-  if (!site || site.length < 3) { ctx.restore(); return; }
-  const c = polygonCentroid(site);
-  let R = 1; for (const p of site) R = Math.max(R, Math.hypot(p.x - c.x, p.y - c.y));
-  const az = cam.az, el = cam.el, dist = (R * 2.6) / (cam.zoom || 1);
-  const f = Math.min(size.w, size.h) * (dist / (R * 2.4));
-  const cxs = size.w / 2, cys = size.h * 0.58;
-  const ca = Math.cos(az), sa = Math.sin(az), ce = Math.cos(el), se = Math.sin(el);
-  const project = (x, y, z) => {
-    const X = x - c.x, Y = y - c.y, Z = z || 0;
-    const rx = X * ca - Y * sa, ry = X * sa + Y * ca;
-    const depth = dist + ry * ce - Z * se;      // nearer when higher
-    const up = Z * ce - ry * se;
-    const s = f / Math.max(0.01, depth);
-    return { x: cxs + rx * s, y: cys - up * s, depth };
-  };
-  const faces = [];
-  const addFace = (pts, z, fill, stroke, sw) => {
-    if (!pts || pts.length < 3) return;
-    const proj = pts.map((p) => project(p.x, p.y, z || 0));
-    let d = 0; for (const q of proj) d += q.depth; faces.push({ proj, fill, stroke, sw: sw || 0, depth: d / proj.length });
-  };
-  addFace(site, 0, '#141a22', '#f8b500', 1.5);
-  (doc.annotations || []).filter((a) => a.kind === 'grass' && a.points && a.points.length >= 3).forEach((a) => addFace(a.points, 0.01, hexA('#3f9b46', 0.55)));
-  (result.aisles || []).forEach((a) => addFace(a.poly, 0.02, '#2b3340'));
-  (result.islands || []).forEach((is) => addFace(is, 0.05, hexA('#3f9b46', 0.75)));
-  (result.stalls || []).forEach((st) => addFace(st.poly, 0.05, (STALL_TYPES[st.type] || STALL_TYPES.standard).color, 'rgba(0,0,0,0.35)', 0.4));
-  (doc.obstacles || []).forEach((o) => {
-    const p = polyOf(o); if (p.length < 3) return;
-    const H = ((o && o.floors) || 1) * FLOOR_H;
-    for (let i = 0; i < p.length; i++) {
-      const a = p[i], b = p[(i + 1) % p.length];
-      const proj = [project(a.x, a.y, 0), project(b.x, b.y, 0), project(b.x, b.y, H), project(a.x, a.y, H)];
-      let area = 0; for (let k = 0; k < 4; k++) { const q = proj[k], r = proj[(k + 1) % 4]; area += q.x * r.y - r.x * q.y; }
-      if (area < 0) continue; // cull back faces
-      let d = 0; for (const q of proj) d += q.depth; faces.push({ proj, fill: '#5b6675', stroke: 'rgba(0,0,0,0.35)', sw: 0.5, depth: d / 4 });
-    }
-    const top = p.map((pt) => project(pt.x, pt.y, H));
-    let d = 0; for (const q of top) d += q.depth; faces.push({ proj: top, fill: '#8a97a8', stroke: 'rgba(0,0,0,0.4)', sw: 0.6, depth: d / top.length });
-  });
-  (doc.annotations || []).filter((a) => a.kind === 'tree' && a.points && a.points[0]).forEach((a) => {
-    const base = project(a.points[0].x, a.points[0].y, 0), top = project(a.points[0].x, a.points[0].y, 4.5);
-    faces.push({ tree: { base, top, r: Math.max(3, ((a.width || 5) / 2) * (f / Math.max(0.01, base.depth)) * 0.7) }, depth: base.depth - 0.02 });
-  });
-  faces.sort((a, b) => b.depth - a.depth);
-  for (const fc of faces) {
-    if (fc.tree) {
-      const { base, top, r } = fc.tree;
-      ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = Math.max(2, r * 0.25);
-      ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(top.x, top.y); ctx.stroke();
-      const g = ctx.createRadialGradient(top.x - r * 0.3, top.y - r * 0.3, r * 0.2, top.x, top.y, r);
-      g.addColorStop(0, '#5fd97f'); g.addColorStop(1, '#166534');
-      ctx.beginPath(); ctx.arc(top.x, top.y, r, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
-      continue;
-    }
-    ctx.beginPath(); fc.proj.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.closePath();
-    if (fc.fill) { ctx.fillStyle = fc.fill; ctx.fill(); }
-    if (fc.stroke) { ctx.strokeStyle = fc.stroke; ctx.lineWidth = fc.sw; ctx.stroke(); }
-  }
-  ctx.restore();
 }
 
 // ---------- Main component ----------
@@ -1007,6 +924,11 @@ function App() {
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' for roads (draggable object)
   const [annotCurved, setAnnotCurved] = useState(true);
+  const [toolQuery, setToolQuery] = useState('');
+  const [openGroups, setOpenGroups] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pp_tool_groups') || '{}') || {}; } catch (e) { return {}; }
+  });
+  const toolSearchRef = useRef(null);
   const [view, setView] = useState({ scale: 8, ox: 60, oy: 60 });
   const [drawing, setDrawing] = useState(null); // { points: [] }
   const [hover, setHover] = useState(null);
@@ -1021,6 +943,14 @@ function App() {
   const [viewMode, setViewMode] = useState('2d');            // '2d' (flat map) | '3d' (tilted map)
   const [mbToken, setMbToken] = useState(() => { try { return localStorage.getItem('pp_mapbox_token') || ''; } catch (e) { return ''; } });
   const [mapStyle, setMapStyle] = useState(() => { try { return localStorage.getItem('pp_map_style') || 'satellite'; } catch (e) { return 'satellite'; } });
+  // Light by default; the stored choice wins, then the OS preference.
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem('pp_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch (e) { return 'light'; }
+  });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
   const [mapDiag, setMapDiag] = useState({});      // per-stage basemap status
@@ -1098,7 +1028,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=c72fd0ef', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=9cd2635d', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1200,12 +1130,12 @@ function App() {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
-        showHandles: tool === 'select',
+        showHandles: tool === 'select', theme,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly,
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme]);
 
   renderRef.current = renderNow;
   vmRef.current = viewMode;
@@ -1232,7 +1162,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=c72fd0ef').then(async (m) => {
+    import('./map3d.js?v=9cd2635d').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -1262,6 +1192,14 @@ function App() {
     // anchor in 3D.
     if (ctrl.setGeo) ctrl.setGeo(doc.geo);
   }, [view, viewMode, doc.geo, sitePoly, mapReady]);
+
+  // Drive the CSS token set off the root element and remember the choice.
+  useEffect(() => {
+    try {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('pp_theme', theme);
+    } catch (e) {}
+  }, [theme]);
 
   // Tilt / plan-drape on 2D↔3D switch, and keep the draped plan fresh in 3D.
   useEffect(() => { if (map3dRef.current) map3dRef.current.setMode(viewMode === '3d'); }, [viewMode]);
@@ -2063,6 +2001,7 @@ function App() {
         case 'k': setTool('placestall'); break;
         case ' ': setTool('pan'); break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
+        case '/': if (toolSearchRef.current) { e.preventDefault(); toolSearchRef.current.focus(); toolSearchRef.current.select(); } break;
         // R rotates in 15° steps: the stall about to be placed, or the selected
         // ones. Shift+R goes back. The HUD reports the current offset.
         case 'r': {
@@ -2344,6 +2283,24 @@ function App() {
   };
   const retryMap = () => { setMap3dError(''); setMapDiag({}); setMapNonce((n) => n + 1); };
 
+  // Palette grouped and filtered. A query searches label + synonyms and forces
+  // every matching group open, so results are never hidden behind a collapse.
+  const paletteGroups = useMemo(() => {
+    const q = toolQuery.trim().toLowerCase();
+    const out = [];
+    for (const grp of ANNOT_GROUPS) {
+      const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp
+        && (!q || (t.label + ' ' + k + ' ' + (t.keywords || '')).toLowerCase().includes(q)));
+      if (items.length) out.push([grp, items]);
+    }
+    return out;
+  }, [toolQuery]);
+  const toggleGroup = (grp) => setOpenGroups((cur) => {
+    const next = { ...cur, [grp]: cur[grp] === false };
+    try { localStorage.setItem('pp_tool_groups', JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
+
   // ---------- Render UI ----------
   const hintText = {
     site: 'Klik om punten te plaatsen · Shift ingedrukt = uitlijnen per 15° · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
@@ -2391,6 +2348,8 @@ function App() {
           ${[['2d', '2D'], ['3d', '3D']].map(([m, lbl]) => html`
             <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
         </div>
+        <button className="btn ghost" title=${theme === 'dark' ? 'Licht thema' : 'Donker thema'}
+          onClick=${() => setTheme(theme === 'dark' ? 'light' : 'dark')}>${theme === 'dark' ? '☀️' : '🌙'}</button>
         <div className="tb-spacer"></div>
         <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
         <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
@@ -2449,13 +2408,26 @@ function App() {
         </div>
         <div className="section">
           <h3>Teken (infrastructuur)</h3>
-          <div className="type-grid">
-            ${Object.entries(ANNOT_TYPES).map(([k, t]) => html`
-              <button key=${k} className=${'type-btn' + (tool === 'annot' && annotKind === k ? ' active' : '')}
-                onClick=${() => startAnnot(k)}>
-                <span className="dot" style=${{ background: t.color }}></span>${t.label}
-              </button>`)}
-          </div>
+          <input className="tool-search" type="search" placeholder="Zoek gereedschap…  /"
+            ref=${toolSearchRef} value=${toolQuery} onInput=${(e) => setToolQuery(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Escape') { setToolQuery(''); e.target.blur(); } }} />
+          ${paletteGroups.length === 0 && html`<div className="mix-note">Niets gevonden voor "${toolQuery}".</div>`}
+          ${paletteGroups.map(([grp, items]) => html`
+            <div className="tool-group" key=${grp}>
+              <button className="tool-group-h" onClick=${() => toggleGroup(grp)}>
+                <span>${openGroups[grp] === false && !toolQuery ? '▸' : '▾'} ${grp}</span>
+                <span className="tool-group-n">${items.length}</span>
+              </button>
+              ${(openGroups[grp] !== false || toolQuery) && html`
+                <div className="type-grid">
+                  ${items.map(([k, t]) => html`
+                    <button key=${k} title=${t.keywords || t.label}
+                      className=${'type-btn' + (tool === 'annot' && annotKind === k ? ' active' : '')}
+                      onClick=${() => startAnnot(k)}>
+                      <span className="dot" style=${{ background: t.color }}></span>${t.label}
+                    </button>`)}
+                </div>`}
+            </div>`)}
           ${tool === 'annot' && annotKind === 'driveway' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>Breedte in/uitrit</label>
