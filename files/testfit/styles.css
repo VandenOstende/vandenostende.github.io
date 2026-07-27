@@ -225,7 +225,8 @@ canvas { display: block; touch-action: none; }
 /* Mapbox's own stylesheet positions its canvas; if it is blocked or missing the
    map loads tiles but paints nothing visible. Own the layout ourselves so the
    basemap renders regardless of whether mapbox-gl.css ever arrives. */
-.pp-map .mapboxgl-map { position: relative; width: 100%; height: 100%; overflow: hidden; }
+/* Mapbox puts .mapboxgl-map on the container element itself, not on a child. */
+.pp-map.mapboxgl-map { position: absolute; overflow: hidden; }
 .pp-map .mapboxgl-canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 .pp-map .mapboxgl-canvas { position: absolute; top: 0; left: 0; }
 .canvas-wrap > canvas { position: relative; z-index: 1; }
