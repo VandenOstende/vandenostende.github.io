@@ -92,7 +92,9 @@ los te testen met Node.
 | `B` | Gebouw tekenen | `Del` | Selectie verwijderen |
 | `Space` | Pan | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo |
 
-Zoom met het scrollwiel; pan met de Pan-tool, middelste muisknop of `Shift`+slepen.
+Zoom met het muiswiel; pan met de rechtermuisknop slepen, de middelste muisknop,
+`Spatie` ingedrukt houden, of de Pan-tool. Op een trackpad pant een veeg met twee
+vingers en zoomt knijpen.
 
 ## Recente uitbreidingen
 

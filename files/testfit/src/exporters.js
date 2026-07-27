@@ -5,8 +5,8 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=e7e98729';
-import { polyOf } from './geometry.js?v=e7e98729';
+import { localToLatLon } from './basemap.js?v=a28e74e7';
+import { polyOf } from './geometry.js?v=a28e74e7';
 
 const AREA_KINDS = ['bikeparking', 'grass']; // annotation kinds that are filled areas
 // Any single-point annotation exports as a point. Previously only 'tree' did,
