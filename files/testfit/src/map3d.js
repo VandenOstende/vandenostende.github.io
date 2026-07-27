@@ -12,6 +12,9 @@ import { STALL_TYPES } from './solver.js';
 import { polyOf } from './geometry.js';
 
 const MB_VERSION = 'v3.7.0';
+// Satellite + streets: robust, and ideal for planning on a real site. (The
+// newer 'mapbox/standard' style can render blank on some tokens.)
+const MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12';
 let mbPromise = null;
 
 function loadMapbox() {
@@ -59,9 +62,19 @@ function planToGeoJSON(plan, geo) {
   };
 }
 
-const PLAN_LAYERS = ['pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-buildings-3d', 'pp-trees-3d'];
+const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-buildings-3d', 'pp-trees-3d'];
 
 function addPlanLayers(map, plan, geo) {
+  // Real 3D buildings of the surroundings from the style's vector source.
+  try {
+    if (map.getSource('composite') && !map.getLayer('pp-osm-3d')) {
+      map.addLayer({
+        id: 'pp-osm-3d', type: 'fill-extrusion', source: 'composite', 'source-layer': 'building', minzoom: 14,
+        layout: { visibility: 'none' },
+        paint: { 'fill-extrusion-color': '#c3c8d2', 'fill-extrusion-height': ['coalesce', ['get', 'height'], 8], 'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0], 'fill-extrusion-opacity': 0.9 },
+      });
+    }
+  } catch (e) {}
   const g = planToGeoJSON(plan, geo);
   const src = (id, data) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data }); };
   src('pp-site', g.site); src('pp-aisles', g.aisles); src('pp-stalls', g.stalls);
@@ -100,7 +113,7 @@ export async function initMap(container, token, geo, plan, onError) {
   let map;
   try {
     map = new mapboxgl.Map({
-      container, style: 'mapbox://styles/mapbox/standard',
+      container, style: MAP_STYLE,
       center: [geo.lon, geo.lat], zoom: 17, pitch: 0, bearing: 0,
       interactive: false, antialias: true, attributionControl: false,
     });
@@ -109,11 +122,14 @@ export async function initMap(container, token, geo, plan, onError) {
   let ready = false, pending3d = false, lastPlan = plan;
   const loadTimer = setTimeout(() => { if (!ready) onError('De kaart laadt niet — controleer je Mapbox-token en internetverbinding.'); }, 9000);
   map.on('error', (ev) => {
-    const msg = (ev && ev.error && ev.error.message) || String((ev && ev.error) || 'onbekende kaartfout');
+    const err = ev && ev.error;
+    const msg = (err && err.message) || String(err || 'onbekende kaartfout');
+    const status = err && err.status;
     // eslint-disable-next-line no-console
-    console.warn('[ParkPlanner map]', msg);
-    if (/token|unauthorized|access|401|403/i.test(msg)) onError('Ongeldige of geweigerde Mapbox-token: ' + msg);
-    else if (!ready) onError('Kaartfout: ' + msg);
+    console.warn('[ParkPlanner map]', status || '', msg);
+    if (status === 401 || status === 403 || /token|unauthorized|access|forbidden/i.test(msg)) {
+      onError('Mapbox-token geweigerd (401/403). Gebruik een public token (pk.…) zonder URL-restrictie, of voeg vandenostende.github.io toe aan de toegestane URLs.');
+    } else if (!ready) onError('Kaartfout: ' + msg);
   });
   map.on('style.load', () => {
     ready = true;
