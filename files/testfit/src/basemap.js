@@ -142,15 +142,49 @@ export function drawBasemap(ctx, { style, geo, view, size, w2s }) {
 
 function llArgs(ll) { return [ll.lat, ll.lon]; }
 
-/**
- * Geocode a free-text query via OSM Nominatim.
- * Returns { lat, lon, label } or null.
- */
-export async function geocode(query) {
+// A blocked host can leave fetch pending indefinitely; without a deadline the
+// primary provider never fails and the fallback never runs, so search just
+// hangs with no message.
+const GEOCODE_TIMEOUT_MS = 6000;
+async function fetchJSON(url, opts) {
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch (e) {} }, GEOCODE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...(opts || {}), signal: ctl ? ctl.signal : undefined });
+    if (!res.ok) throw new Error(String(res.status));
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+
+async function geocodeNominatim(query) {
   const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(query);
-  const res = await fetch(url, { headers: { 'Accept-Language': 'nl' } });
-  if (!res.ok) throw new Error('geocode failed');
-  const data = await res.json();
+  const data = await fetchJSON(url, { headers: { 'Accept-Language': 'nl' } });
   if (!data.length) return null;
   return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), label: data[0].display_name };
+}
+
+async function geocodeMapbox(query, token) {
+  const url = 'https://api.mapbox.com/geocoding/v5/mapbox.places/' + encodeURIComponent(query)
+    + '.json?limit=1&language=nl&access_token=' + encodeURIComponent(token);
+  const data = await fetchJSON(url);
+  const f = data && data.features && data.features[0];
+  if (!f || !f.center) return null;
+  return { lat: f.center[1], lon: f.center[0], label: f.place_name || query };
+}
+
+/**
+ * Geocode a free-text query. Prefers Mapbox when a token is available — it is
+ * CORS-clean and meant for browser use, whereas Nominatim's usage policy
+ * discourages it and rate-limits hard. Falls back to Nominatim either way, so
+ * search keeps working without a token.
+ * Returns { lat, lon, label } or null.
+ */
+export async function geocode(query, token) {
+  if (token) {
+    try {
+      const hit = await geocodeMapbox(query, token);
+      if (hit) return hit;
+    } catch (e) { /* fall through to Nominatim */ }
+  }
+  return geocodeNominatim(query);
 }

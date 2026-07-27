@@ -7,9 +7,9 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=19ab1f5e';
-import { STALL_TYPES } from './solver.js?v=19ab1f5e';
-import { polyOf } from './geometry.js?v=19ab1f5e';
+import { localToLatLon } from './basemap.js?v=d5eee560';
+import { STALL_TYPES } from './solver.js?v=d5eee560';
+import { polyOf } from './geometry.js?v=d5eee560';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -265,6 +265,13 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
       } catch (e) {}
     },
     setPlan(p) { lastPlan = p; try { setData(map, p, geo); } catch (e) {} },
+    // A location search moves the geo anchor; without this the draped plan keeps
+    // converting against the anchor captured at construction.
+    setGeo(g) {
+      if (!g || (g.lat === geo.lat && g.lon === geo.lon)) return;
+      geo = g;
+      try { setData(map, lastPlan, geo); } catch (e) {}
+    },
     resize() { try { map.resize(); } catch (e) {} },
     recenter(g) { try { map.jumpTo({ center: [g.lon, g.lat] }); } catch (e) {} },
     destroy() { try { if (ro) ro.disconnect(); } catch (e) {} try { map.remove(); } catch (e) {} },

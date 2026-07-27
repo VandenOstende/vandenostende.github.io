@@ -4,15 +4,15 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=19ab1f5e';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=d5eee560';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
-} from './geometry.js?v=19ab1f5e';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=19ab1f5e';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=19ab1f5e';
-import { parseParcel, simplifyRing } from './importers.js?v=19ab1f5e';
-import { BUILD_ID } from './build.js?v=19ab1f5e';
+} from './geometry.js?v=d5eee560';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=d5eee560';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d5eee560';
+import { parseParcel, simplifyRing } from './importers.js?v=d5eee560';
+import { BUILD_ID } from './build.js?v=d5eee560';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1024,6 +1024,7 @@ function App() {
   const [mapDiag, setMapDiag] = useState({});      // per-stage basemap status
   const [diagOpen, setDiagOpen] = useState(false);
   const [mapNonce, setMapNonce] = useState(0);     // bump to force a map retry
+  const [mapReady, setMapReady] = useState(0);     // bumped once the controller exists
   const [exportOpen, setExportOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
@@ -1040,6 +1041,8 @@ function App() {
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
   const vmRef = useRef('2d');          // latest viewMode (for the native wheel handler)
+  const viewRef = useRef(null);        // latest view (async map init reads this, not a stale capture)
+  const geoRef = useRef(null);         // latest doc.geo, same reason
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
   const map3dRef = useRef(null);   // Mapbox controller when in 3D view
@@ -1070,7 +1073,17 @@ function App() {
         const fv = fitView(doc.site, r.width, r.height);
         if (fv) { setView(fv); fittedRef.current = true; }
       }
-      if (map3dRef.current) map3dRef.current.resize();
+      if (map3dRef.current) {
+        map3dRef.current.resize();
+        // mapCamFromView derives the centre from the viewport's midpoint, so a
+        // changed size moves that midpoint. sizeRef is a ref and not an effect
+        // dependency, so without this the map keeps a camera computed from the
+        // old height and sits at a constant offset until the user pans.
+        if (vmRef.current !== '3d' && viewRef.current && geoRef.current) {
+          const c = mapCamFromView(viewRef.current, sizeRef.current, geoRef.current);
+          map3dRef.current.follow2D(c.center, c.zoom);
+        }
+      }
       renderRef.current();
     });
     ro.observe(el);
@@ -1082,7 +1095,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=19ab1f5e', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=d5eee560', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1193,6 +1206,11 @@ function App() {
 
   renderRef.current = renderNow;
   vmRef.current = viewMode;
+  // The map lifecycle effect finishes asynchronously, long after the render that
+  // started it. Reading view/geo from refs keeps the first sync on the CURRENT
+  // camera instead of the one captured when the effect ran.
+  viewRef.current = view;
+  geoRef.current = doc.geo;
   useEffect(() => { renderNow(); }, [renderNow]);
 
   // Snapshot of everything the 3D view draws.
@@ -1211,15 +1229,19 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=19ab1f5e').then(async (m) => {
+    import('./map3d.js?v=d5eee560').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
       if (cancelled || !ctrl) { if (ctrl) ctrl.destroy(); return; }
       map3dRef.current = ctrl;
       ctrl.setMode(vmRef.current === '3d');
-      if (vmRef.current !== '3d') { const c = mapCamFromView(view, sizeRef.current, doc.geo); ctrl.follow2D(c.center, c.zoom); }
+      if (vmRef.current !== '3d') { const c = mapCamFromView(viewRef.current, sizeRef.current, geoRef.current); ctrl.follow2D(c.center, c.zoom); }
       setTimeout(() => ctrl.resize(), 100);
+      // map3dRef is a ref, so assigning it re-renders nothing and the follow
+      // effect below would never re-run. Bump state so it syncs now rather than
+      // waiting for the user to pan.
+      setMapReady((n) => n + 1);
     }).catch(() => setMap3dError('Mapbox kon niet laden.'));
     return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1232,7 +1254,11 @@ function App() {
     if (viewMode === '3d') return;
     const c = mapCamFromView(view, sizeRef.current, doc.geo);
     ctrl.follow2D(c.center, c.zoom);
-  }, [view, viewMode, doc.geo, sitePoly]);
+    // Keep the controller's geo anchor current too: it converts the plan to
+    // GeoJSON, so a location search would otherwise drape the plan at the old
+    // anchor in 3D.
+    if (ctrl.setGeo) ctrl.setGeo(doc.geo);
+  }, [view, viewMode, doc.geo, sitePoly, mapReady]);
 
   // Tilt / plan-drape on 2D↔3D switch, and keep the draped plan fresh in 3D.
   useEffect(() => { if (map3dRef.current) map3dRef.current.setMode(viewMode === '3d'); }, [viewMode]);
@@ -2110,7 +2136,7 @@ function App() {
     if (!q) return;
     setGeoBusy(true); setGeoMsg('');
     try {
-      const hit = await geocode(q);
+      const hit = await geocode(q, mbToken);
       if (!hit) { setGeoMsg('Niet gevonden'); }
       else {
         centerOnLatLon(hit.lat, hit.lon);
