@@ -82,6 +82,27 @@ body {
 .seg.style-seg { flex-wrap: wrap; }
 .seg.style-seg button { flex: 1 1 40%; padding: 5px 4px; font-size: 11.5px; }
 
+.map-diag {
+  margin-top: 6px;
+  padding: 7px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.map-diag > div { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+.map-diag b { color: var(--text); font-weight: 600; text-align: right; }
+.map-diag .map-diag-detail {
+  display: block;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  word-break: break-word;
+  line-height: 1.4;
+}
+
 .dropdown { position: relative; }
 .dropdown .menu {
   position: absolute;

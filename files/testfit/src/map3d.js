@@ -12,23 +12,67 @@ import { STALL_TYPES } from './solver.js';
 import { polyOf } from './geometry.js';
 
 const MB_VERSION = 'v3.7.0';
+const MB_SEMVER = '3.7.0';
+// api.mapbox.com is on some ad-blocker filter lists; fall back to neutral CDNs
+// so a blocked library load doesn't kill the whole map.
+const MB_SOURCES = [
+  { js: `https://api.mapbox.com/mapbox-gl-js/${MB_VERSION}/mapbox-gl.js`, css: `https://api.mapbox.com/mapbox-gl-js/${MB_VERSION}/mapbox-gl.css`, name: 'api.mapbox.com' },
+  { js: `https://unpkg.com/mapbox-gl@${MB_SEMVER}/dist/mapbox-gl.js`, css: `https://unpkg.com/mapbox-gl@${MB_SEMVER}/dist/mapbox-gl.css`, name: 'unpkg.com' },
+  { js: `https://cdn.jsdelivr.net/npm/mapbox-gl@${MB_SEMVER}/dist/mapbox-gl.js`, css: `https://cdn.jsdelivr.net/npm/mapbox-gl@${MB_SEMVER}/dist/mapbox-gl.css`, name: 'jsdelivr.net' },
+];
+const LOAD_TIMEOUT_MS = 10000;
 let mbPromise = null;
 
-function loadMapbox() {
-  if (window.mapboxgl) return Promise.resolve(window.mapboxgl);
-  if (mbPromise) return mbPromise;
-  mbPromise = new Promise((resolve, reject) => {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = `https://api.mapbox.com/mapbox-gl-js/${MB_VERSION}/mapbox-gl.css`;
-    document.head.appendChild(css);
+export function webglOk() {
+  try {
+    const c = document.createElement('canvas');
+    return !!(c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl'));
+  } catch (e) { return false; }
+}
+
+// A <script> that is silently swallowed (blocker/extension/proxy) fires neither
+// onload nor onerror — without this timeout the whole init hangs with no signal.
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = `https://api.mapbox.com/mapbox-gl-js/${MB_VERSION}/mapbox-gl.js`;
-    s.async = true;
-    s.onload = () => (window.mapboxgl ? resolve(window.mapboxgl) : reject(new Error('mapboxgl ontbreekt')));
-    s.onerror = () => reject(new Error('Mapbox GL kon niet laden'));
+    let settled = false;
+    const finish = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); fn(arg); };
+    const timer = setTimeout(() => { try { s.remove(); } catch (e) {} finish(reject, new Error('time-out (geen antwoord)')); }, LOAD_TIMEOUT_MS);
+    s.src = src; s.async = true;
+    s.onload = () => (window.mapboxgl ? finish(resolve, window.mapboxgl) : finish(reject, new Error('script geladen maar mapboxgl ontbreekt')));
+    s.onerror = () => { try { s.remove(); } catch (e) {} finish(reject, new Error('geblokkeerd of onbereikbaar')); };
     document.head.appendChild(s);
   });
+}
+
+function loadCss(href) {
+  try {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = href;
+    document.head.appendChild(css);
+  } catch (e) {}
+}
+
+function loadMapbox(diag) {
+  if (window.mapboxgl) return Promise.resolve(window.mapboxgl);
+  if (mbPromise) return mbPromise;
+  mbPromise = (async () => {
+    const tried = [];
+    for (const src of MB_SOURCES) {
+      try {
+        diag({ lib: 'laden via ' + src.name + '…' });
+        const gl = await loadScript(src.js);
+        loadCss(src.css);
+        diag({ lib: 'ok (' + src.name + ')' });
+        return gl;
+      } catch (e) {
+        tried.push(src.name + ': ' + e.message);
+      }
+    }
+    throw new Error('Mapbox GL kon nergens laden — ' + tried.join(' · '));
+  })();
+  // Never cache a failure: a retry (andere stijl, opnieuw proberen) must retry.
+  mbPromise.catch(() => { mbPromise = null; });
   return mbPromise;
 }
 
@@ -102,10 +146,25 @@ function setData(map, plan, geo) {
  *   setMode(is3d)         — tilt + show/hide the draped plan layers
  *   setPlan(plan)         — refresh the plan GeoJSON
  */
-export async function initMap(container, token, geo, plan, onError, styleUrl) {
+export async function initMap(container, token, geo, plan, onError, styleUrl, onDiag) {
+  const diag = (d) => { try { if (onDiag) onDiag(d); } catch (e) {} };
+  diag({ lib: '…', webgl: '…', style: '…', tiles: 0, detail: '' });
+
+  if (!webglOk()) {
+    diag({ webgl: 'NIET BESCHIKBAAR' });
+    onError('WebGL is niet beschikbaar. Zet hardwareversnelling aan in je browser, of zet in Brave de "fingerprinting"-bescherming voor deze site op standaard — Mapbox kan zonder WebGL niet tekenen.');
+    return null;
+  }
+  diag({ webgl: 'ok' });
+
   let mapboxgl;
-  try { mapboxgl = await loadMapbox(); }
-  catch (e) { onError('Mapbox GL kon niet laden — controleer je verbinding.'); return null; }
+  try { mapboxgl = await loadMapbox(diag); }
+  catch (e) {
+    diag({ lib: 'GEBLOKKEERD', detail: e.message });
+    onError('Mapbox GL kon niet laden. Een blocker/extensie of je netwerk houdt het tegen. Details: ' + e.message);
+    return null;
+  }
+
   mapboxgl.accessToken = token;
   const style = styleUrl || 'mapbox://styles/mapbox/satellite-streets-v12';
   let map;
@@ -115,28 +174,38 @@ export async function initMap(container, token, geo, plan, onError, styleUrl) {
       center: [geo.lon, geo.lat], zoom: 17, pitch: 0, bearing: 0,
       interactive: false, antialias: true, attributionControl: false,
     });
-  } catch (e) { onError('Kaart kon niet starten: ' + e.message); return null; }
+  } catch (e) { diag({ style: 'FOUT', detail: e.message }); onError('Kaart kon niet starten: ' + e.message); return null; }
 
-  let ready = false, pending3d = false, lastPlan = plan;
-  const loadTimer = setTimeout(() => { if (!ready) onError('De kaart laadt niet — controleer je Mapbox-token en internetverbinding.'); }, 9000);
+  let ready = false, pending3d = false, lastPlan = plan, tiles = 0;
+  diag({ style: 'laden…' });
+  const loadTimer = setTimeout(() => {
+    if (ready) return;
+    diag({ style: 'TIME-OUT' });
+    onError('De kaartstijl laadt niet (time-out). Meestal blokkeert een blocker/extensie api.mapbox.com, of het token mag deze site niet gebruiken.');
+  }, 12000);
   map.on('error', (ev) => {
     const err = ev && ev.error;
     const msg = (err && err.message) || String(err || 'onbekende kaartfout');
     const status = err && err.status;
     // eslint-disable-next-line no-console
     console.warn('[ParkPlanner map]', status || '', msg);
+    diag({ detail: (status ? status + ' · ' : '') + msg });
     if (status === 401 || status === 403 || /token|unauthorized|access|forbidden/i.test(msg)) {
-      onError('Mapbox-token geweigerd (401/403). Gebruik een public token (pk.…) zonder URL-restrictie, of voeg vandenostende.github.io toe aan de toegestane URLs.');
+      diag({ style: 'TOKEN GEWEIGERD (' + (status || '401/403') + ')' });
+      onError('Mapbox-token geweigerd (' + (status || '401/403') + '). Gebruik een public token (pk.…) zonder URL-restrictie, of voeg vandenostende.github.io toe aan de toegestane URLs van het token.');
     } else if (!ready) onError('Kaartfout: ' + msg);
   });
   map.on('style.load', () => {
     ready = true;
     clearTimeout(loadTimer);
+    diag({ style: 'ok' });
     onError('');
     try { addPlanLayers(map, lastPlan, geo); } catch (e) {}
     if (pending3d) { setPlanVisible(map, true); }
     setTimeout(() => { try { map.resize(); } catch (e) {} }, 60);
   });
+  map.on('data', (e) => { if (e && e.tile) tiles++; });
+  map.on('idle', () => diag({ tiles }));
 
   return {
     map,
