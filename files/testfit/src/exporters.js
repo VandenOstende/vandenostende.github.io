@@ -5,10 +5,13 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=9cd2635d';
-import { polyOf } from './geometry.js?v=9cd2635d';
+import { localToLatLon } from './basemap.js?v=4f0ea50b';
+import { polyOf } from './geometry.js?v=4f0ea50b';
 
 const AREA_KINDS = ['bikeparking', 'grass']; // annotation kinds that are filled areas
+// Any single-point annotation exports as a point. Previously only 'tree' did,
+// so every marking, pictogram and sign was silently dropped from the export.
+const isPoint = (an) => an.points.length === 1;
 
 // ---------- GeoJSON ----------
 export function toGeoJSON(plan, geo) {
@@ -29,8 +32,12 @@ export function toGeoJSON(plan, geo) {
   (plan.stalls || []).forEach((s) => feats.push(poly(s.poly, { kind: 'stall', type: s.type })));
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
-    if (an.kind === 'tree') feats.push(point(an.points[0], { kind: 'tree', diameter: an.width || 5 }));
-    else if (an.points.length >= 3 && (AREA_KINDS.includes(an.kind) || an.closed)) feats.push(poly(an.points, { kind: an.kind }));
+    if (isPoint(an)) {
+      const props = { kind: an.kind, diameter: an.width || 5 };
+      if (an.angle != null) props.angle = an.angle;
+      if (an.value != null) props.value = an.value;
+      feats.push(point(an.points[0], props));
+    } else if (an.points.length >= 3 && (AREA_KINDS.includes(an.kind) || an.closed)) feats.push(poly(an.points, { kind: an.kind }));
     else if (an.points.length >= 2) feats.push(line(an.points, { kind: an.kind, width: an.width || 1 }));
   });
   return { type: 'FeatureCollection', features: feats };
@@ -55,7 +62,7 @@ export function toDXF(plan) {
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
     const layer = String(an.kind).toUpperCase();
-    if (an.kind === 'tree') addCircle(an.points[0], (an.width || 5) / 2, 'TREES');
+    if (isPoint(an)) addCircle(an.points[0], (an.width || 5) / 2, an.kind === 'tree' ? 'TREES' : layer);
     else if (an.points.length >= 3 && (AREA_KINDS.includes(an.kind) || an.closed)) addPoly(an.points, layer, true);
     else if (an.points.length >= 2) addPoly(an.points, layer, false);
   });

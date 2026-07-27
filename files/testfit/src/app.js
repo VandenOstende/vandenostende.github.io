@@ -4,16 +4,17 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=9cd2635d';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=4f0ea50b';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=9cd2635d';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=9cd2635d';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=9cd2635d';
-import { parseParcel, simplifyRing } from './importers.js?v=9cd2635d';
-import { BUILD_ID } from './build.js?v=9cd2635d';
+} from './geometry.js?v=4f0ea50b';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=4f0ea50b';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=4f0ea50b';
+import { parseParcel, simplifyRing } from './importers.js?v=4f0ea50b';
+import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=4f0ea50b';
+import { BUILD_ID } from './build.js?v=4f0ea50b';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -54,27 +55,6 @@ const DEFAULT_OBSTACLES = [
 const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 
 // ---------- Document reducer + undo/redo ----------
-// Infrastructure annotations you can draw over the plan.
-//   mode 'line'  → click points, finish on dbl-click/first point (Esc cancels)
-//   mode 'cross' → 2 clicks define a crossing centreline (zebra stripes)
-//   mode 'area'  → drag a rectangle
-// `under: true` draws beneath the parking (roads, bike parking).
-// `group` buckets the palette; `keywords` are extra search terms so you can find
-// a tool by what you call it rather than by its label.
-export const ANNOT_GROUPS = ['Rijden', 'Langzaam verkeer', 'Groen', 'Overig'];
-export const ANNOT_TYPES = {
-  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: false, under: true, blocks: true, group: 'Rijden', keywords: 'straat rijbaan asfalt baan' },
-  driveway:    { label: 'In/uitrit',    color: '#525b68', width: 6.5, depth: 12, mode: 'driveway', under: true, blocks: true, group: 'Rijden', keywords: 'oprit inrit uitrit toegang entree' },
-  drivethru:   { label: 'Drive-thru',   color: '#f97316', width: 3.5, mode: 'line', curved: true, under: true, blocks: true, group: 'Rijden', keywords: 'drive through afhaal loket wachtrij' },
-  walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true, group: 'Langzaam verkeer', keywords: 'voetpad trottoir stoep voetganger' },
-  bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true, group: 'Langzaam verkeer', keywords: 'fiets bike cyclepad' },
-  crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross', group: 'Langzaam verkeer', keywords: 'zebra oversteek voetganger kruising' },
-  bikeparking: { label: 'Fietsparking', color: '#0e7490', width: 0,   mode: 'area', under: true, group: 'Langzaam verkeer', keywords: 'fietsenstalling fietsrek stalling' },
-  grass:       { label: 'Gras',         color: '#3f9b46', width: 0,   mode: 'area', under: true, group: 'Groen', keywords: 'groen gazon berm perk' },
-  tree:        { label: 'Boom',         color: '#2f9e44', width: 5,   mode: 'point', group: 'Groen', keywords: 'bomen beplanting groen' },
-  access:      { label: 'Toegang',      color: '#22d3ee', width: 6,   mode: 'point', group: 'Overig', keywords: 'toegangspunt poort ingang' },
-  marking:     { label: 'Markering',    color: '#eab308', width: 0.3, mode: 'line', curved: false, group: 'Overig', keywords: 'belijning streep lijn verf' },
-};
 
 // Nearest point on a polygon boundary, with the local edge tangent and the
 // inward unit normal (pointing toward the polygon centroid). Used to snap a
@@ -267,6 +247,7 @@ const THEMES = {
     building: 'rgba(100,116,139,0.5)',
     buildingLine: '#7c8896',
     badge: 'rgba(230,234,239,0.9)',
+    pictoHalo: 'rgba(0,0,0,0.55)',
   },
   light: {
     grid: 'rgba(15,23,42,0.07)',
@@ -283,6 +264,7 @@ const THEMES = {
     building: 'rgba(100,116,139,0.35)',
     buildingLine: '#64748b',
     badge: 'rgba(30,41,59,0.9)',
+    pictoHalo: 'rgba(15,23,42,0.75)',
   },
 };
 // Set once per frame by draw(). Module-level so the paint helpers don't each
@@ -608,6 +590,214 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// ---------- Belgian markings, pictograms and signage ----------
+// Each painter draws inside a unit box centred on the origin (-1..1) with the
+// caller handling position, scale and rotation. Keeps them resolution-free and
+// lets any of them be rotated onto a road tangent.
+function pathFrom(ctx, pts, close) {
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+  if (close) ctx.closePath();
+}
+// A road arrow: shaft plus head, optionally with a branch to one side.
+function arrow(ctx, branch) {
+  ctx.fillStyle = '#f8fafc';
+  pathFrom(ctx, [[-0.16, 0.95], [0.16, 0.95], [0.16, -0.3], [-0.16, -0.3]], true);
+  ctx.fill();
+  pathFrom(ctx, [[-0.45, -0.25], [0.45, -0.25], [0, -0.95]], true);
+  ctx.fill();
+  if (branch) {
+    const sx = branch === 'left' ? -1 : 1;
+    pathFrom(ctx, [[0, 0.35], [sx * 0.62, 0.35], [sx * 0.62, 0.12], [0, 0.12]], true);
+    ctx.fill();
+    pathFrom(ctx, [[sx * 0.55, 0.46], [sx * 0.55, 0.01], [sx * 0.95, 0.235]], true);
+    ctx.fill();
+  }
+}
+function glyph(ctx, txt, size, color) {
+  ctx.fillStyle = color || '#f8fafc';
+  ctx.font = `bold ${size}px system-ui, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(txt, 0, 0);
+}
+// Plate shapes for vertical signage, drawn face-on with a small post shadow.
+function plate(ctx, shape, fill, rim) {
+  ctx.fillStyle = fill;
+  if (shape === 'circle') { ctx.beginPath(); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.fill(); }
+  else if (shape === 'triangle') { pathFrom(ctx, [[0, -1], [1, 0.82], [-1, 0.82]], true); ctx.fill(); }
+  else if (shape === 'octagon') {
+    const p = []; for (let i = 0; i < 8; i++) { const a = (Math.PI / 4) * i + Math.PI / 8; p.push([Math.cos(a), Math.sin(a)]); }
+    pathFrom(ctx, p, true); ctx.fill();
+  } else { pathFrom(ctx, [[-1, -1], [1, -1], [1, 1], [-1, 1]], true); ctx.fill(); }
+  if (rim) {
+    ctx.strokeStyle = rim; ctx.lineWidth = 0.22; ctx.stroke();
+  }
+}
+const PICTOS = {
+  arrowAhead: (ctx) => arrow(ctx),
+  arrowLeft: (ctx) => { ctx.rotate(-Math.PI / 2); arrow(ctx); },
+  arrowRight: (ctx) => { ctx.rotate(Math.PI / 2); arrow(ctx); },
+  arrowAheadL: (ctx) => arrow(ctx, 'left'),
+  arrowAheadR: (ctx) => arrow(ctx, 'right'),
+  speed: (ctx, ann) => {
+    ctx.fillStyle = '#f8fafc';
+    glyph(ctx, String(ann && ann.value != null ? ann.value : 20), 1.5, '#f8fafc');
+  },
+  bike: (ctx) => {
+    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.16; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(-0.55, 0.42, 0.4, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0.55, 0.42, 0.4, 0, Math.PI * 2); ctx.stroke();
+    pathFrom(ctx, [[-0.55, 0.42], [-0.1, -0.35], [0.35, -0.35], [0.55, 0.42]], false); ctx.stroke();
+    pathFrom(ctx, [[-0.1, -0.35], [0.55, 0.42]], false); ctx.stroke();
+    pathFrom(ctx, [[0.2, -0.62], [0.5, -0.62]], false); ctx.stroke();
+  },
+  ev: (ctx) => {
+    ctx.fillStyle = '#f8fafc';
+    pathFrom(ctx, [[0.18, -0.95], [-0.5, 0.1], [-0.05, 0.1], [-0.22, 0.95], [0.5, -0.15], [0.02, -0.15]], true);
+    ctx.fill();
+  },
+  ada: (ctx) => {
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath(); ctx.arc(-0.05, -0.62, 0.24, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.19; ctx.lineCap = 'round';
+    pathFrom(ctx, [[-0.05, -0.3], [-0.05, 0.2], [0.45, 0.2]], false); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-0.08, 0.35, 0.5, -0.5, Math.PI * 0.95); ctx.stroke();
+    pathFrom(ctx, [[0.45, 0.2], [0.62, 0.75]], false); ctx.stroke();
+  },
+  walk: (ctx) => {
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath(); ctx.arc(0, -0.68, 0.22, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.18; ctx.lineCap = 'round';
+    pathFrom(ctx, [[0, -0.4], [0, 0.15]], false); ctx.stroke();
+    pathFrom(ctx, [[-0.35, -0.15], [0.35, -0.2]], false); ctx.stroke();
+    pathFrom(ctx, [[0, 0.15], [-0.28, 0.9]], false); ctx.stroke();
+    pathFrom(ctx, [[0, 0.15], [0.3, 0.88]], false); ctx.stroke();
+  },
+  letterP: (ctx) => glyph(ctx, 'P', 1.8, '#f8fafc'),
+  family: (ctx) => {
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath(); ctx.arc(-0.4, -0.55, 0.24, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0.42, -0.28, 0.17, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.17; ctx.lineCap = 'round';
+    pathFrom(ctx, [[-0.4, -0.28], [-0.4, 0.35]], false); ctx.stroke();
+    pathFrom(ctx, [[-0.4, 0.35], [-0.62, 0.9]], false); ctx.stroke();
+    pathFrom(ctx, [[-0.4, 0.35], [-0.18, 0.9]], false); ctx.stroke();
+    pathFrom(ctx, [[0.42, -0.08], [0.42, 0.42]], false); ctx.stroke();
+    pathFrom(ctx, [[0.42, 0.42], [0.26, 0.9]], false); ctx.stroke();
+    pathFrom(ctx, [[0.42, 0.42], [0.6, 0.9]], false); ctx.stroke();
+    pathFrom(ctx, [[-0.4, 0.02], [0.42, 0.06]], false); ctx.stroke();
+  },
+  // ---- signage ----
+  signYield: (ctx) => { plate(ctx, 'triangle', '#ffffff', '#d92b2b'); },
+  signStop: (ctx) => { plate(ctx, 'octagon', '#d92b2b'); glyph(ctx, 'STOP', 0.52, '#ffffff'); },
+  signSpeed: (ctx, ann) => {
+    plate(ctx, 'circle', '#ffffff', '#d92b2b');
+    glyph(ctx, String(ann && ann.value != null ? ann.value : 20), 0.95, '#111827');
+  },
+  signNoEntry: (ctx) => {
+    plate(ctx, 'circle', '#d92b2b');
+    ctx.fillStyle = '#ffffff';
+    pathFrom(ctx, [[-0.62, -0.17], [0.62, -0.17], [0.62, 0.17], [-0.62, 0.17]], true); ctx.fill();
+  },
+  signParking: (ctx) => { plate(ctx, 'rect', '#1d4ed8'); glyph(ctx, 'P', 1.3, '#ffffff'); },
+  signOneWay: (ctx) => {
+    plate(ctx, 'rect', '#1d4ed8');
+    ctx.fillStyle = '#ffffff';
+    pathFrom(ctx, [[-0.6, -0.12], [0.25, -0.12], [0.25, -0.38], [0.75, 0], [0.25, 0.38], [0.25, 0.12], [-0.6, 0.12]], true);
+    ctx.fill();
+  },
+  signAda: (ctx) => { plate(ctx, 'rect', '#1d4ed8'); ctx.save(); ctx.scale(0.62, 0.62); PICTOS.ada(ctx); ctx.restore(); },
+  signEV: (ctx) => { plate(ctx, 'rect', '#15803d'); ctx.save(); ctx.scale(0.62, 0.62); PICTOS.ev(ctx); ctx.restore(); },
+};
+
+// Haaientanden: triangles along one side of the line, points facing the
+// traffic that must give way — the Belgian "voorrang verlenen" marking.
+function drawSharkTeeth(ctx, ann, w2s, scale, selected) {
+  const pts = (ann.points || []).map(w2s);
+  if (pts.length < 2) return;
+  const base = Math.max(4, (ann.width || 2.5) * scale * 0.45);
+  ctx.save();
+  ctx.shadowColor = TH.pictoHalo; ctx.shadowBlur = Math.max(2, base * 0.3);
+  ctx.fillStyle = selected ? TH.sel : '#f8fafc';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 1) continue;
+    const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+    const nx = -uy, ny = ux;
+    const step = base * 1.6;
+    for (let d = base * 0.4; d < len - base * 0.4; d += step) {
+      const px = a.x + ux * d, py = a.y + uy * d;
+      pathFrom(ctx, [
+        [px - ux * base * 0.45, py - uy * base * 0.45],
+        [px + ux * base * 0.45, py + uy * base * 0.45],
+        [px + nx * base * 1.15, py + ny * base * 1.15],
+      ], true);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// Kruisarcering (a no-parking wedge) and vakbelijning (bay lines) share a
+// polygon and differ only in how the interior is striped.
+function drawHatchOrBays(ctx, ann, w2s, scale, selected) {
+  const pts = (ann.points || []).map(w2s);
+  if (pts.length < 3) return;
+  const bays = ann.kind === 'bayLines';
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  ctx.save();
+  pathFrom(ctx, pts.map((p) => [p.x, p.y]), true);
+  ctx.clip();
+  ctx.strokeStyle = selected ? TH.sel : '#f8fafc';
+  ctx.lineWidth = Math.max(1, (bays ? 0.12 : 0.15) * scale);
+  const gap = Math.max(8, (bays ? 2.7 : 1.2) * scale);
+  ctx.beginPath();
+  if (bays) {
+    for (let x = minX; x <= maxX; x += gap) { ctx.moveTo(x, minY); ctx.lineTo(x, maxY); }
+  } else {
+    for (let x = minX - (maxY - minY); x <= maxX; x += gap) { ctx.moveTo(x, minY); ctx.lineTo(x + (maxY - minY), maxY); }
+  }
+  ctx.stroke();
+  ctx.restore();
+  pathFrom(ctx, pts.map((p) => [p.x, p.y]), true);
+  ctx.strokeStyle = selected ? TH.sel : '#f8fafc';
+  ctx.lineWidth = Math.max(1.2, 0.16 * scale);
+  ctx.stroke();
+}
+
+// A point marking: positioned, scaled to its width in metres, rotated to its
+// own angle. Signs get a post shadow so they read as vertical, not painted.
+function drawPicto(ctx, ann, t, s, scale, selected) {
+  const painter = PICTOS[t.picto];
+  if (!painter) return;
+  const r = Math.max(6, ((ann.width || t.width || 3) / 2) * scale);
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(((ann.angle || 0) * Math.PI) / 180);
+  if (t.sign) {
+    ctx.save();
+    ctx.globalAlpha = 0.28; ctx.fillStyle = '#000000';
+    ctx.beginPath(); ctx.ellipse(0, r * 0.55, r * 0.85, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.scale(r, r);
+  // Road paint is white, which vanishes on a light backdrop. A soft dark halo
+  // under every stroke keeps it legible on pale asphalt without making the
+  // marking itself the wrong colour.
+  ctx.shadowColor = TH.pictoHalo;
+  ctx.shadowBlur = 0.22;
+  painter(ctx, ann);
+  ctx.restore();
+  if (selected) {
+    ctx.strokeStyle = TH.sel; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.25, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawTree(ctx, s, rpx, index, selected) {
   const sprite = TREE_SPRITES.length ? TREE_SPRITES[index % TREE_SPRITES.length] : null;
   // soft ground shadow
@@ -785,11 +975,14 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   if (!t || !ann.points || ann.points.length < 1) return;
 
   if (t.mode === 'point') {
+    if (t.picto) { drawPicto(ctx, ann, t, w2s(ann.points[0]), scale, selected); return; }
     const rpx = Math.max(3, ((ann.width || t.width || 5) / 2) * scale);
     if (ann.kind === 'access') drawAccess(ctx, w2s(ann.points[0]), rpx, selected);
     else drawTree(ctx, w2s(ann.points[0]), rpx, index || 0, selected);
     return;
   }
+  if (ann.kind === 'sharkTeeth') { drawSharkTeeth(ctx, ann, w2s, scale, selected); return; }
+  if (ann.kind === 'hatchZone' || ann.kind === 'bayLines') { drawHatchOrBays(ctx, ann, w2s, scale, selected); return; }
   if (t.mode === 'driveway') { drawDriveway(ctx, ann, w2s, scale, selected); return; }
   if (ann.kind === 'drivethru') { if (ann.points.length >= 2) drawDriveThru(ctx, ann, w2s, scale, selected); return; }
   if (ann.points.length < 2) return;
@@ -973,6 +1166,7 @@ function App() {
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
+  const docRef = useRef(null);        // latest doc for the window key handler
   const vmRef = useRef('2d');          // latest viewMode (for the native wheel handler)
   const viewRef = useRef(null);        // latest view (async map init reads this, not a stale capture)
   const geoRef = useRef(null);         // latest doc.geo, same reason
@@ -1028,7 +1222,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=9cd2635d', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=4f0ea50b', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1138,6 +1332,7 @@ function App() {
   }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme]);
 
   renderRef.current = renderNow;
+  docRef.current = doc;
   vmRef.current = viewMode;
   // The map lifecycle effect finishes asynchronously, long after the render that
   // started it. Reading view/geo from refs keeps the first sync on the CURRENT
@@ -1162,7 +1357,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=9cd2635d').then(async (m) => {
+    import('./map3d.js?v=4f0ea50b').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -1356,6 +1551,20 @@ function App() {
     })
     .filter((l) => l.len > 0.1), [doc.annotations]);
 
+  // Heading of the nearest road at a point, in degrees, for orienting markings.
+  // 0 when there is no road nearby — an arrow then points up until you press R.
+  const roadAngleAt = (pt) => {
+    let best = null;
+    for (const line of roadLines) {
+      const hit = nearestOnPolyline(pt, line.pts, line.cum);
+      if (hit && (!best || hit.dd < best.hit.dd)) best = { line, hit };
+    }
+    if (!best || best.hit.dd > best.line.half + 25) return 0;
+    const at = polylineAt(best.line.pts, best.line.cum, best.hit.s);
+    // Painters draw pointing "up" (-y), so rotate the tangent by a quarter turn.
+    return (Math.atan2(at.ty, at.tx) * 180) / Math.PI + 90;
+  };
+
   /**
    * Park a stall against the nearest road: aligned to the road's tangent, offset
    * clear of its edge on the side that was clicked, and slotted to whole stall
@@ -1427,6 +1636,14 @@ function App() {
     anns[index] = makeDriveway({ point: a.anchor, tx: a.tx, ty: a.ty, nx: a.nx, ny: a.ny }, width, a.depth || 12);
     return { ...d, annotations: anns };
   } });
+  // Generic per-annotation patch. Everything before this had to hand-roll its
+  // own updater, so only driveway width and drive-thru radius were editable.
+  const updateAnnotation = (index, patch) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const anns = (d.annotations || []).slice();
+    if (!anns[index]) return d;
+    anns[index] = { ...anns[index], ...patch };
+    return { ...d, annotations: anns };
+  } });
   const setDrivethruTurnR = (index, R) => dispatch({ type: 'COMMIT', updater: (d) => {
     const anns = (d.annotations || []).slice();
     if (!anns[index] || anns[index].kind !== 'drivethru') return d;
@@ -1462,6 +1679,18 @@ function App() {
   };
 
   // Nearest annotation to a screen point (for selection), or -1.
+  // Same radius test as hitAnnotation, restricted to point-mode kinds.
+  const hitPointAnnotation = (sp) => {
+    const { w2s } = makeTransform(view);
+    const anns = doc.annotations || [];
+    for (let i = anns.length - 1; i >= 0; i--) {
+      const ann = anns[i], t = ANNOT_TYPES[ann.kind];
+      if (!t || t.mode !== 'point' || !ann.points || !ann.points[0]) continue;
+      if (dist(w2s(ann.points[0]), sp) < Math.max(9, ((ann.width || t.width || 5) / 2) * view.scale)) return i;
+    }
+    return -1;
+  };
+
   const hitAnnotation = (sp) => {
     const { w2s } = makeTransform(view);
     const anns = doc.annotations || [];
@@ -1548,6 +1777,17 @@ function App() {
         setSelection({ type: 'site' }); setStallSel([]); setAisleSel(null);
         dispatch({ type: 'CHECKPOINT' });
         dragRef.current = { mode: 'siteMove', start: wp, orig: doc.site };
+        return;
+      }
+      // Point markings and signs first: they are small targets deliberately
+      // placed on top of stalls and aisles, so testing stalls first would make
+      // them unselectable.
+      const pi = hitPointAnnotation(sp);
+      if (pi >= 0) {
+        setSelection({ type: 'annot', index: pi }); setStallSel([]); setAisleSel(null);
+        const pa = (doc.annotations || [])[pi];
+        dispatch({ type: 'CHECKPOINT' });
+        dragRef.current = { mode: 'annotMove', start: wp, index: pi, orig: pa.points, origAnchor: pa.anchor };
         return;
       }
       // Stall? (topmost first) — click selects, shift+click toggles, drag moves.
@@ -1662,7 +1902,11 @@ function App() {
       }
       if (t.mode === 'point') {
         const at = annotKind === 'access' ? nearestOnSiteEdge(wp) : snap;
-        addAnnotation({ kind: annotKind, points: [at], width: annotWidth });
+        const ann = { kind: annotKind, points: [at], width: annotWidth };
+        // Markings and signs read along the road they belong to, so line them
+        // up with the nearest one. R adjusts from there.
+        if (t.picto) ann.angle = (roadAngleAt(wp) + stallRot) % 360;
+        addAnnotation(ann);
         return;
       }
       // Road as a draggable rectangle object (resize afterwards via corners).
@@ -1899,7 +2143,7 @@ function App() {
       const { w2s } = makeTransform(view);
       // Insert on the segment nearest the click, in the raw (control) points.
       let best = null;
-      const closed = ann.closed || ANNOT_TYPES[ann.kind].mode === 'area';
+      const closed = ann.closed || (ANNOT_TYPES[ann.kind] || {}).mode === 'area';
       const n = ann.points.length;
       for (let i = 0; i < (closed ? n : n - 1); i++) {
         const a = w2s(ann.points[i]), b = w2s(ann.points[(i + 1) % n]);
@@ -2006,7 +2250,12 @@ function App() {
         // ones. Shift+R goes back. The HUD reports the current offset.
         case 'r': {
           const step = e.shiftKey ? -ANGLE_SNAP_DEG : ANGLE_SNAP_DEG;
-          if (stallSel.length) {
+          // Through the ref: the listener is only re-registered on selection
+          // change, so a captured doc would go stale after the first press.
+          const selAnn = selection && selection.type === 'annot' ? ((docRef.current || {}).annotations || [])[selection.index] : null;
+          if (selAnn && (ANNOT_TYPES[selAnn.kind] || {}).picto) {
+            updateAnnotation(selection.index, { angle: ((((selAnn.angle || 0) + step) % 360) + 360) % 360 });
+          } else if (stallSel.length) {
             const cur = deco.stalls.find((s) => s.key === stallSel[0]);
             const base = cur && cur.angle != null ? cur.angle : Math.round(((result.angleUsed || 0) * 180) / Math.PI);
             setStallAngles(stallSel, (((base + step) % 360) + 360) % 360);
@@ -2598,7 +2847,30 @@ function App() {
         </div>`}
         ${selection && selection.type === 'annot' && doc.annotations[selection.index] && html`
         <div className="section sel-section">
-          <h3>${ANNOT_TYPES[doc.annotations[selection.index].kind].label} geselecteerd</h3>
+          <h3>${(ANNOT_TYPES[doc.annotations[selection.index].kind] || { label: 'Object' }).label} geselecteerd</h3>
+          ${(() => {
+            const ai = selection.index, ann = doc.annotations[ai];
+            const t = ANNOT_TYPES[ann.kind] || {};
+            if (!t.picto) return null;
+            return html`
+              <div className="field">
+                <label>Hoek <span className="val">${Math.round(ann.angle || 0)}°</span></label>
+                <input type="range" min="0" max="359" step="5" value=${Math.round(ann.angle || 0)}
+                  onInput=${(e) => updateAnnotation(ai, { angle: +e.target.value })} />
+                <div className="mix-note">R draait 15° · Shift+R terug</div>
+              </div>
+              <div className="field">
+                <label>Grootte <span className="val">${(ann.width || t.width || 3).toFixed(1)} m</span></label>
+                <input type="range" min="1" max="12" step="0.2" value=${ann.width || t.width || 3}
+                  onInput=${(e) => updateAnnotation(ai, { width: +e.target.value })} />
+              </div>
+              ${t.value != null && html`
+                <div className="field">
+                  <label>Waarde (km/u)</label>
+                  <input type="number" min="5" max="130" step="5" value=${ann.value != null ? ann.value : t.value}
+                    onChange=${(e) => updateAnnotation(ai, { value: +e.target.value })} />
+                </div>`}`;
+          })()}
           ${doc.annotations[selection.index].kind === 'driveway' && html`
             <div className="field">
               <label>Breedte</label>

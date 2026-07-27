@@ -7,9 +7,10 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=9cd2635d';
-import { STALL_TYPES } from './solver.js?v=9cd2635d';
-import { polyOf } from './geometry.js?v=9cd2635d';
+import { localToLatLon } from './basemap.js?v=4f0ea50b';
+import { STALL_TYPES } from './solver.js?v=4f0ea50b';
+import { polyOf } from './geometry.js?v=4f0ea50b';
+import { ANNOT_TYPES } from './annots.js?v=4f0ea50b';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -96,9 +97,16 @@ function polyFeature(poly, geo, props) {
 function lineFeature(pts, geo, props) {
   return { type: 'Feature', properties: props || {}, geometry: { type: 'LineString', coordinates: ring(pts, geo) } };
 }
+// Colours live in ANNOT_TYPES; this used to keep a second hand-maintained copy
+// that silently drifted whenever a kind was added.
 function annColor(kind) {
-  return ({ road: '#3b424e', walkway: '#9aa4b2', bikepath: '#b91c1c', crosswalk: '#e5e7eb',
-    marking: '#eab308', grass: '#3f9b46', bikeparking: '#0e7490', driveway: '#525b68', drivethru: '#f97316' })[kind] || '#eab308';
+  return (ANNOT_TYPES[kind] || {}).color || '#eab308';
+}
+// One list, not two: anything drawn as an open line in 2D drapes as a line in
+// 3D. Point markings and signage are handled separately.
+function isLineKind(kind) {
+  const t = ANNOT_TYPES[kind];
+  return !!t && (t.mode === 'line' || t.mode === 'cross');
 }
 function planToGeoJSON(plan, geo) {
   const anns = plan.annotations || [];
@@ -109,7 +117,7 @@ function planToGeoJSON(plan, geo) {
     buildings: fc((plan.obstacles || []).map((o) => polyFeature(polyOf(o), geo, { height: (o && o.floors ? o.floors : 4) * 3.2 }))),
     site: fc(plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : []),
     areas: fc(anns.filter((an) => an.points && an.points.length >= 3 && (an.kind === 'grass' || an.kind === 'bikeparking' || an.closed)).map((an) => polyFeature(an.points, geo, { color: annColor(an.kind) }))),
-    lines: fc(anns.filter((an) => an.points && an.points.length >= 2 && !an.closed && ['road', 'walkway', 'bikepath', 'crosswalk', 'marking', 'drivethru'].includes(an.kind)).map((an) => lineFeature(an.points, geo, { color: annColor(an.kind), width: an.width || 1 }))),
+    lines: fc(anns.filter((an) => an.points && an.points.length >= 2 && !an.closed && isLineKind(an.kind)).map((an) => lineFeature(an.points, geo, { color: annColor(an.kind), width: an.width || 1 }))),
     trees: fc(anns.filter((an) => an.kind === 'tree' && an.points && an.points[0]).map((an) => { const ll = localToLatLon(an.points[0], geo); return { type: 'Feature', properties: { r: (an.width || 5) / 2 }, geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] } }; })),
   };
 }

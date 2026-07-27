@@ -15,7 +15,7 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=9cd2635d';
+} from './geometry.js?v=4f0ea50b';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -445,6 +445,20 @@ function assignStallTypes(stalls, params) {
 }
 
 /** Aggregate live metrics for the dashboard. */
+// Kinds that add no paved surface of their own. Paint on existing asphalt and
+// signs on posts do not make a site more impervious, and this is an exclusion
+// list — anything not named here counts as paving, so new kinds must be added.
+const NON_PAVED = new Set([
+  'grass', 'tree', 'access',
+  // paint on top of surfaces that are already counted
+  'marking', 'crosswalk', 'sharkTeeth', 'stopLine', 'hatchZone', 'bayLines',
+  'arrowAhead', 'arrowLeft', 'arrowRight', 'arrowAheadL', 'arrowAheadR', 'speedMark',
+  'pictoBike', 'pictoEV', 'pictoAda', 'pictoWalk', 'pictoP', 'familyBay',
+  // signage stands on a post
+  'signYield', 'signStop', 'signSpeed', 'signNoEntry', 'signParking',
+  'signOneWay', 'signAda', 'signEV',
+]);
+
 export function computeMetrics(site, obstacles, result, params, annotations) {
   const siteArea = site && site.length >= 3 ? polygonArea(site) : 0;
   const buildingArea = (obstacles || []).reduce((s, o) => s + polygonArea(polyOf(o)), 0);
@@ -469,7 +483,7 @@ export function computeMetrics(site, obstacles, result, params, annotations) {
   for (const st of result.stalls) paved += polygonArea(st.poly);
   for (const a of result.aisles || []) paved += polygonArea(a.poly || a);
   for (const an of annotations || []) {
-    if (!an.points || an.kind === 'grass' || an.kind === 'tree' || an.kind === 'access') continue;
+    if (!an.points || NON_PAVED.has(an.kind)) continue;
     if (an.points.length >= 3 && (an.closed || an.kind === 'bikeparking')) paved += polygonArea(an.points);
     else if (an.points.length >= 2 && (an.kind === 'road' || an.kind === 'walkway' || an.kind === 'bikepath')) {
       let len = 0;
