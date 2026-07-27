@@ -5,8 +5,8 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=c72fd0ef';
-import { polyOf } from './geometry.js?v=c72fd0ef';
+import { localToLatLon } from './basemap.js?v=9cd2635d';
+import { polyOf } from './geometry.js?v=9cd2635d';
 
 const AREA_KINDS = ['bikeparking', 'grass']; // annotation kinds that are filled areas
 
