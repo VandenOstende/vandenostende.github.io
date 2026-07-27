@@ -4,22 +4,23 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=e7e98729';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=a28e74e7';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=e7e98729';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=e7e98729';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=e7e98729';
-import { parseParcel, simplifyRing } from './importers.js?v=e7e98729';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=e7e98729';
-import { BUILD_ID } from './build.js?v=e7e98729';
+} from './geometry.js?v=a28e74e7';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=a28e74e7';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=a28e74e7';
+import { parseParcel, simplifyRing } from './importers.js?v=a28e74e7';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=a28e74e7';
+import { BUILD_ID } from './build.js?v=a28e74e7';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
 const ANGLE_SNAP_DEG = 15;       // same step, for the R rotate key
 const FLOOR_H = 3.2;             // metres per building floor (for 3D + height)
+const WHEEL_GAP_MS = 160;        // quiet time that ends a wheel/trackpad gesture
 const mark = (s) => { try { window.__pp_mark && window.__pp_mark(s); } catch (e) {} };
 mark('1-module-uitgevoerd');
 
@@ -1407,6 +1408,10 @@ function App() {
   });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
+  // The error card sits over the middle of the canvas. It has to be dismissable:
+  // a late map error would otherwise drop an undismissable 380px block on the
+  // plan and swallow every drag started under it.
+  const [mapErrHidden, setMapErrHidden] = useState(false);
   const [mapDiag, setMapDiag] = useState({});      // per-stage basemap status
   const [diagOpen, setDiagOpen] = useState(false);
   const [mapNonce, setMapNonce] = useState(0);     // bump to force a map retry
@@ -1434,6 +1439,9 @@ function App() {
   const geoRef = useRef(null);         // latest doc.geo, same reason
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
+  const wheelRef = useRef({ at: -1e9, zoom: true }); // latched wheel gesture mode
+  const spaceRef = useRef(null); // tool to restore when Space (hold-to-pan) is released
+  const geoAppliedRef = useRef(null); // last geo anchor pushed to the 3D camera
   const guidesRef = useRef(null);  // alignment guides shown during a move drag
   const mouseRef = useRef(null);   // last canvas mouse position, in world units
   const map3dRef = useRef(null);   // Mapbox controller when in 3D view
@@ -1486,7 +1494,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=e7e98729', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=a28e74e7', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1633,13 +1641,13 @@ function App() {
     // No token or style 'Geen' → no map; the plan renders on the dark backdrop.
     if (!mbToken || mapStyle === 'none') { if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } return; }
     let cancelled = false;
-    setMap3dError('');
+    setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=e7e98729').then(async (m) => {
+    import('./map3d.js?v=a28e74e7').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
-      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
+      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
       if (cancelled || !ctrl) { if (ctrl) ctrl.destroy(); return; }
       map3dRef.current = ctrl;
       ctrl.setMode(vmRef.current === '3d');
@@ -1658,13 +1666,25 @@ function App() {
   useEffect(() => {
     const ctrl = map3dRef.current;
     if (!ctrl) return;
-    if (viewMode === '3d') return;
+    // The anchor converts the plan to GeoJSON, so this has to happen in BOTH
+    // modes — it used to sit below the 3D early-return, which is the one case
+    // its own comment was written for. A location search in 3D changed nothing
+    // at all: no re-drape, no camera move, just a new number in the sidebar.
+    if (ctrl.setGeo) ctrl.setGeo(doc.geo);
+    if (viewMode === '3d') {
+      // Only on an actual anchor change. This effect also runs on sitePoly and
+      // view changes, and yanking the camera back mid-orbit would be worse than
+      // the bug it fixes.
+      const g = doc.geo, prev = geoAppliedRef.current;
+      if (g && isFinite(g.lat) && isFinite(g.lon) && (!prev || prev.lat !== g.lat || prev.lon !== g.lon)) {
+        geoAppliedRef.current = { lat: g.lat, lon: g.lon };
+        if (ctrl.recenter) ctrl.recenter(g);
+      }
+      return;
+    }
+    geoAppliedRef.current = doc.geo;
     const c = mapCamFromView(view, sizeRef.current, doc.geo);
     ctrl.follow2D(c.center, c.zoom);
-    // Keep the controller's geo anchor current too: it converts the plan to
-    // GeoJSON, so a location search would otherwise drape the plan at the old
-    // anchor in 3D.
-    if (ctrl.setGeo) ctrl.setGeo(doc.geo);
   }, [view, viewMode, doc.geo, sitePoly, mapReady]);
 
   // Drive the CSS token set off the root element and remember the choice.
@@ -2056,12 +2076,21 @@ function App() {
 
   const onPointerDown = (e) => {
     if (viewMode !== '2d') return; // 3D is handled by the Mapbox map (canvas is pass-through)
-    if (e.button === 2) return;    // right-click handled by onContextMenu (add vertex)
-    e.target.setPointerCapture?.(e.pointerId);
+    // A throw here used to abort the whole handler before dragRef was set, so
+    // the drag silently did nothing — including the grid.
+    try { e.target.setPointerCapture?.(e.pointerId); } catch (err) {}
     const sp = getScreen(e);
     const wp = getWorld(e);
 
-    // Middle-button or pan tool → pan.
+    // Right-drag pans, on any mouse, in any tool, with no modifier. A right
+    // *click* that never moves still adds a vertex (onContextMenu), so the two
+    // do not collide — and Shift stays free for additive selection.
+    if (e.button === 2) {
+      dragRef.current = { mode: 'pan', start: sp, view: { ...view }, right: true, moved: false };
+      return;
+    }
+
+    // Middle button or the Pan tool → pan.
     if (e.button === 1 || tool === 'pan') {
       dragRef.current = { mode: 'pan', start: sp, view: { ...view } };
       return;
@@ -2276,6 +2305,9 @@ function App() {
     }
     if (drag.mode === 'pan') {
       const dx = sp.x - drag.start.x, dy = sp.y - drag.start.y;
+      // A right-drag that actually travelled must not also fire the context
+      // action on release; a few pixels of hand tremor still counts as a click.
+      if (drag.right && !drag.moved && Math.hypot(dx, dy) > 4) drag.moved = true;
       setView({ ...drag.view, ox: drag.view.ox + dx, oy: drag.view.oy + dy });
     } else if (drag.mode === 'siteMove') {
       const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
@@ -2347,11 +2379,11 @@ function App() {
     }
   };
 
-  // Right-click on a site or building edge inserts a new vertex there.
-  const onContextMenu = (e) => {
-    if (viewMode !== '2d') return;
-    const sp = getScreen(e);
-    const wp = getWorld(e);
+  // Right-click on a site or building edge inserts a new vertex there. Driven
+  // from pointer-up, not from the contextmenu event: Chromium fires contextmenu
+  // on mouse-DOWN, so a right-drag would have inserted a vertex before the pan
+  // had moved a single pixel.
+  const insertVertexAt = (sp, wp) => {
     const { w2s } = makeTransform(view);
     const TOL = 14;
     const projectOnSeg = (p, a, b) => {
@@ -2375,8 +2407,7 @@ function App() {
         if (d < TOL && (!best || d < best.d)) best = { kind: 'obs', oi, i, d };
       }
     });
-    if (!best) return; // not near an edge → leave the native menu alone
-    e.preventDefault();
+    if (!best) return false;
     if (best.kind === 'site') {
       const a = site[best.i], b = site[(best.i + 1) % site.length];
       const np = projectOnSeg(wp, a, b);
@@ -2392,13 +2423,19 @@ function App() {
       } });
       setSelection({ type: 'obs', index: best.oi });
     }
+    return true;
   };
+  // Always swallow the native menu over the canvas: the right button is the pan
+  // gesture now, and a menu popping up mid-drag would abort it.
+  const onContextMenu = (e) => { if (viewMode === '2d') e.preventDefault(); };
 
   const onPointerUp = (e) => {
     const drag = dragRef.current;
     dragRef.current = null;
     guidesRef.current = null;
     if (!drag) return;
+    // A right-click that never travelled is still a click: run the edge action.
+    if (drag.right) { if (!drag.moved) insertVertexAt(getScreen(e), getWorld(e)); return; }
     if (drag.mode === 'vertex') {
       // History is already handled by the CHECKPOINT taken at pointer-down.
     } else if (drag.mode === 'stallMove') {
@@ -2691,9 +2728,13 @@ function App() {
   dupRef.current = duplicateSelection;
   clipRef.current = { copy: copySelection, cut: cutSelection, paste: pasteClipboard };
 
-  // Wheel handling is attached natively (passive:false) so preventDefault
-  // works — see the effect below. Pinch/Ctrl+wheel zooms; two-finger
-  // trackpad scroll pans.
+  // Wheel handling is attached natively (passive:false) so preventDefault works.
+  //
+  // A mouse wheel zooms; a trackpad's two-finger scroll pans. Deciding that per
+  // event tore a single diagonal swipe into alternating pan and zoom (measured:
+  // 12 pan / 12 zoom on one 45° gesture), which felt like panning was broken —
+  // so the decision is latched for the whole burst and only re-taken after the
+  // gesture goes quiet.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -2702,19 +2743,34 @@ function App() {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-      // Scrolling zooms — that is what a wheel is for on a plan. Panning by
-      // scroll stays available on Shift, on a trackpad's horizontal swipe
-      // (nobody zooms with a sideways gesture), and on Space-drag / the Pan
-      // tool as before.
-      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-      if (e.shiftKey || sideways) {
+
+      const now = performance.now();
+      const w = wheelRef.current;
+      const fresh = now - w.at > WHEEL_GAP_MS;
+      w.at = now;
+      if (fresh) {
+        // A mouse wheel arrives as whole notches; a trackpad sends fine-grained
+        // deltas. Judge on the first event of the gesture, where the two are
+        // still easy to tell apart, and read every signal the engines give:
+        // Firefox reports lines (deltaMode 1); Chrome and Safari both expose the
+        // legacy wheelDeltaY, which is an exact multiple of 120 for a wheel and
+        // 3× the raw delta for a trackpad; Safari's mouse deltaY is far smaller
+        // than Chrome's 100, so the size test alone would call it a trackpad.
+        const wd = Math.abs(e.wheelDeltaY != null ? e.wheelDeltaY : (e.wheelDelta || 0));
+        w.zoom = e.deltaMode !== 0
+          || (wd > 0 && wd % 120 === 0)
+          || (e.deltaX === 0 && Math.abs(e.deltaY) >= 40 && Number.isInteger(e.deltaY));
+      }
+      // Modifiers always win, and never latch: pinch-zoom on a trackpad is
+      // ctrl+wheel, and Shift is the escape hatch for panning with a wheel.
+      const zooming = e.ctrlKey || e.metaKey ? true : e.shiftKey ? false : w.zoom;
+
+      if (!zooming) {
         setView((v) => ({ ...v, ox: v.ox - e.deltaX, oy: v.oy - e.deltaY }));
         return;
       }
-      // Normalise to wheel notches first. Chrome reports ±100 per notch,
-      // Firefox reports lines, a trackpad reports small fractions — feeding
-      // the raw delta into exp() made one mouse click a 2.7× jump that
-      // overshot the whole site.
+      // Normalise to notches first. Feeding the raw delta into exp() made one
+      // mouse click a 2.7× jump that overshot the whole site.
       const perNotch = e.deltaMode === 1 ? 1 / 3 : e.deltaMode === 2 ? 1 : 1 / 100;
       const notches = Math.max(-4, Math.min(4, e.deltaY * perNotch));
       setView((v) => {
@@ -2745,7 +2801,14 @@ function App() {
         case 'n': setTool('obstaclepoly'); setDrawing({ points: [] }); break;
         case 'k': setTool('placestall'); break;
         case 'm': setTool('measure'); setMeasure({ points: [] }); setDrawing(null); break;
-        case ' ': setTool('pan'); break;
+        // Hold to pan, release to go back. Without preventDefault the browser
+        // also "clicks" whatever toolbar button still has focus, which set the
+        // tool straight back and made Space-to-pan do nothing at all after you
+        // had touched the toolbar — which is most of the time.
+        case ' ':
+          e.preventDefault();
+          if (!spaceRef.current) { spaceRef.current = tool === 'pan' ? null : tool || 'select'; setTool('pan'); }
+          break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
         case '?': setKeysOpen((o) => !o); break;
         case '/': if (toolSearchRef.current) { e.preventDefault(); toolSearchRef.current.focus(); toolSearchRef.current.select(); } break;
@@ -2784,9 +2847,16 @@ function App() {
         default: break;
       }
     };
+    const onKeyUp = (e) => {
+      if (e.key !== ' ') return;
+      const back = spaceRef.current;
+      spaceRef.current = null;
+      if (back) setTool(back);
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [selection, stallSel]);
+    window.addEventListener('keyup', onKeyUp);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
+  }, [selection, stallSel, tool]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -3032,7 +3102,13 @@ function App() {
 
   // Re-anchor the plan so the site centroid sits at a geographic point.
   const centerOnLatLon = (lat, lon) => {
-    const c = polygonCentroid(doc.site);
+    if (!isFinite(lat) || !isFinite(lon)) return;
+    // polygonCentroid of an empty ring is {NaN, NaN}, and deleting the site is
+    // two clicks away. That wrote a NaN anchor, which Mapbox rejects and
+    // follow2D used to swallow — leaving every later search dead with the
+    // coordinate readout stuck on "NaN, NaN". Fall back to the origin instead.
+    const c0 = polygonCentroid(doc.site);
+    const c = isFinite(c0.x) && isFinite(c0.y) ? c0 : { x: 0, y: 0 };
     const cosLat = Math.cos((lat * Math.PI) / 180);
     const geo = { lat: lat + c.y / 111320, lon: lon - c.x / (111320 * cosLat) };
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, geo }) });
@@ -3065,17 +3141,17 @@ function App() {
     const t = mbTokenInput.trim();
     if (!t) return;
     try { localStorage.setItem('pp_mapbox_token', t); } catch (e) {}
-    setMbToken(t); setMbTokenInput(''); setMap3dError('');
+    setMbToken(t); setMbTokenInput(''); setMap3dError(''); setMapErrHidden(false);
   };
   const clearMbToken = () => {
     try { localStorage.removeItem('pp_mapbox_token'); } catch (e) {}
-    setMbToken(''); setMap3dError('');
+    setMbToken(''); setMap3dError(''); setMapErrHidden(false);
   };
   const changeMapStyle = (s) => {
     try { localStorage.setItem('pp_map_style', s); } catch (e) {}
-    setMap3dError(''); setMapDiag({}); setMapStyle(s);
+    setMap3dError(''); setMapErrHidden(false); setMapDiag({}); setMapStyle(s);
   };
-  const retryMap = () => { setMap3dError(''); setMapDiag({}); setMapNonce((n) => n + 1); };
+  const retryMap = () => { setMap3dError(''); setMapErrHidden(false); setMapDiag({}); setMapNonce((n) => n + 1); };
 
   // Palette grouped and filtered. A query searches label + synonyms and forces
   // every matching group open, so results are never hidden behind a collapse.
@@ -3204,7 +3280,8 @@ function App() {
     ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['Spatie', 'Pannen']]],
     ['Bewerken', [['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
-    ['Weergave', [['G', 'Raster aan/uit'], ['Scrollen', 'In- en uitzoomen'], ['Shift + scrollen', 'Pannen'], ['+ / -', 'In- en uitzoomen'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
+    ['Pannen & zoomen', [['Rechtermuis slepen', 'Pannen'], ['Middelste muisknop', 'Pannen'], ['Spatie ingedrukt', 'Pannen'], ['Muiswiel', 'In- en uitzoomen'], ['Trackpad (2 vingers)', 'Pannen'], ['Shift + scrollen', 'Pannen'], ['Ctrl + scrollen / knijpen', 'In- en uitzoomen'], ['+ / -', 'In- en uitzoomen']]],
+    ['Weergave', [['G', 'Raster aan/uit'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
   ];
   const keysModal = () => html`
     <div className="modal-backdrop" onClick=${() => setKeysOpen(false)}>
@@ -3619,8 +3696,9 @@ function App() {
             </div>
             <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener">Gratis token aanmaken →</a>
           </div>`}
-        ${mbToken && map3dError && html`
+        ${mbToken && map3dError && !mapErrHidden && html`
           <div className="token-panel">
+            <button className="token-x" title="Wegklikken" onClick=${() => setMapErrHidden(true)}>✕</button>
             <h4>Kaart niet beschikbaar</h4>
             <p>${map3dError}</p>
             <div className="sel-actions">

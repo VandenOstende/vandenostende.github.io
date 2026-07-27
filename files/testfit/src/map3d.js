@@ -7,10 +7,10 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=e7e98729';
-import { STALL_TYPES } from './solver.js?v=e7e98729';
-import { polyOf } from './geometry.js?v=e7e98729';
-import { ANNOT_TYPES } from './annots.js?v=e7e98729';
+import { localToLatLon } from './basemap.js?v=a28e74e7';
+import { STALL_TYPES } from './solver.js?v=a28e74e7';
+import { polyOf } from './geometry.js?v=a28e74e7';
+import { ANNOT_TYPES } from './annots.js?v=a28e74e7';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -237,7 +237,12 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
     // eslint-disable-next-line no-console
     console.warn('[ParkPlanner map]', status || '', msg);
     diag({ detail: (status ? status + ' · ' : '') + msg });
-    if (status === 401 || status === 403 || /token|unauthorized|access|forbidden/i.test(msg)) {
+    // Only before the style has loaded. This handler stays registered for the
+    // life of the map, so without the guard a single refused tile or sprite
+    // long after a successful load re-raised the full-canvas "token geweigerd"
+    // card over a map that was working fine. `access` came out of the pattern
+    // for the same reason: it matches far too much ordinary error text.
+    if (!ready && (status === 401 || status === 403 || /token|unauthorized|forbidden/i.test(msg))) {
       diag({ style: 'TOKEN GEWEIGERD (' + (status || '401/403') + ')' });
       onError('Mapbox-token geweigerd (' + (status || '401/403') + '). Gebruik een public token (pk.…) zonder URL-restrictie, of voeg vandenostende.github.io toe aan de toegestane URLs van het token.');
     } else if (!ready) onError('Kaartfout: ' + msg);
@@ -288,7 +293,16 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
 
   return {
     map,
-    follow2D(center, zoom) { try { map.jumpTo({ center, zoom, bearing: 0, pitch: 0 }); } catch (e) {} },
+    // A bare catch here meant a rejected camera (a NaN anchor, say) froze the
+    // basemap under a plan that kept moving, with nothing reported anywhere.
+    follow2D(center, zoom) {
+      if (!center || !isFinite(center[0]) || !isFinite(center[1]) || !isFinite(zoom)) {
+        diag({ detail: 'ongeldige camera genegeerd (' + center + ' @ ' + zoom + ')' });
+        return;
+      }
+      try { map.jumpTo({ center, zoom, bearing: 0, pitch: 0 }); }
+      catch (e) { diag({ detail: 'kaartcamera weigerde: ' + (e && e.message) }); }
+    },
     setMode(is3d) {
       pending3d = is3d;
       try {
