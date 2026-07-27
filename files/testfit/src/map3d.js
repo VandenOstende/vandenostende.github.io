@@ -213,10 +213,29 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
       const c = container.querySelector('canvas');
       if (!c) { diag({ canvas: 'GEEN CANVAS' }); return; }
       const r = c.getBoundingClientRect();
-      const cs = getComputedStyle(c);
-      diag({ canvas: Math.round(r.width) + '×' + Math.round(r.height) + ' · ' + cs.position + ' · opacity ' + cs.opacity + (r.width < 50 || r.height < 50 ? ' ⚠️' : '') });
+      const box = container.getBoundingClientRect();
+      // A canvas smaller than its container means Mapbox is holding a stale
+      // measurement — it renders a sliver and the rest stays empty.
+      const stale = Math.abs(r.height - box.height) > 4 || Math.abs(r.width - box.width) > 4;
+      diag({ canvas: Math.round(r.width) + '×' + Math.round(r.height) + ' · vak ' + Math.round(box.width) + '×' + Math.round(box.height) + (stale ? ' ⚠️ mismatch' : ' ok') });
     } catch (e) {}
   };
+
+  // Mapbox measures its container once at construction and never re-checks on
+  // its own. If the grid row had not settled yet it locks in a wrong height
+  // (e.g. 300px) and paints only a sliver, hidden behind the plan canvas.
+  // Track the container so every layout change re-measures.
+  let ro = null;
+  try {
+    ro = new ResizeObserver(() => {
+      try { map.resize(); } catch (e) {}
+      reportCanvas();
+    });
+    ro.observe(container);
+  } catch (e) {}
+  // Belt and braces for browsers/layouts where the observer fires before the
+  // final box is known.
+  [0, 150, 500, 1200].forEach((t) => setTimeout(() => { try { map.resize(); } catch (e) {} }, t));
 
   map.on('style.load', () => {
     ready = true;
@@ -248,6 +267,6 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
     setPlan(p) { lastPlan = p; try { setData(map, p, geo); } catch (e) {} },
     resize() { try { map.resize(); } catch (e) {} },
     recenter(g) { try { map.jumpTo({ center: [g.lon, g.lat] }); } catch (e) {} },
-    destroy() { try { map.remove(); } catch (e) {} },
+    destroy() { try { if (ro) ro.disconnect(); } catch (e) {} try { map.remove(); } catch (e) {} },
   };
 }
