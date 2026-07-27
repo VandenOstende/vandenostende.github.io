@@ -2241,6 +2241,7 @@ function App() {
                 <div><span>Bibliotheek</span><b>${mapDiag.lib || '—'}</b></div>
                 <div><span>Stijl</span><b>${mapDiag.style || '—'}</b></div>
                 <div><span>Tegels</span><b>${mapDiag.tiles == null ? '—' : mapDiag.tiles}</b></div>
+                <div><span>Canvas</span><b>${mapDiag.canvas || '—'}</b></div>
                 ${mapDiag.detail && html`<div className="map-diag-detail">${mapDiag.detail}</div>`}
               </div>`}`}
         </div>

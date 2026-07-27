@@ -45,7 +45,10 @@ function loadScript(src) {
   });
 }
 
+let cssDone = false;
 function loadCss(href) {
+  if (cssDone) return;
+  cssDone = true;
   try {
     const css = document.createElement('link');
     css.rel = 'stylesheet'; css.href = href;
@@ -57,7 +60,9 @@ function loadMapbox(diag) {
   // Both early-outs must still report, or the readout is stuck on its initial
   // placeholder while everything downstream is fine (re-init after a style
   // switch hits this path, since the library is already in memory).
-  if (window.mapboxgl) { diag({ lib: 'ok (al geladen)' }); return Promise.resolve(window.mapboxgl); }
+  // Even here the stylesheet must be ensured: a re-init reuses the library but
+  // may be the first attempt at the CSS.
+  if (window.mapboxgl) { loadCss(MB_SOURCES[0].css); diag({ lib: 'ok (al geladen)' }); return Promise.resolve(window.mapboxgl); }
   if (mbPromise) {
     diag({ lib: 'laden…' });
     return mbPromise.then((gl) => { diag({ lib: 'ok (al geladen)' }); return gl; });
@@ -201,17 +206,30 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
       onError('Mapbox-token geweigerd (' + (status || '401/403') + '). Gebruik een public token (pk.…) zonder URL-restrictie, of voeg vandenostende.github.io toe aan de toegestane URLs van het token.');
     } else if (!ready) onError('Kaartfout: ' + msg);
   });
+  // What actually ended up on screen — the missing link when tiles load fine
+  // but nothing is visible.
+  const reportCanvas = () => {
+    try {
+      const c = container.querySelector('canvas');
+      if (!c) { diag({ canvas: 'GEEN CANVAS' }); return; }
+      const r = c.getBoundingClientRect();
+      const cs = getComputedStyle(c);
+      diag({ canvas: Math.round(r.width) + '×' + Math.round(r.height) + ' · ' + cs.position + ' · opacity ' + cs.opacity + (r.width < 50 || r.height < 50 ? ' ⚠️' : '') });
+    } catch (e) {}
+  };
+
   map.on('style.load', () => {
     ready = true;
     clearTimeout(loadTimer);
     diag({ style: 'ok' });
+    setTimeout(reportCanvas, 120);
     onError('');
     try { addPlanLayers(map, lastPlan, geo); } catch (e) {}
     if (pending3d) { setPlanVisible(map, true); }
     setTimeout(() => { try { map.resize(); } catch (e) {} }, 60);
   });
   map.on('data', (e) => { if (e && e.tile) tiles++; });
-  map.on('idle', () => diag({ tiles }));
+  map.on('idle', () => { diag({ tiles }); reportCanvas(); });
 
   return {
     map,
