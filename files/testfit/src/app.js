@@ -4,17 +4,17 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=b5dc4bf3';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=814d3036';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=b5dc4bf3';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=b5dc4bf3';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=b5dc4bf3';
-import { parseParcel, simplifyRing } from './importers.js?v=b5dc4bf3';
-import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=b5dc4bf3';
-import { BUILD_ID } from './build.js?v=b5dc4bf3';
+} from './geometry.js?v=814d3036';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=814d3036';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=814d3036';
+import { parseParcel, simplifyRing } from './importers.js?v=814d3036';
+import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=814d3036';
+import { BUILD_ID } from './build.js?v=814d3036';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -240,6 +240,7 @@ export const UI_PARTS = [
 
   { id: 'secLocation', group: 'Linkerpaneel', label: 'Locatie' },
   { id: 'secDraw', group: 'Linkerpaneel', label: 'Teken (infrastructuur)' },
+  { id: 'secObjects', group: 'Linkerpaneel', label: 'Objecten' },
   { id: 'secSiteShape', group: 'Linkerpaneel', label: 'Site-vorm' },
   { id: 'secLayers', group: 'Linkerpaneel', label: 'Lagen' },
   { id: 'secPreset', group: 'Linkerpaneel', label: 'Preset' },
@@ -1237,6 +1238,7 @@ function App() {
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' for roads (draggable object)
   const [annotCurved, setAnnotCurved] = useState(true);
   const [toolQuery, setToolQuery] = useState('');
+  const [objQuery, setObjQuery] = useState('');
   // Saved layout. Absent id => visible, so a part added later is on by default
   // rather than silently missing for everyone who already saved a layout.
   const [hidden, setHidden] = useState(() => {
@@ -1303,6 +1305,7 @@ function App() {
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
+  const clipRef = useRef({});        // latest copy/cut/paste (for Cmd/Ctrl+C/X/V)
   const docRef = useRef(null);        // latest doc for the window key handler
   const vmRef = useRef('2d');          // latest viewMode (for the native wheel handler)
   const viewRef = useRef(null);        // latest view (async map init reads this, not a stale capture)
@@ -1310,6 +1313,7 @@ function App() {
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
   const guidesRef = useRef(null);  // alignment guides shown during a move drag
+  const mouseRef = useRef(null);   // last canvas mouse position, in world units
   const map3dRef = useRef(null);   // Mapbox controller when in 3D view
   const workerRef = useRef(null);  // solver web worker (null → inline solve)
   const reqRef = useRef(0);        // latest solve request id (stale-drop)
@@ -1360,7 +1364,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=b5dc4bf3', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=814d3036', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1495,7 +1499,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=b5dc4bf3').then(async (m) => {
+    import('./map3d.js?v=814d3036').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -1764,8 +1768,22 @@ function App() {
   // ---------- Annotation (infrastructure) actions ----------
   const addAnnotation = (ann) =>
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: [...(d.annotations || []), ann] }) });
-  const deleteAnnotation = (index) =>
+  // selection is {type, index} against a live array, so removing an entry has
+  // to move the selection with it — otherwise the inspector silently starts
+  // showing a different object.
+  const reindexAfterDelete = (type, removed) => setSelection((cur) => {
+    if (!cur || cur.type !== type) return cur;
+    if (cur.index === removed) return null;
+    return cur.index > removed ? { ...cur, index: cur.index - 1 } : cur;
+  });
+  const deleteAnnotation = (index) => {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: (d.annotations || []).filter((_, i) => i !== index) }) });
+    reindexAfterDelete('annot', index);
+  };
+  const deleteObstacle = (index) => {
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== index) }) });
+    reindexAfterDelete('obs', index);
+  };
   // Resize a driveway in place: rebuild its rectangle from the stored edge frame.
   const setDrivewayWidth = (index, width) => dispatch({ type: 'COMMIT', updater: (d) => {
     const anns = (d.annotations || []).slice();
@@ -2085,6 +2103,7 @@ function App() {
   const onPointerMove = (e) => {
     const sp = getScreen(e);
     const wp = getWorld(e);
+    mouseRef.current = wp;
     const drag = dragRef.current;
 
     if (!drag) {
@@ -2339,6 +2358,158 @@ function App() {
   // Duplicate whatever is selected (building, annotation, or stalls), offset a
   // little so the copy is visible, and select the copy.
   const offsetPts = (pts, dx, dy) => pts.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  // ---------- Object list ----------
+  // Everything the user placed, grouped. Solver stalls are summarised per type
+  // rather than listed: 105 rows would make the list useless.
+  const objectRows = useMemo(() => {
+    const q = objQuery.trim().toLowerCase();
+    const groups = new Map();
+    const push = (grp, row) => { if (!groups.has(grp)) groups.set(grp, []); groups.get(grp).push(row); };
+    (doc.annotations || []).forEach((a, i) => {
+      const t = ANNOT_TYPES[a.kind] || {};
+      push(t.group || 'Overig', {
+        key: 'a' + i, kind: 'annot', index: i, color: t.color || '#94a3b8',
+        label: t.label || a.kind, sub: a.points && a.points.length > 1 ? a.points.length + ' punten' : '',
+      });
+    });
+    (doc.obstacles || []).forEach((o, i) => push('Gebouwen', {
+      key: 'o' + i, kind: 'obs', index: i, color: '#64748b',
+      label: 'Gebouw', sub: ((o && o.floors) || 1) + ' verd.',
+    }));
+    (doc.manualStalls || []).forEach((ms, i) => push('Handmatige vakken', {
+      key: 'm' + i, kind: 'manual', index: i, color: (STALL_TYPES[ms.type] || STALL_TYPES.standard).color,
+      label: (STALL_TYPES[ms.type] || STALL_TYPES.standard).label, sub: 'vak',
+    }));
+    const byType = new Map();
+    for (const st of deco.stalls) if (!st.manual) byType.set(st.type, (byType.get(st.type) || 0) + 1);
+    for (const [type, n] of byType) push('Solver-vakken', {
+      key: 's' + type, kind: 'stallGroup', stallType: type,
+      color: (STALL_TYPES[type] || STALL_TYPES.standard).color,
+      label: (STALL_TYPES[type] || STALL_TYPES.standard).label, sub: n + ' vakken',
+    });
+    const out = [];
+    for (const [grp, rows] of groups) {
+      const hit = q ? rows.filter((r) => (r.label + ' ' + grp).toLowerCase().includes(q)) : rows;
+      if (hit.length) out.push([grp, hit]);
+    }
+    return out;
+  }, [doc.annotations, doc.obstacles, doc.manualStalls, deco.stalls, objQuery]);
+
+  // Bring an object into view without changing the zoom more than needed.
+  const focusPoly = (poly) => {
+    if (!poly || poly.length < 1) return;
+    const b = boundingBox(poly);
+    const sz = sizeRef.current;
+    const cx = b.minX + b.w / 2, cy = b.minY + b.h / 2;
+    setView((v) => ({ ...v, ox: sz.w / 2 - cx * v.scale, oy: sz.h / 2 - cy * v.scale }));
+  };
+  const selectRow = (r) => {
+    if (r.kind === 'stallGroup') {
+      setSelection(null); setAisleSel(null);
+      setStallSel(deco.stalls.filter((s) => !s.manual && s.type === r.stallType).map((s) => s.key));
+      return;
+    }
+    if (r.kind === 'manual') {
+      const ms = (doc.manualStalls || [])[r.index];
+      setSelection(null); setAisleSel(null); setStallSel(ms ? [stallKey(ms.poly)] : []);
+      return;
+    }
+    setStallSel([]); setAisleSel(null);
+    setSelection({ type: r.kind === 'obs' ? 'obs' : 'annot', index: r.index });
+  };
+  const rowPoly = (r) => {
+    if (r.kind === 'annot') return (doc.annotations || [])[r.index]?.points;
+    if (r.kind === 'obs') return polyOf(doc.obstacles[r.index]);
+    if (r.kind === 'manual') return (doc.manualStalls || [])[r.index]?.poly;
+    if (r.kind === 'stallGroup') {
+      const all = deco.stalls.filter((s) => !s.manual && s.type === r.stallType);
+      return all.length ? all.flatMap((s) => s.poly) : null;
+    }
+    return null;
+  };
+  const deleteRow = (r) => {
+    if (r.kind === 'annot') deleteAnnotation(r.index);
+    else if (r.kind === 'obs') deleteObstacle(r.index);
+    else if (r.kind === 'manual') {
+      const ms = (doc.manualStalls || [])[r.index];
+      if (ms) { deleteStalls([stallKey(ms.poly)]); setStallSel([]); }
+    }
+  };
+  const isRowSelected = (r) => {
+    if (r.kind === 'annot') return selection && selection.type === 'annot' && selection.index === r.index;
+    if (r.kind === 'obs') return selection && selection.type === 'obs' && selection.index === r.index;
+    return false;
+  };
+
+  // ---------- Clipboard ----------
+  // Stored in localStorage so a set of signs or a worked-out entrance can be
+  // reused in another project or tab, not just within this session.
+  const CLIP_KEY = 'pp_clipboard';
+  const readClip = () => {
+    try { return JSON.parse(localStorage.getItem(CLIP_KEY) || 'null'); } catch (e) { return null; }
+  };
+  const writeClip = (clip) => {
+    try { localStorage.setItem(CLIP_KEY, JSON.stringify(clip)); } catch (e) {}
+  };
+  // Centre of everything copied, so pasting keeps the group's internal spacing.
+  const clipCentre = (items) => {
+    let n = 0, sx = 0, sy = 0;
+    for (const it of items) for (const p of (it.points || it.poly || [])) { sx += p.x; sy += p.y; n++; }
+    return n ? { x: sx / n, y: sy / n } : { x: 0, y: 0 };
+  };
+  const copySelection = () => {
+    const d = docRef.current || doc;
+    let items = null;
+    if (selection && selection.type === 'annot' && (d.annotations || [])[selection.index]) {
+      items = [{ what: 'annot', data: d.annotations[selection.index] }];
+    } else if (selection && selection.type === 'obs' && d.obstacles[selection.index]) {
+      const o = d.obstacles[selection.index];
+      items = [{ what: 'obs', data: { poly: polyOf(o), floors: (o && o.floors) || 1 } }];
+    } else if (stallSel.length) {
+      const st = stallSel.map((k) => deco.stalls.find((x) => x.key === k)).filter(Boolean);
+      if (st.length) items = st.map((x) => ({ what: 'stall', data: { poly: x.poly, type: x.type } }));
+    }
+    if (!items || !items.length) return false;
+    const geo = items.map((i) => i.data);
+    writeClip({ items, centre: clipCentre(geo) });
+    return true;
+  };
+  const cutSelection = () => {
+    if (!copySelection()) return;
+    // Reuse the delete paths so override cleanup and reindexing are not bypassed.
+    if (selection && selection.type === 'annot') deleteAnnotation(selection.index);
+    else if (selection && selection.type === 'obs') deleteObstacle(selection.index);
+    else if (stallSel.length) { deleteStalls(stallSel); setStallSel([]); }
+  };
+  const pasteClipboard = () => {
+    const clip = readClip();
+    if (!clip || !clip.items || !clip.items.length) return;
+    // Land on the cursor when it is over the canvas; otherwise offset like Cmd+D.
+    const at = mouseRef.current;
+    const dx = at ? at.x - clip.centre.x : 4;
+    const dy = at ? at.y - clip.centre.y : 4;
+    const shift = (pts) => pts.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+    const anns = [], obs = [], stalls = [];
+    for (const it of clip.items) {
+      if (it.what === 'annot') {
+        const c = { ...it.data, points: shift(it.data.points) };
+        if (it.data.anchor) c.anchor = { x: it.data.anchor.x + dx, y: it.data.anchor.y + dy };
+        anns.push(c);
+      } else if (it.what === 'obs') obs.push({ ...it.data, poly: shift(it.data.poly) });
+      else if (it.what === 'stall') stalls.push({ ...it.data, poly: shift(it.data.poly) });
+    }
+    dispatch({ type: 'COMMIT', updater: (d) => ({
+      ...d,
+      annotations: anns.length ? [...(d.annotations || []), ...anns] : d.annotations,
+      obstacles: obs.length ? [...d.obstacles, ...obs] : d.obstacles,
+      manualStalls: stalls.length ? [...(d.manualStalls || []), ...stalls] : d.manualStalls,
+    }) });
+    // Select what was just pasted, matching duplicateSelection's behaviour.
+    if (anns.length) { setSelection({ type: 'annot', index: (doc.annotations || []).length + anns.length - 1 }); setStallSel([]); }
+    else if (obs.length) { setSelection({ type: 'obs', index: doc.obstacles.length + obs.length - 1 }); setStallSel([]); }
+    else if (stalls.length) { setSelection(null); setStallSel(stalls.map((c) => stallKey(c.poly))); }
+  };
+
   const duplicateSelection = () => {
     const D = 4;
     if (selection && selection.type === 'obs' && doc.obstacles[selection.index]) {
@@ -2362,6 +2533,7 @@ function App() {
     }
   };
   dupRef.current = duplicateSelection;
+  clipRef.current = { copy: copySelection, cut: cutSelection, paste: pasteClipboard };
 
   // Wheel handling is attached natively (passive:false) so preventDefault
   // works — see the effect below. Pinch/Ctrl+wheel zooms; two-finger
@@ -2396,6 +2568,9 @@ function App() {
       if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); dispatch({ type: e.shiftKey ? 'REDO' : 'UNDO' }); return; }
       if (meta && e.key.toLowerCase() === 'y') { e.preventDefault(); dispatch({ type: 'REDO' }); return; }
       if (meta && e.key.toLowerCase() === 'd') { e.preventDefault(); dupRef.current(); return; }
+      if (meta && e.key.toLowerCase() === 'c') { e.preventDefault(); clipRef.current.copy(); return; }
+      if (meta && e.key.toLowerCase() === 'x') { e.preventDefault(); clipRef.current.cut(); return; }
+      if (meta && e.key.toLowerCase() === 'v') { e.preventDefault(); clipRef.current.paste(); return; }
       switch (e.key.toLowerCase()) {
         case 'v': setTool('select'); break;
         case 'p': setTool('site'); setDrawing({ points: [] }); break;
@@ -2432,8 +2607,7 @@ function App() {
           if (stallSel.length) {
             deleteStalls(stallSel); setStallSel([]);
           } else if (selection && selection.type === 'obs') {
-            dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== selection.index) }) });
-            setSelection(null);
+            deleteObstacle(selection.index);
           } else if (selection && selection.type === 'annot') {
             deleteAnnotation(selection.index); setSelection(null);
           } else if (selection && selection.type === 'site') {
@@ -2809,7 +2983,7 @@ function App() {
   const resizer = (side) => html`
     <div className=${'panel-resize ' + side} onPointerDown=${startResize(side)}
       onPointerMove=${onResizeMove} onPointerUp=${endResize} onPointerCancel=${endResize}
-      onDblClick=${() => { const w = { ...panelW, [side]: PANEL_W[side].def }; setPanelW(w); persist('pp_panel_widths', w); }}
+      onDoubleClick=${() => { const w = { ...panelW, [side]: PANEL_W[side].def }; setPanelW(w); persist('pp_panel_widths', w); }}
       title=${'Sleep om te verbreden · dubbelklik voor standaard'}></div>`;
 
   // Every shortcut in one place. Half of these existed but were invisible —
@@ -3061,6 +3235,32 @@ function App() {
                 </label>`}
             </div>`}
         </div>`}
+        ${vis('secObjects') && html`
+        <div className="section">
+          <h3>Objecten <span className="obj-count">${objectRows.reduce((n, g) => n + g[1].length, 0)}</span></h3>
+          <input className="tool-search" type="search" placeholder="Zoek object…"
+            value=${objQuery} onInput=${(e) => setObjQuery(e.target.value)} />
+          ${objectRows.length === 0 && html`<div className="mix-note">Nog niets geplaatst.</div>`}
+          ${objectRows.map(([grp, rows]) => html`
+            <div className="tool-group" key=${grp}>
+              <div className="tool-group-h" style=${{ cursor: 'default' }}>
+                <span>${grp}</span><span className="tool-group-n">${rows.length}</span>
+              </div>
+              ${rows.map((r) => html`
+                <div key=${r.key} className=${'obj-row' + (isRowSelected(r) ? ' active' : '')}
+                  onClick=${() => selectRow(r)}
+                  onDoubleClick=${() => { selectRow(r); focusPoly(rowPoly(r)); }}
+                  title="Klik selecteert · dubbelklik brengt in beeld">
+                  <span className="dot" style=${{ background: r.color }}></span>
+                  <span className="obj-label">${r.label}</span>
+                  <span className="obj-sub">${r.sub}</span>
+                  ${r.kind !== 'stallGroup' && html`
+                    <button className="obj-x" title="Verwijderen"
+                      onClick=${(e) => { e.stopPropagation(); deleteRow(r); }}>✕</button>`}
+                </div>`)}
+            </div>`)}
+        </div>`}
+
         ${vis('secSiteShape') && html`
         <div className="section">
           <h3>Site-vorm</h3>

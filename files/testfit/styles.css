@@ -746,3 +746,44 @@ body.resizing .panel-resize { pointer-events: auto; }
   flex: none;
 }
 .keys-row span { color: var(--muted); }
+
+/* ---- Object list ---- */
+.obj-count {
+  float: right;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+.obj-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.obj-row:hover { background: var(--panel-2); }
+.obj-row.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.obj-row .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.obj-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obj-sub { color: var(--muted); font-size: 10.5px; flex: none; }
+.obj-x {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+  opacity: 0;
+}
+.obj-row:hover .obj-x { opacity: 1; }
+.obj-x:hover { color: var(--danger); }
