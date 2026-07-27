@@ -4,17 +4,17 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=4f0ea50b';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=40d02f16';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=4f0ea50b';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=4f0ea50b';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=4f0ea50b';
-import { parseParcel, simplifyRing } from './importers.js?v=4f0ea50b';
-import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=4f0ea50b';
-import { BUILD_ID } from './build.js?v=4f0ea50b';
+} from './geometry.js?v=40d02f16';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=40d02f16';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=40d02f16';
+import { parseParcel, simplifyRing } from './importers.js?v=40d02f16';
+import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=40d02f16';
+import { BUILD_ID } from './build.js?v=40d02f16';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -225,6 +225,56 @@ function fitView(site, width, height, pad = 60) {
   const oy = (height - bb.h * scale) / 2 - bb.minY * scale;
   return { scale, ox, oy };
 }
+
+// ---------- Hideable UI parts ----------
+// Nothing in the shell carried a stable identifier, so these ids are invented
+// and become the keys in the saved layout — renaming one silently resets that
+// part to visible for existing users.
+//
+// The Weergave menu itself is deliberately absent: making it hideable would let
+// you lock yourself out with no way back.
+export const UI_GROUPS = ['Panelen', 'Linkerpaneel', 'Rechterpaneel', 'Werkbalk', 'Canvas'];
+export const UI_PARTS = [
+  { id: 'panelLeft', group: 'Panelen', label: 'Linkerpaneel' },
+  { id: 'panelRight', group: 'Panelen', label: 'Rechterpaneel' },
+
+  { id: 'secLocation', group: 'Linkerpaneel', label: 'Locatie' },
+  { id: 'secDraw', group: 'Linkerpaneel', label: 'Teken (infrastructuur)' },
+  { id: 'secSiteShape', group: 'Linkerpaneel', label: 'Site-vorm' },
+  { id: 'secLayers', group: 'Linkerpaneel', label: 'Lagen' },
+  { id: 'secPreset', group: 'Linkerpaneel', label: 'Preset' },
+  { id: 'secFoot', group: 'Linkerpaneel', label: 'Voettekst' },
+
+  { id: 'secMetrics', group: 'Rechterpaneel', label: 'Metrics' },
+  { id: 'secStallAisle', group: 'Rechterpaneel', label: 'Vak & rijstrook' },
+  { id: 'secConstraints', group: 'Rechterpaneel', label: 'Site-constraints' },
+  { id: 'secMix', group: 'Rechterpaneel', label: 'Vaktypes (mix)' },
+  { id: 'secProgram', group: 'Rechterpaneel', label: 'Programma & ratio' },
+
+  { id: 'tbTools', group: 'Werkbalk', label: 'Gereedschappen' },
+  { id: 'tbNewSite', group: 'Werkbalk', label: 'Nieuwe site' },
+  { id: 'tbAxis', group: 'Werkbalk', label: 'Rij-as & Reset' },
+  { id: 'tbUndo', group: 'Werkbalk', label: 'Undo / Redo' },
+  { id: 'tbView', group: 'Werkbalk', label: '2D / 3D' },
+  { id: 'tbTheme', group: 'Werkbalk', label: 'Thema-knop' },
+  { id: 'tbZoom', group: 'Werkbalk', label: 'Zoom & Fit' },
+  { id: 'tbFile', group: 'Werkbalk', label: 'Opslaan / Laden / Perceel' },
+  { id: 'tbExport', group: 'Werkbalk', label: 'Export' },
+
+  { id: 'ovDealbar', group: 'Canvas', label: 'Tabulatiebalk' },
+  { id: 'ovHud', group: 'Canvas', label: 'HUD (vakken, schaal)' },
+  { id: 'ovHint', group: 'Canvas', label: 'Hint-balk' },
+  { id: 'ovAttrib', group: 'Canvas', label: 'Kaartattributie' },
+];
+// Ready-made layouts. Anything not listed is hidden, so adding a part later
+// does not silently join every preset.
+const WORKSPACE_PRESETS = {
+  Alles: null, // null = everything visible
+  Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
+  Tekenen: ['panelLeft', 'secDraw', 'secLayers', 'secSiteShape', 'tbTools', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
+  Analyse: ['panelRight', 'secMetrics', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
+};
+const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
 
 // ---------- Canvas theme ----------
 // Only the colours that actually break when the backdrop flips. Meaning-bearing
@@ -1118,6 +1168,23 @@ function App() {
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' for roads (draggable object)
   const [annotCurved, setAnnotCurved] = useState(true);
   const [toolQuery, setToolQuery] = useState('');
+  // Saved layout. Absent id => visible, so a part added later is on by default
+  // rather than silently missing for everyone who already saved a layout.
+  const [hidden, setHidden] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pp_ui_hidden') || '{}') || {}; } catch (e) { return {}; }
+  });
+  const [panelW, setPanelW] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('pp_panel_widths') || '{}') || {};
+      return { left: +v.left || PANEL_W.left.def, right: +v.right || PANEL_W.right.def };
+    } catch (e) { return { left: PANEL_W.left.def, right: PANEL_W.right.def }; }
+  });
+  const [workspaces, setWorkspaces] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pp_workspaces') || '{}') || {}; } catch (e) { return {}; }
+  });
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [wsName, setWsName] = useState('');
+  const resizeRef = useRef(null);
   const [openGroups, setOpenGroups] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pp_tool_groups') || '{}') || {}; } catch (e) { return {}; }
   });
@@ -1222,7 +1289,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=4f0ea50b', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=40d02f16', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1357,7 +1424,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=4f0ea50b').then(async (m) => {
+    import('./map3d.js?v=40d02f16').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -2550,6 +2617,107 @@ function App() {
     return next;
   });
 
+  // ---------- Layout: visibility, panel widths, workspaces ----------
+  const vis = (id) => !hidden[id];
+  const persist = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} };
+  const setHiddenSaved = (next) => { setHidden(next); persist('pp_ui_hidden', next); };
+  const togglePart = (id) => setHiddenSaved({ ...hidden, [id]: !hidden[id] });
+  const showAll = () => setHiddenSaved({});
+  const applyVisibleList = (ids) => {
+    if (!ids) return showAll();
+    const keep = new Set(ids);
+    const next = {};
+    for (const p of UI_PARTS) if (!keep.has(p.id)) next[p.id] = true;
+    setHiddenSaved(next);
+  };
+  const applyWorkspace = (name) => {
+    if (WORKSPACE_PRESETS[name] !== undefined) return applyVisibleList(WORKSPACE_PRESETS[name]);
+    const ws = workspaces[name];
+    if (!ws) return;
+    setHiddenSaved(ws.hidden || {});
+    if (ws.widths) { setPanelW(ws.widths); persist('pp_panel_widths', ws.widths); }
+  };
+  // A workspace stores widths as well as visibility: both describe the same
+  // arrangement, and restoring one without the other looks broken.
+  const saveWorkspace = () => {
+    const name = wsName.trim();
+    if (!name) return;
+    const next = { ...workspaces, [name]: { hidden, widths: panelW } };
+    setWorkspaces(next); persist('pp_workspaces', next); setWsName('');
+  };
+  const deleteWorkspace = (name) => {
+    const next = { ...workspaces }; delete next[name];
+    setWorkspaces(next); persist('pp_workspaces', next);
+  };
+
+  // Panel resize. The canvas pointer pipeline is bound to the canvas element,
+  // so a panel edge needs its own handling; pointer capture on the handle keeps
+  // the drag alive when the cursor crosses the canvas or leaves the window.
+  const startResize = (side) => (e) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = panelW[side];
+    resizeRef.current = { side, startX, startW };
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
+    document.body.classList.add('resizing');
+  };
+  const onResizeMove = (e) => {
+    const r = resizeRef.current;
+    if (!r) return;
+    const lim = PANEL_W[r.side];
+    const delta = r.side === 'left' ? e.clientX - r.startX : r.startX - e.clientX;
+    const w = Math.max(lim.min, Math.min(lim.max, r.startW + delta));
+    setPanelW((cur) => (cur[r.side] === w ? cur : { ...cur, [r.side]: w }));
+  };
+  const endResize = (e) => {
+    if (!resizeRef.current) return;
+    resizeRef.current = null;
+    document.body.classList.remove('resizing');
+    try { e.target.releasePointerCapture(e.pointerId); } catch (err) {}
+    setPanelW((cur) => { persist('pp_panel_widths', cur); return cur; });
+  };
+  const resizer = (side) => html`
+    <div className=${'panel-resize ' + side} onPointerDown=${startResize(side)}
+      onPointerMove=${onResizeMove} onPointerUp=${endResize} onPointerCancel=${endResize}
+      onDblClick=${() => { const w = { ...panelW, [side]: PANEL_W[side].def }; setPanelW(w); persist('pp_panel_widths', w); }}
+      title=${'Sleep om te verbreden · dubbelklik voor standaard'}></div>`;
+
+  // The one control that is never hideable — hiding it would lock you out.
+  const viewMenu = () => html`
+    <div className="dropdown">
+      <button className="btn ghost" onClick=${() => setViewMenuOpen((o) => !o)} title="Toon of verberg onderdelen">👁 Weergave ▾</button>
+      ${viewMenuOpen && html`
+        <div className="menu view-menu" onMouseLeave=${() => setViewMenuOpen(false)}>
+          <div className="vm-row vm-actions">
+            ${Object.keys(WORKSPACE_PRESETS).map((n) => html`
+              <button key=${n} className="btn ghost" onClick=${() => applyWorkspace(n)}>${n}</button>`)}
+          </div>
+          ${UI_GROUPS.map((g) => html`
+            <div key=${g} className="vm-group">
+              <div className="vm-h">${g}</div>
+              ${UI_PARTS.filter((pt) => pt.group === g).map((pt) => html`
+                <label key=${pt.id} className="vm-item">
+                  <input type="checkbox" checked=${vis(pt.id)} onChange=${() => togglePart(pt.id)} />
+                  <span>${pt.label}</span>
+                </label>`)}
+            </div>`)}
+          <div className="vm-group">
+            <div className="vm-h">Werkruimtes</div>
+            ${Object.keys(workspaces).length === 0 && html`<div className="vm-empty">Nog geen eigen werkruimte opgeslagen.</div>`}
+            ${Object.keys(workspaces).map((n) => html`
+              <div key=${n} className="vm-row">
+                <button className="btn ghost vm-ws" onClick=${() => applyWorkspace(n)}>${n}</button>
+                <button className="btn ghost" title="Verwijderen" onClick=${() => deleteWorkspace(n)}>✕</button>
+              </div>`)}
+            <div className="vm-row">
+              <input type="text" placeholder="Naam…" value=${wsName}
+                onInput=${(e) => setWsName(e.target.value)}
+                onKeyDown=${(e) => { if (e.key === 'Enter') saveWorkspace(); }} />
+              <button className="btn" onClick=${saveWorkspace} disabled=${!wsName.trim()}>Bewaar</button>
+            </div>
+          </div>
+        </div>`}
+    </div>`;
+
   // ---------- Render UI ----------
   const hintText = {
     site: 'Klik om punten te plaatsen · Shift ingedrukt = uitlijnen per 15° · klik het eerste punt of dubbelklik om te sluiten · Esc annuleert',
@@ -2575,37 +2743,46 @@ function App() {
   }[tool];
 
   return html`
-    <div className="app">
+    <div className="app" style=${{
+      '--left-w': (vis('panelLeft') ? panelW.left : 0) + 'px',
+      '--right-w': (vis('panelRight') ? panelW.right : 0) + 'px',
+    }}>
       <div className="toolbar">
         <div className="brand"><span className="logo">🅿️</span><span>ParkPlanner</span></div>
         <div className="tb-sep"></div>
-        ${toolBtn('select', 'Selecteer', 'V', tool, setTool, setDrawing)}
-        ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
-        ${toolBtn('obstacle', 'Gebouw ▭', 'B', tool, setTool, setDrawing)}
-        ${toolBtn('obstaclepoly', 'Gebouw ⬠', 'N', tool, setTool, setDrawing)}
-        ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
-        ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
-        <button className="btn ghost" onClick=${newRect}>Nieuwe site</button>
+        ${vis('tbTools') && html`
+          ${toolBtn('select', 'Selecteer', 'V', tool, setTool, setDrawing)}
+          ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
+          ${toolBtn('obstacle', 'Gebouw ▭', 'B', tool, setTool, setDrawing)}
+          ${toolBtn('obstaclepoly', 'Gebouw ⬠', 'N', tool, setTool, setDrawing)}
+          ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
+          ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}`}
+        ${vis('tbNewSite') && html`<button className="btn ghost" onClick=${newRect}>Nieuwe site</button>`}
         <div className="tb-sep"></div>
-        <button className="btn" onClick=${cycleAxis} title="Wissel rij-oriëntatie">↻ Rij-as ${result.orientationCount ? `(${doc.orientationIndex + 1}/${result.orientationCount})` : ''}</button>
-        <button className="btn ghost" onClick=${resetAxis}>Reset</button>
+        ${vis('tbAxis') && html`
+          <button className="btn" onClick=${cycleAxis} title="Wissel rij-oriëntatie">↻ Rij-as ${result.orientationCount ? `(${doc.orientationIndex + 1}/${result.orientationCount})` : ''}</button>
+          <button className="btn ghost" onClick=${resetAxis}>Reset</button>`}
+        ${vis('tbUndo') && html`
+          <button className="btn ghost" onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶ Undo</button>
+          <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>`}
         <div className="tb-sep"></div>
-        <button className="btn ghost" onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶ Undo</button>
-        <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>
-        <div className="tb-sep"></div>
-        <div className="seg view-seg">
-          ${[['2d', '2D'], ['3d', '3D']].map(([m, lbl]) => html`
-            <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
-        </div>
-        <button className="btn ghost" title=${theme === 'dark' ? 'Licht thema' : 'Donker thema'}
-          onClick=${() => setTheme(theme === 'dark' ? 'light' : 'dark')}>${theme === 'dark' ? '☀️' : '🌙'}</button>
+        ${vis('tbView') && html`
+          <div className="seg view-seg">
+            ${[['2d', '2D'], ['3d', '3D']].map(([m, lbl]) => html`
+              <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
+          </div>`}
+        ${vis('tbTheme') && html`
+          <button className="btn ghost" title=${theme === 'dark' ? 'Licht thema' : 'Donker thema'}
+            onClick=${() => setTheme(theme === 'dark' ? 'light' : 'dark')}>${theme === 'dark' ? '☀️' : '🌙'}</button>`}
         <div className="tb-spacer"></div>
-        <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
-        <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
-        <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>
-        <button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
+        ${vis('tbZoom') && html`
+          <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
+          <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
+          <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>`}
+        ${vis('tbFile') && html`<button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
         <label className="btn ghost">Laden<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
-        <label className="btn ghost" title="Perceelgrens importeren (GeoJSON of KML)">Perceel<input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} /></label>
+        <label className="btn ghost" title="Perceelgrens importeren (GeoJSON of KML)">Perceel<input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} /></label>`}
+        ${vis('tbExport') && html`
         <div className="dropdown">
           <button className="btn ghost" onClick=${() => setExportOpen((o) => !o)}>Export ▾</button>
           ${exportOpen && html`
@@ -2615,10 +2792,14 @@ function App() {
               <button onClick=${() => { exportDXF(); setExportOpen(false); }}>DXF (CAD)</button>
               <button onClick=${() => { exportCSV(); setExportOpen(false); }}>CSV (takeoff)</button>
             </div>`}
-        </div>
+        </div>`}
+        ${viewMenu()}
       </div>
 
+      ${vis('panelLeft') && html`
       <div className="panel left">
+        ${resizer('left')}
+        ${vis('secLocation') && html`
         <div className="section">
           <h3>Locatie</h3>
           <form onSubmit=${(e) => { e.preventDefault(); doGeocode(); }} className="geo-form">
@@ -2654,7 +2835,8 @@ function App() {
                 <div><span>Build</span><b>${BUILD_ID}</b></div>
                 ${mapDiag.detail && html`<div className="map-diag-detail">${mapDiag.detail}</div>`}
               </div>`}`}
-        </div>
+        </div>`}
+        ${vis('secDraw') && html`
         <div className="section">
           <h3>Teken (infrastructuur)</h3>
           <input className="tool-search" type="search" placeholder="Zoek gereedschap…  /"
@@ -2717,7 +2899,8 @@ function App() {
                   <input type="checkbox" checked=${annotCurved} onChange=${(e) => setAnnotCurved(e.target.checked)} />
                 </label>`}
             </div>`}
-        </div>
+        </div>`}
+        ${vis('secSiteShape') && html`
         <div className="section">
           <h3>Site-vorm</h3>
           <div className="toggle" style=${{ marginBottom: 0 }}>
@@ -2731,7 +2914,8 @@ function App() {
                   ? { ...d.params, layout: 'hybrid' } : d.params,
               }) })} />
           </div>
-        </div>
+        </div>`}
+        ${vis('secLayers') && html`
         <div className="section">
           <h3>Lagen</h3>
           ${layerRow('grid', 'Raster', '#3b4453', layers, setLayers)}
@@ -2740,19 +2924,20 @@ function App() {
           ${layerRow('building', 'Gebouwen', '#64748b', layers, setLayers)}
           ${layerRow('parking', 'Parkeren', '#3b82f6', layers, setLayers)}
           ${layerRow('infra', 'Infrastructuur', '#0e7490', layers, setLayers)}
-        </div>
+        </div>`}
+        ${vis('secPreset') && html`
         <div className="section">
           <h3>Preset</h3>
           <select className="preset" onChange=${(e) => applyPreset(e.target.value)}>
             <option value="">— kies afmetingen —</option>
             ${Object.entries(PRESETS).map(([k, p]) => html`<option key=${k} value=${k}>${p.label}</option>`)}
           </select>
-        </div>
-        <div className="foot">
+        </div>`}
+        ${vis('secFoot') && html`<div className="foot">
           Open-source demonstrator van een parametrische parkeer­generator, geïnspireerd op TestFit's Parking Solver.
           De solver draait volledig in de browser: setback-offset → oriëntatie­zoektocht → strip-packing van dubbel-belaste modules.
-        </div>
-      </div>
+        </div>`}
+      </div>`}
 
       <div className="canvas-wrap" ref=${wrapRef}>
         <div id="pp-map" className="pp-map"></div>
@@ -2760,9 +2945,9 @@ function App() {
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
           onDoubleClick=${onDoubleClick} onContextMenu=${onContextMenu}
           style=${{ pointerEvents: viewMode === '3d' ? 'none' : 'auto', cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
-        ${viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
-        ${viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien/kantelen · scroll om te zoomen · alleen-lezen</div>`}
-        <div className="hud" style=${{ bottom: (dealbarOpen ? 96 : 12) + 'px' }}>
+        ${vis('ovHint') && viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
+        ${vis('ovHint') && viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien/kantelen · scroll om te zoomen · alleen-lezen</div>`}
+        ${vis('ovHud') && html`<div className="hud" style=${{ bottom: (dealbarOpen ? 96 : 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>
           <span>schaal <b>${view.scale.toFixed(1)}</b> px/m</span>
@@ -2771,10 +2956,10 @@ function App() {
           ${tool === 'placestall' && html`
             <span>·</span>
             <span className="hud-rot">gedraaid <b>${stallRot}°</b>${stallRot ? '' : ' · R draait 15°'}</span>`}
-        </div>
-        ${mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
+        </div>`}
+        ${vis('ovAttrib') && mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
 
-        ${html`
+        ${vis('ovDealbar') && html`
           <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
             <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾' : '▴'} Tabulatie</button>
             ${dealbarOpen && html`
@@ -2835,7 +3020,9 @@ function App() {
           </div>`}
       </div>
 
+      ${vis('panelRight') && html`
       <div className="panel right">
+        ${resizer('right')}
         ${selection && selection.type === 'site' && html`
         <div className="section sel-section">
           <h3>Site geselecteerd</h3>
@@ -2981,6 +3168,7 @@ function App() {
             </div>`;
           })()}
         </div>`}
+        ${vis('secMetrics') && html`
         <div className="section">
           <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Metrics</span>
@@ -3014,8 +3202,9 @@ function App() {
           ${metrics.onewayAisles > 0 && html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '4px' }}>
             Eenrichtings-rijbanen: <b style=${{ color: 'var(--text)' }}>${metrics.onewayAisles}</b> / ${metrics.aisleCount}.
           </div>`}
-        </div>
+        </div>`}
 
+        ${vis('secStallAisle') && html`
         <div className="section">
           <h3>Vak & rijstrook</h3>
           <div className="toggle" style=${{ marginBottom: '10px' }}>
@@ -3077,8 +3266,9 @@ function App() {
                 style=${{ width: '58px' }} />
             </div>
           </div>
-        </div>
+        </div>`}
 
+        ${vis('secConstraints') && html`
         <div className="section">
           <h3>Site-constraints</h3>
           ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
@@ -3094,8 +3284,9 @@ function App() {
             <input type="checkbox" checked=${!!doc.params.deadEndTurnaround} onChange=${(e) => setParam('deadEndTurnaround', e.target.checked)} />
           </div>
           ${doc.params.deadEndTurnaround && slider('Turnaround-ruimte', 'turnaround', doc.params.turnaround, 4, 12, 0.5, 'm', setParam)}
-        </div>
+        </div>`}
 
+        ${vis('secMix') && html`
         <div className="section">
           <h3>Vaktypes (mix)</h3>
           ${(() => {
@@ -3137,8 +3328,9 @@ function App() {
               </div>
               <div className="mix-note">Motor markeer je handmatig op een vak (telt als 3 plaatsen).</div>`;
           })()}
-        </div>
+        </div>`}
 
+        ${vis('secProgram') && html`
         <div className="section">
           <h3>Programma & parkeer­ratio</h3>
           <div className="field">
@@ -3157,8 +3349,8 @@ function App() {
                 <span style=${{ color: 'var(--muted)' }}> / ${metrics.requiredStalls} vereist — ${metrics.total >= metrics.requiredStalls ? 'voldoet ✓' : (metrics.requiredStalls - metrics.total) + ' tekort'}</span>
               </div>`
             : html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)' }}>Vul GLA en ratio in voor een zoning-check.</div>`}
-        </div>
-      </div>
+        </div>`}
+      </div>`}
 
       ${summaryOpen && html`
         <div className="modal-backdrop" onClick=${() => setSummaryOpen(false)}>
