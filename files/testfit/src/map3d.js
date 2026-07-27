@@ -1,5 +1,5 @@
 // ============================================================
-// map3d.js — Mapbox GL basemap controller (Mapbox Standard style).
+// map3d.js — Mapbox GL basemap controller (style chosen by the caller).
 //
 // The whole planner sits on a live Mapbox map. In 2D the map is a flat
 // basemap that follows our canvas camera (the plan is drawn on the
@@ -12,9 +12,6 @@ import { STALL_TYPES } from './solver.js';
 import { polyOf } from './geometry.js';
 
 const MB_VERSION = 'v3.7.0';
-// Satellite + streets: robust, and ideal for planning on a real site. (The
-// newer 'mapbox/standard' style can render blank on some tokens.)
-const MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12';
 let mbPromise = null;
 
 function loadMapbox() {
@@ -105,15 +102,16 @@ function setData(map, plan, geo) {
  *   setMode(is3d)         — tilt + show/hide the draped plan layers
  *   setPlan(plan)         — refresh the plan GeoJSON
  */
-export async function initMap(container, token, geo, plan, onError) {
+export async function initMap(container, token, geo, plan, onError, styleUrl) {
   let mapboxgl;
   try { mapboxgl = await loadMapbox(); }
   catch (e) { onError('Mapbox GL kon niet laden — controleer je verbinding.'); return null; }
   mapboxgl.accessToken = token;
+  const style = styleUrl || 'mapbox://styles/mapbox/satellite-streets-v12';
   let map;
   try {
     map = new mapboxgl.Map({
-      container, style: MAP_STYLE,
+      container, style,
       center: [geo.lon, geo.lat], zoom: 17, pitch: 0, bearing: 0,
       interactive: false, antialias: true, attributionControl: false,
     });
