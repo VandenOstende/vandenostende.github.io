@@ -208,6 +208,13 @@ function makeTransform(view) {
   return { w2s, s2w };
 }
 
+// Mapbox style URLs per toggle option. 'none' → no map (dark planner backdrop).
+const MAP_STYLES = {
+  satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
+  streets: 'mapbox://styles/mapbox/streets-v12',
+  standard: 'mapbox://styles/mapbox/standard',
+};
+
 // Translate our flat canvas camera (view) into a Mapbox {center, zoom} so the
 // basemap tracks it exactly in 2D. Web-mercator: mpp = 40075016.686·cos(lat)/(512·2^z).
 function mapCamFromView(view, size, geo) {
@@ -1010,6 +1017,7 @@ function App() {
   const [geoMsg, setGeoMsg] = useState('');
   const [viewMode, setViewMode] = useState('2d');            // '2d' (flat map) | '3d' (tilted map)
   const [mbToken, setMbToken] = useState(() => { try { return localStorage.getItem('pp_mapbox_token') || ''; } catch (e) { return ''; } });
+  const [mapStyle, setMapStyle] = useState(() => { try { return localStorage.getItem('pp_map_style') || 'satellite'; } catch (e) { return 'satellite'; } });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
@@ -1167,7 +1175,7 @@ function App() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     // 3D is rendered by the Mapbox map (the canvas overlay is hidden); the
     // canvas draws the editable plan only in 2D, transparently over the map.
-    if (viewMode === '3d') { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+    if (viewMode === '3d' && map3dRef.current) { ctx.clearRect(0, 0, canvas.width, canvas.height); }
     else {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
@@ -1193,14 +1201,15 @@ function App() {
   // behind the canvas: flat in 2D (tracking our camera), tilted in 3D (with the
   // plan draped as GeoJSON layers).
   useEffect(() => {
-    if (!mbToken) { if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } return; }
+    // No token or style 'Geen' → no map; the plan renders on the dark backdrop.
+    if (!mbToken || mapStyle === 'none') { if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } return; }
     let cancelled = false;
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
     import('./map3d.js').then(async (m) => {
       if (cancelled) return;
-      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg));
+      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle]);
       if (cancelled) { if (ctrl) ctrl.destroy(); return; }
       map3dRef.current = ctrl;
       ctrl.setMode(vmRef.current === '3d');
@@ -1209,7 +1218,7 @@ function App() {
     }).catch(() => setMap3dError('Mapbox kon niet laden.'));
     return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mbToken]);
+  }, [mbToken, mapStyle]);
 
   // Keep the flat basemap locked to our canvas camera in 2D.
   useEffect(() => {
@@ -2124,6 +2133,10 @@ function App() {
     try { localStorage.removeItem('pp_mapbox_token'); } catch (e) {}
     setMbToken(''); setMap3dError('');
   };
+  const changeMapStyle = (s) => {
+    try { localStorage.setItem('pp_map_style', s); } catch (e) {}
+    setMap3dError(''); setMapStyle(s);
+  };
 
   // ---------- Render UI ----------
   const hintText = {
@@ -2203,6 +2216,10 @@ function App() {
           <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
           <div className="geo-coord" style=${{ marginTop: '6px' }}>
             ${mbToken ? html`🗺️ Kaart-token ✓ · <a href="#" onClick=${(e) => { e.preventDefault(); clearMbToken(); }} style=${{ color: 'var(--accent)' }}>wijzigen</a>` : '🗺️ Geen kaart-token'}
+          </div>
+          <div className="seg style-seg" style=${{ marginTop: '8px' }}>
+            ${[['satellite', 'Satelliet'], ['streets', 'Straten'], ['standard', 'Standaard'], ['none', 'Geen']].map(([s, lbl]) => html`
+              <button key=${s} className=${mapStyle === s ? 'active' : ''} onClick=${() => changeMapStyle(s)}>${lbl}</button>`)}
           </div>
           ${map3dError && html`<div className="geo-msg" style=${{ color: 'var(--danger)' }}>${map3dError}</div>`}
         </div>
@@ -2307,7 +2324,7 @@ function App() {
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
         </div>
-        ${mbToken && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
+        ${mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
 
         ${html`
           <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>

@@ -79,6 +79,9 @@ body {
 .seg.view-seg { width: auto; }
 .seg.view-seg button { flex: 0 0 auto; padding: 5px 10px; }
 
+.seg.style-seg { flex-wrap: wrap; }
+.seg.style-seg button { flex: 1 1 40%; padding: 5px 4px; font-size: 11.5px; }
+
 .dropdown { position: relative; }
 .dropdown .menu {
   position: absolute;
