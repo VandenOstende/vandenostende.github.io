@@ -4,17 +4,17 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=40d02f16';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=b5dc4bf3';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=40d02f16';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=40d02f16';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=40d02f16';
-import { parseParcel, simplifyRing } from './importers.js?v=40d02f16';
-import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=40d02f16';
-import { BUILD_ID } from './build.js?v=40d02f16';
+} from './geometry.js?v=b5dc4bf3';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=b5dc4bf3';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=b5dc4bf3';
+import { parseParcel, simplifyRing } from './importers.js?v=b5dc4bf3';
+import { ANNOT_TYPES, ANNOT_GROUPS } from './annots.js?v=b5dc4bf3';
+import { BUILD_ID } from './build.js?v=b5dc4bf3';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -546,6 +546,20 @@ function draw(ctx, opts) {
       if (a && a.kind !== 'driveway' && a.points) for (const p of a.points) drawHandle(ctx, w2s(p), '#60a5fa');
     }
   }
+
+  // Alignment guides sit above everything: they are transient feedback, not plan.
+  if (opts.guides && opts.guides.length) {
+    ctx.save();
+    ctx.strokeStyle = '#ec4899'; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+    for (const g of opts.guides) {
+      ctx.beginPath();
+      if (g.x != null) { const sx = w2s({ x: g.x, y: 0 }).x; ctx.moveTo(sx, 0); ctx.lineTo(sx, size.h); }
+      else { const sy = w2s({ x: 0, y: g.y }).y; ctx.moveTo(0, sy); ctx.lineTo(size.w, sy); }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  if (opts.measure) drawMeasure(ctx, opts.measure, w2s, view.scale);
 
   ctx.restore();
 }
@@ -1125,6 +1139,60 @@ function drawAnnotations(ctx, anns, w2s, scale, under, selIdx) {
   }
 }
 
+// Measuring tape: each leg labelled, the running total at the cursor, and the
+// enclosed area once three points make a shape. Deliberately drawn last and in
+// the accent colour so it reads as a tool, not as part of the plan.
+function drawMeasure(ctx, m, w2s, scale) {
+  const pts = (m.points || []).slice();
+  if (m.cur && !m.done) pts.push(m.cur);
+  if (pts.length < 1) return;
+  const sp = pts.map(w2s);
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  if (pts.length >= 3) {
+    ctx.beginPath();
+    sp.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(37,99,235,0.10)';
+    ctx.fill();
+  }
+  ctx.beginPath();
+  sp.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.setLineDash([7, 4]);
+  ctx.stroke(); ctx.setLineDash([]);
+  let total = 0;
+  ctx.font = '600 11px system-ui, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const len = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+    total += len;
+    const mid = { x: (sp[i].x + sp[i + 1].x) / 2, y: (sp[i].y + sp[i + 1].y) / 2 };
+    const label = len.toFixed(len < 10 ? 2 : 1) + ' m';
+    const w = ctx.measureText(label).width + 10;
+    ctx.fillStyle = TH.plate; ctx.fillRect(mid.x - w / 2, mid.y - 9, w, 17);
+    ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 1; ctx.strokeRect(mid.x - w / 2, mid.y - 9, w, 17);
+    ctx.fillStyle = '#2563eb'; ctx.fillText(label, mid.x, mid.y);
+  }
+  for (const p of sp) {
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = TH.handleCore; ctx.fill();
+    ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  if (pts.length >= 2) {
+    const end = sp[sp.length - 1];
+    const parts = ['totaal ' + total.toFixed(1) + ' m'];
+    if (pts.length >= 3) parts.push(Math.abs(polygonArea(pts)).toFixed(1) + ' m²');
+    const label = parts.join('  ·  ');
+    ctx.font = '600 12px system-ui, sans-serif';
+    const w = ctx.measureText(label).width + 14;
+    ctx.fillStyle = '#2563eb';
+    ctx.fillRect(end.x + 12, end.y - 26, w, 20);
+    ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left';
+    ctx.fillText(label, end.x + 19, end.y - 16);
+  }
+  ctx.restore();
+}
+
 function drawGrid(ctx, view, size) {
   // Adaptive metric grid: pick a step that renders ~45px+ apart.
   const steps = [1, 2, 5, 10, 20, 50, 100, 200];
@@ -1161,6 +1229,7 @@ function App() {
     [doc.annotations]
   );
   const [tool, setTool] = useState('select');
+  const [measure, setMeasure] = useState(null); // { points:[], cur } while measuring
   const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
@@ -1183,6 +1252,7 @@ function App() {
     try { return JSON.parse(localStorage.getItem('pp_workspaces') || '{}') || {}; } catch (e) { return {}; }
   });
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [wsName, setWsName] = useState('');
   const resizeRef = useRef(null);
   const [openGroups, setOpenGroups] = useState(() => {
@@ -1239,6 +1309,7 @@ function App() {
   const geoRef = useRef(null);         // latest doc.geo, same reason
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
+  const guidesRef = useRef(null);  // alignment guides shown during a move drag
   const map3dRef = useRef(null);   // Mapbox controller when in 3D view
   const workerRef = useRef(null);  // solver web worker (null → inline solve)
   const reqRef = useRef(0);        // latest solve request id (stale-drop)
@@ -1289,7 +1360,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=40d02f16', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=b5dc4bf3', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1391,12 +1462,12 @@ function App() {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
-        showHandles: tool === 'select', theme,
+        showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly,
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure]);
 
   renderRef.current = renderNow;
   docRef.current = doc;
@@ -1424,7 +1495,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=40d02f16').then(async (m) => {
+    import('./map3d.js?v=b5dc4bf3').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -1828,6 +1899,12 @@ function App() {
       return;
     }
 
+    if (tool === 'measure') {
+      const pts = (measure && measure.points) || [];
+      const at = e.shiftKey && pts.length ? angleSnap(pts[pts.length - 1], wp) : snapPoint(sp);
+      setMeasure({ points: [...pts, at] });
+      return;
+    }
     if (tool === 'placestall') {
       const s = snapStall(wp);
       addManualStall(stallAt(s.center, s.theta));
@@ -2018,6 +2095,12 @@ function App() {
         }
         return;
       }
+      if (tool === 'measure' && measure && measure.points.length) {
+        const pts = measure.points;
+        const at = e.shiftKey ? angleSnap(pts[pts.length - 1], wp) : snapPoint(sp);
+        setMeasure({ points: pts, cur: at });
+        return;
+      }
       if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') { const s = snapStall(wp); setHover({ stallPreview: stallAt(s.center, s.theta), onRoad: s.onRoad }); }
       return;
@@ -2031,7 +2114,9 @@ function App() {
     } else if (drag.mode === 'annotMove') {
       // Always rebuilt from the pre-drag geometry + total delta, so the move is
       // idempotent and cannot drift.
-      const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
+      const a0 = alignSnap(drag.orig, wp.x - drag.start.x, wp.y - drag.start.y);
+      const dx = a0.dx, dy = a0.dy;
+      guidesRef.current = a0.guides;
       dispatch({ type: 'LIVE', updater: (d) => ({
         ...d,
         annotations: (d.annotations || []).map((a, i) => (i !== drag.index ? a : {
@@ -2041,14 +2126,19 @@ function App() {
         })),
       }) });
     } else if (drag.mode === 'obsMove') {
-      const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
+      const a1 = alignSnap(drag.orig, wp.x - drag.start.x, wp.y - drag.start.y);
+      const dx = a1.dx, dy = a1.dy;
+      guidesRef.current = a1.guides;
       dispatch({ type: 'LIVE', updater: (d) => ({
         ...d,
         obstacles: d.obstacles.map((o, i) => (i !== drag.index ? o
           : { ...(o && o.poly ? o : {}), poly: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })), floors: (o && o.floors) || 1 })),
       }) });
     } else if (drag.mode === 'stallMove') {
-      const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
+      const base = drag.idxs.length ? drag.baseManual[drag.idxs[0]].poly : null;
+      const a2 = alignSnap(base, wp.x - drag.start.x, wp.y - drag.start.y);
+      const dx = a2.dx, dy = a2.dy;
+      guidesRef.current = a2.guides;
       drag.dx = dx; drag.dy = dy; // pointer-up needs the final delta to re-key
       const own = new Set(drag.idxs);
       dispatch({ type: 'LIVE', updater: (d) => ({
@@ -2138,6 +2228,7 @@ function App() {
   const onPointerUp = (e) => {
     const drag = dragRef.current;
     dragRef.current = null;
+    guidesRef.current = null;
     if (!drag) return;
     if (drag.mode === 'vertex') {
       // History is already handled by the CHECKPOINT taken at pointer-down.
@@ -2188,6 +2279,7 @@ function App() {
   };
 
   const onDoubleClick = (e) => {
+    if (tool === 'measure') { setMeasure((m) => (m ? { points: m.points, done: true } : m)); return; }
     if (tool === 'site' && drawing && drawing.points.length >= 3) {
       commitSite(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'obstaclepoly' && drawing && drawing.points.length >= 3) {
@@ -2310,8 +2402,10 @@ function App() {
         case 'b': setTool('obstacle'); break;
         case 'n': setTool('obstaclepoly'); setDrawing({ points: [] }); break;
         case 'k': setTool('placestall'); break;
+        case 'm': setTool('measure'); setMeasure({ points: [] }); setDrawing(null); break;
         case ' ': setTool('pan'); break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
+        case '?': setKeysOpen((o) => !o); break;
         case '/': if (toolSearchRef.current) { e.preventDefault(); toolSearchRef.current.focus(); toolSearchRef.current.select(); } break;
         // R rotates in 15° steps: the stall about to be placed, or the selected
         // ones. Shift+R goes back. The HUD reports the current offset.
@@ -2333,7 +2427,7 @@ function App() {
         }
         case '+': case '=': zoomBy(1.2); break;
         case '-': case '_': zoomBy(1 / 1.2); break;
-        case 'escape': setDrawing(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); break;
+        case 'escape': setDrawing(null); setMeasure(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); break;
         case 'delete': case 'backspace':
           if (stallSel.length) {
             deleteStalls(stallSel); setStallSel([]);
@@ -2617,6 +2711,43 @@ function App() {
     return next;
   });
 
+  // Smart alignment while dragging: snap the moving object's edges and centre
+  // to those of everything else, and report the lines that matched so they can
+  // be drawn. Threshold is in screen pixels so it feels the same at any zoom.
+  const alignTargets = useMemo(() => {
+    const xs = [], ys = [];
+    const add = (poly) => {
+      if (!poly || poly.length < 2) return;
+      const b = boundingBox(poly);
+      xs.push(b.minX, b.minX + b.w / 2, b.maxX);
+      ys.push(b.minY, b.minY + b.h / 2, b.maxY);
+    };
+    add(sitePoly);
+    for (const o of doc.obstacles || []) add(polyOf(o));
+    for (const a of doc.annotations || []) add(a.points);
+    return { xs, ys };
+  }, [sitePoly, doc.obstacles, doc.annotations]);
+
+  const alignSnap = (origPts, dx, dy) => {
+    const tol = 7 / view.scale; // 7 screen px
+    if (!origPts || origPts.length < 1) return { dx, dy, guides: [] };
+    const b = boundingBox(origPts.map((p) => ({ x: p.x + dx, y: p.y + dy })));
+    const guides = [];
+    const fit = (cands, vals) => {
+      let best = null;
+      for (const v of vals) for (const c of cands) {
+        const d = c - v;
+        if (Math.abs(d) < tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, at: c };
+      }
+      return best;
+    };
+    const fx = fit(alignTargets.xs, [b.minX, b.minX + b.w / 2, b.maxX]);
+    const fy = fit(alignTargets.ys, [b.minY, b.minY + b.h / 2, b.maxY]);
+    if (fx) { dx += fx.d; guides.push({ x: fx.at }); }
+    if (fy) { dy += fy.d; guides.push({ y: fy.at }); }
+    return { dx, dy, guides };
+  };
+
   // ---------- Layout: visibility, panel widths, workspaces ----------
   const vis = (id) => !hidden[id];
   const persist = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} };
@@ -2681,6 +2812,32 @@ function App() {
       onDblClick=${() => { const w = { ...panelW, [side]: PANEL_W[side].def }; setPanelW(w); persist('pp_panel_widths', w); }}
       title=${'Sleep om te verbreden · dubbelklik voor standaard'}></div>`;
 
+  // Every shortcut in one place. Half of these existed but were invisible —
+  // nothing on screen mentioned G, R, Esc, Delete or Cmd+D.
+  const SHORTCUTS = [
+    ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['Spatie', 'Pannen']]],
+    ['Bewerken', [['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
+    ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
+    ['Weergave', [['G', 'Raster aan/uit'], ['+ / -', 'In- en uitzoomen'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
+  ];
+  const keysModal = () => html`
+    <div className="modal-backdrop" onClick=${() => setKeysOpen(false)}>
+      <div className="modal keys-modal" onClick=${(e) => e.stopPropagation()}>
+        <div className="sum-h" style=${{ marginTop: 0 }}>Sneltoetsen</div>
+        <div className="keys-grid">
+          ${SHORTCUTS.map(([grp, rows]) => html`
+            <div key=${grp} className="keys-col">
+              <div className="keys-h">${grp}</div>
+              ${rows.map(([k, d]) => html`
+                <div key=${k} className="keys-row"><kbd>${k}</kbd><span>${d}</span></div>`)}
+            </div>`)}
+        </div>
+        <div className="sel-actions" style=${{ marginTop: '14px' }}>
+          <button className="btn" onClick=${() => setKeysOpen(false)}>Sluiten</button>
+        </div>
+      </div>
+    </div>`;
+
   // The one control that is never hideable — hiding it would lock you out.
   const viewMenu = () => html`
     <div className="dropdown">
@@ -2725,6 +2882,7 @@ function App() {
     obstaclepoly: 'Klik punten voor een gebouw in vrije vorm · Shift = 15° · klik beginpunt of dubbelklik om te sluiten · Esc annuleert',
     pan: 'Sleep om te verschuiven',
     placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
+    measure: 'Klik punten om af te meten · Shift = 15° · dubbelklik of Esc sluit af · toont lengte, totaal en oppervlak',
     annot: annotKind === 'road' && roadShape === 'rect'
       ? 'Weg-object: sleep een rechthoek · selecteer daarna en sleep de hoeken om te vergroten'
       : ANNOT_TYPES[annotKind] && ANNOT_TYPES[annotKind].mode === 'driveway'
@@ -2756,7 +2914,9 @@ function App() {
           ${toolBtn('obstacle', 'Gebouw ▭', 'B', tool, setTool, setDrawing)}
           ${toolBtn('obstaclepoly', 'Gebouw ⬠', 'N', tool, setTool, setDrawing)}
           ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
-          ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}`}
+          ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
+          <button className=${'btn' + (tool === 'measure' ? ' active' : '')}
+            onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>📏 Meet <kbd>M</kbd></button>`}
         ${vis('tbNewSite') && html`<button className="btn ghost" onClick=${newRect}>Nieuwe site</button>`}
         <div className="tb-sep"></div>
         ${vis('tbAxis') && html`
@@ -2794,6 +2954,7 @@ function App() {
             </div>`}
         </div>`}
         ${viewMenu()}
+        <button className="btn ghost" title="Sneltoetsen (?)" onClick=${() => setKeysOpen(true)}>?</button>
       </div>
 
       ${vis('panelLeft') && html`
@@ -3352,6 +3513,7 @@ function App() {
         </div>`}
       </div>`}
 
+      ${keysOpen && keysModal()}
       ${summaryOpen && html`
         <div className="modal-backdrop" onClick=${() => setSummaryOpen(false)}>
           <div className="modal" onClick=${(e) => e.stopPropagation()}>
