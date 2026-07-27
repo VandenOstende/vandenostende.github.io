@@ -54,8 +54,14 @@ function loadCss(href) {
 }
 
 function loadMapbox(diag) {
-  if (window.mapboxgl) return Promise.resolve(window.mapboxgl);
-  if (mbPromise) return mbPromise;
+  // Both early-outs must still report, or the readout is stuck on its initial
+  // placeholder while everything downstream is fine (re-init after a style
+  // switch hits this path, since the library is already in memory).
+  if (window.mapboxgl) { diag({ lib: 'ok (al geladen)' }); return Promise.resolve(window.mapboxgl); }
+  if (mbPromise) {
+    diag({ lib: 'laden…' });
+    return mbPromise.then((gl) => { diag({ lib: 'ok (al geladen)' }); return gl; });
+  }
   mbPromise = (async () => {
     const tried = [];
     for (const src of MB_SOURCES) {
