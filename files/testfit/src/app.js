@@ -1020,6 +1020,9 @@ function App() {
   const [mapStyle, setMapStyle] = useState(() => { try { return localStorage.getItem('pp_map_style') || 'satellite'; } catch (e) { return 'satellite'; } });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
+  const [mapDiag, setMapDiag] = useState({});      // per-stage basemap status
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [mapNonce, setMapNonce] = useState(0);     // bump to force a map retry
   const [exportOpen, setExportOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
@@ -1209,8 +1212,9 @@ function App() {
     if (!container) return;
     import('./map3d.js').then(async (m) => {
       if (cancelled) return;
-      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle]);
-      if (cancelled) { if (ctrl) ctrl.destroy(); return; }
+      const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
+      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
+      if (cancelled || !ctrl) { if (ctrl) ctrl.destroy(); return; }
       map3dRef.current = ctrl;
       ctrl.setMode(vmRef.current === '3d');
       if (vmRef.current !== '3d') { const c = mapCamFromView(view, sizeRef.current, doc.geo); ctrl.follow2D(c.center, c.zoom); }
@@ -1218,7 +1222,7 @@ function App() {
     }).catch(() => setMap3dError('Mapbox kon niet laden.'));
     return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mbToken, mapStyle]);
+  }, [mbToken, mapStyle, mapNonce]);
 
   // Keep the flat basemap locked to our canvas camera in 2D.
   useEffect(() => {
@@ -2135,8 +2139,9 @@ function App() {
   };
   const changeMapStyle = (s) => {
     try { localStorage.setItem('pp_map_style', s); } catch (e) {}
-    setMap3dError(''); setMapStyle(s);
+    setMap3dError(''); setMapDiag({}); setMapStyle(s);
   };
+  const retryMap = () => { setMap3dError(''); setMapDiag({}); setMapNonce((n) => n + 1); };
 
   // ---------- Render UI ----------
   const hintText = {
@@ -2222,6 +2227,22 @@ function App() {
               <button key=${s} className=${mapStyle === s ? 'active' : ''} onClick=${() => changeMapStyle(s)}>${lbl}</button>`)}
           </div>
           ${map3dError && html`<div className="geo-msg" style=${{ color: 'var(--danger)' }}>${map3dError}</div>`}
+          ${mbToken && mapStyle !== 'none' && html`
+            <div className="geo-coord" style=${{ marginTop: '8px' }}>
+              <a href="#" onClick=${(e) => { e.preventDefault(); setDiagOpen(!diagOpen); }} style=${{ color: 'var(--accent)' }}>
+                ${diagOpen ? '▾' : '▸'} Kaart-diagnose
+              </a>
+              ${' · '}
+              <a href="#" onClick=${(e) => { e.preventDefault(); retryMap(); }} style=${{ color: 'var(--accent)' }}>opnieuw proberen</a>
+            </div>
+            ${diagOpen && html`
+              <div className="map-diag">
+                <div><span>WebGL</span><b>${mapDiag.webgl || '—'}</b></div>
+                <div><span>Bibliotheek</span><b>${mapDiag.lib || '—'}</b></div>
+                <div><span>Stijl</span><b>${mapDiag.style || '—'}</b></div>
+                <div><span>Tegels</span><b>${mapDiag.tiles == null ? '—' : mapDiag.tiles}</b></div>
+                ${mapDiag.detail && html`<div className="map-diag-detail">${mapDiag.detail}</div>`}
+              </div>`}`}
         </div>
         <div className="section">
           <h3>Teken (infrastructuur)</h3>
