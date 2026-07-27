@@ -7,10 +7,10 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=814d3036';
-import { STALL_TYPES } from './solver.js?v=814d3036';
-import { polyOf } from './geometry.js?v=814d3036';
-import { ANNOT_TYPES } from './annots.js?v=814d3036';
+import { localToLatLon } from './basemap.js?v=adb69ce8';
+import { STALL_TYPES } from './solver.js?v=adb69ce8';
+import { polyOf } from './geometry.js?v=adb69ce8';
+import { ANNOT_TYPES } from './annots.js?v=adb69ce8';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -108,10 +108,35 @@ function isLineKind(kind) {
   const t = ANNOT_TYPES[kind];
   return !!t && (t.mode === 'line' || t.mode === 'cross');
 }
-function planToGeoJSON(plan, geo) {
+// Imported symbols stand up in 3D as an extruded footprint sized from the
+// bitmap's aspect and rotated onto the annotation's own angle. The metadata
+// comes straight out of the registered type, so nothing extra has to be passed
+// in from the app.
+function assetFootprint(an, t) {
+  const a = t.asset || {};
+  const w = an.width || t.width || 2;
+  const d = w * ((a.h && a.w) ? a.h / a.w : 1);
+  const c = an.points[0];
+  const rad = ((an.angle || 0) * Math.PI) / 180;
+  const cs = Math.cos(rad), sn = Math.sin(rad);
+  return [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]]
+    .map(([x, y]) => ({ x: c.x + x * cs - y * sn, y: c.y + x * sn + y * cs }));
+}
+
+// Exported so the drape can be checked without a Mapbox token: it is a pure
+// function of the plan, and everything downstream of it needs the network.
+export function planToGeoJSON(plan, geo) {
   const anns = plan.annotations || [];
   const fc = (features) => ({ type: 'FeatureCollection', features });
+  const assetAnns = anns.filter((an) => {
+    const t = ANNOT_TYPES[an.kind];
+    return t && t.asset && an.points && an.points[0];
+  });
   return {
+    assets: fc(assetAnns.map((an) => {
+      const t = ANNOT_TYPES[an.kind];
+      return polyFeature(assetFootprint(an, t), geo, { height: (t.asset.height != null ? t.asset.height : 2.5) });
+    })),
     stalls: fc((plan.stalls || []).map((s) => polyFeature(s.poly, geo, { color: (STALL_TYPES[s.type] || STALL_TYPES.standard).color }))),
     aisles: fc((plan.aisles || []).map((a) => polyFeature(a.poly, geo, {}))),
     buildings: fc((plan.obstacles || []).map((o) => polyFeature(polyOf(o), geo, { height: (o && o.floors ? o.floors : 4) * 3.2 }))),
@@ -122,7 +147,7 @@ function planToGeoJSON(plan, geo) {
   };
 }
 
-const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-buildings-3d', 'pp-trees-3d'];
+const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-buildings-3d', 'pp-trees-3d', 'pp-assets-3d'];
 
 function addPlanLayers(map, plan, geo) {
   // Real 3D buildings of the surroundings from the style's vector source.
@@ -139,6 +164,7 @@ function addPlanLayers(map, plan, geo) {
   const src = (id, data) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data }); };
   src('pp-site', g.site); src('pp-aisles', g.aisles); src('pp-stalls', g.stalls);
   src('pp-buildings', g.buildings); src('pp-lines', g.lines); src('pp-areas', g.areas); src('pp-trees', g.trees);
+  src('pp-assets', g.assets);
   const L = (layer) => { if (!map.getLayer(layer.id)) map.addLayer(layer); };
   L({ id: 'pp-areas-fill', type: 'fill', source: 'pp-areas', layout: { visibility: 'none' }, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 } });
   L({ id: 'pp-site-line', type: 'line', source: 'pp-site', layout: { visibility: 'none' }, paint: { 'line-color': '#f8b500', 'line-width': 2.5 } });
@@ -146,6 +172,7 @@ function addPlanLayers(map, plan, geo) {
   L({ id: 'pp-lines-line', type: 'line', source: 'pp-lines', layout: { visibility: 'none' }, paint: { 'line-color': ['get', 'color'], 'line-width': ['max', 2, ['*', ['get', 'width'], 3]] } });
   L({ id: 'pp-stalls-fill', type: 'fill', source: 'pp-stalls', layout: { visibility: 'none' }, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.92, 'fill-outline-color': 'rgba(0,0,0,0.4)' } });
   L({ id: 'pp-buildings-3d', type: 'fill-extrusion', source: 'pp-buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#8a97a8', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.95 } });
+  L({ id: 'pp-assets-3d', type: 'fill-extrusion', source: 'pp-assets', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#cbd5e1', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.95 } });
   L({ id: 'pp-trees-3d', type: 'circle', source: 'pp-trees', layout: { visibility: 'none' }, paint: { 'circle-color': '#2f9e44', 'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 3, 20, ['*', ['get', 'r'], 6]], 'circle-stroke-color': '#14532d', 'circle-stroke-width': 1, 'circle-opacity': 0.9 } });
 }
 function setPlanVisible(map, on) {
@@ -157,6 +184,7 @@ function setData(map, plan, geo) {
   const set = (id, data) => { const s = map.getSource(id); if (s) s.setData(data); };
   set('pp-site', g.site); set('pp-aisles', g.aisles); set('pp-stalls', g.stalls);
   set('pp-buildings', g.buildings); set('pp-lines', g.lines); set('pp-areas', g.areas); set('pp-trees', g.trees);
+  set('pp-assets', g.assets);
 }
 
 /**
