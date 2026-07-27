@@ -4,17 +4,17 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=adb69ce8';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=e7e98729';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=adb69ce8';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=adb69ce8';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=adb69ce8';
-import { parseParcel, simplifyRing } from './importers.js?v=adb69ce8';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=adb69ce8';
-import { BUILD_ID } from './build.js?v=adb69ce8';
+} from './geometry.js?v=e7e98729';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=e7e98729';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=e7e98729';
+import { parseParcel, simplifyRing } from './importers.js?v=e7e98729';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=e7e98729';
+import { BUILD_ID } from './build.js?v=e7e98729';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1486,7 +1486,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=adb69ce8', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=e7e98729', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1636,7 +1636,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=adb69ce8').then(async (m) => {
+    import('./map3d.js?v=e7e98729').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -2702,15 +2702,26 @@ function App() {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-      if (e.ctrlKey || e.metaKey) {
-        setView((v) => {
-          const s = Math.max(1, Math.min(60, v.scale * Math.exp(-e.deltaY * 0.01)));
-          const k = s / v.scale;
-          return { scale: s, ox: cx - (cx - v.ox) * k, oy: cy - (cy - v.oy) * k };
-        });
-      } else {
+      // Scrolling zooms — that is what a wheel is for on a plan. Panning by
+      // scroll stays available on Shift, on a trackpad's horizontal swipe
+      // (nobody zooms with a sideways gesture), and on Space-drag / the Pan
+      // tool as before.
+      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (e.shiftKey || sideways) {
         setView((v) => ({ ...v, ox: v.ox - e.deltaX, oy: v.oy - e.deltaY }));
+        return;
       }
+      // Normalise to wheel notches first. Chrome reports ±100 per notch,
+      // Firefox reports lines, a trackpad reports small fractions — feeding
+      // the raw delta into exp() made one mouse click a 2.7× jump that
+      // overshot the whole site.
+      const perNotch = e.deltaMode === 1 ? 1 / 3 : e.deltaMode === 2 ? 1 : 1 / 100;
+      const notches = Math.max(-4, Math.min(4, e.deltaY * perNotch));
+      setView((v) => {
+        const s = Math.max(1, Math.min(60, v.scale * Math.exp(-notches * 0.22)));
+        const k = s / v.scale;
+        return { scale: s, ox: cx - (cx - v.ox) * k, oy: cy - (cy - v.oy) * k };
+      });
     };
     canvas.addEventListener('wheel', onWheelNative, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheelNative);
@@ -3193,7 +3204,7 @@ function App() {
     ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['Spatie', 'Pannen']]],
     ['Bewerken', [['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
-    ['Weergave', [['G', 'Raster aan/uit'], ['+ / -', 'In- en uitzoomen'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
+    ['Weergave', [['G', 'Raster aan/uit'], ['Scrollen', 'In- en uitzoomen'], ['Shift + scrollen', 'Pannen'], ['+ / -', 'In- en uitzoomen'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
   ];
   const keysModal = () => html`
     <div className="modal-backdrop" onClick=${() => setKeysOpen(false)}>
