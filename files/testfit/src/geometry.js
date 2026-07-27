@@ -243,6 +243,72 @@ export function tessellateClosed(pts, seg = 12) {
   return out;
 }
 
+/**
+ * Sample an OPEN polyline the way the canvas draws it: straight segments when
+ * not curved, otherwise the same Catmull-Rom → cubic Bézier as buildAnnotPath.
+ * Snapping must follow the line the user actually sees, not the control points.
+ */
+export function tessellateOpen(pts, curved, seg = 10) {
+  if (!pts || pts.length < 2) return (pts || []).slice();
+  if (!curved || pts.length === 2) return pts.slice();
+  const out = [{ x: pts[0].x, y: pts[0].y }];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+    for (let k = 1; k <= seg; k++) {
+      const t = k / seg, m = 1 - t;
+      const a = m * m * m, b = 3 * m * m * t, c = 3 * m * t * t, e = t * t * t;
+      out.push({
+        x: a * p1.x + b * c1x + c * c2x + e * p2.x,
+        y: a * p1.y + b * c1y + c * c2y + e * p2.y,
+      });
+    }
+  }
+  return out;
+}
+
+/** Cumulative arc lengths for a polyline; cum[i] is the distance to pts[i]. */
+export function polylineCum(pts) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+  return cum;
+}
+
+/** Point and unit tangent at arc length s along a polyline. */
+export function polylineAt(pts, cum, s) {
+  const total = cum[cum.length - 1] || 0;
+  const q = Math.max(0, Math.min(total, s));
+  let i = 1;
+  while (i < cum.length - 1 && cum[i] < q) i++;
+  const a = pts[i - 1], b = pts[i];
+  const seg = cum[i] - cum[i - 1];
+  const t = seg > EPS ? (q - cum[i - 1]) / seg : 0;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: a.x + dx * t, y: a.y + dy * t, tx: dx / len, ty: dy / len };
+}
+
+/**
+ * Nearest point on a polyline to p. Returns the arc length of that point plus
+ * the perpendicular distance, or null for a degenerate line.
+ */
+export function nearestOnPolyline(p, pts, cum) {
+  let best = null;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < EPS) continue;
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const qx = a.x + t * dx, qy = a.y + t * dy;
+    const dd = Math.hypot(p.x - qx, p.y - qy);
+    if (!best || dd < best.dd) best = { dd, s: cum[i] + t * Math.sqrt(len2), x: qx, y: qy };
+  }
+  return best;
+}
+
 /** Axis-aligned rectangle → polygon (4 CCW points). */
 export function rectPoly(x, y, w, h) {
   return [

@@ -4,18 +4,20 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=d5eee560';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=c72fd0ef';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
-} from './geometry.js?v=d5eee560';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=d5eee560';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d5eee560';
-import { parseParcel, simplifyRing } from './importers.js?v=d5eee560';
-import { BUILD_ID } from './build.js?v=d5eee560';
+  tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
+} from './geometry.js?v=c72fd0ef';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=c72fd0ef';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=c72fd0ef';
+import { parseParcel, simplifyRing } from './importers.js?v=c72fd0ef';
+import { BUILD_ID } from './build.js?v=c72fd0ef';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
+const ANGLE_SNAP_DEG = 15;       // same step, for the R rotate key
 const FLOOR_H = 3.2;             // metres per building floor (for 3D + height)
 const mark = (s) => { try { window.__pp_mark && window.__pp_mark(s); } catch (e) {} };
 mark('1-module-uitgevoerd');
@@ -58,7 +60,7 @@ const DEFAULT_GEO = { lat: 52.3390, lon: 4.8730 };
 //   mode 'area'  → drag a rectangle
 // `under: true` draws beneath the parking (roads, bike parking).
 export const ANNOT_TYPES = {
-  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: true, under: true, blocks: true },
+  road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: false, under: true, blocks: true },
   driveway:    { label: 'In/uitrit',    color: '#525b68', width: 6.5, depth: 12, mode: 'driveway', under: true, blocks: true },
   drivethru:   { label: 'Drive-thru',   color: '#f97316', width: 3.5, mode: 'line', curved: true, under: true, blocks: true },
   walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true },
@@ -1025,6 +1027,7 @@ function App() {
   const [diagOpen, setDiagOpen] = useState(false);
   const [mapNonce, setMapNonce] = useState(0);     // bump to force a map retry
   const [mapReady, setMapReady] = useState(0);     // bumped once the controller exists
+  const [stallRot, setStallRot] = useState(0);     // extra stall rotation in degrees (R key)
   const [exportOpen, setExportOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
@@ -1095,7 +1098,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=d5eee560', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=c72fd0ef', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1229,7 +1232,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=d5eee560').then(async (m) => {
+    import('./map3d.js?v=c72fd0ef').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -1401,6 +1404,54 @@ function App() {
   };
   // Snap a click to the lattice of the nearest existing stall (so hand-placed
   // stalls tile next to solver stalls); otherwise a coarse metric grid.
+  // Drivable lines a stall can park against, sampled the way they are drawn so
+  // snapping follows the visible curve rather than the control points.
+  const roadLines = useMemo(() => (doc.annotations || [])
+    .filter((a) => {
+      const t = ANNOT_TYPES[a.kind];
+      return t && t.mode === 'line' && t.blocks && a.points && a.points.length >= 2;
+    })
+    .map((a) => {
+      const pts = tessellateOpen(a.points, !!a.curved);
+      const cum = polylineCum(pts);
+      return { pts, cum, len: cum[cum.length - 1], half: (a.width || ANNOT_TYPES[a.kind].width || 6) / 2 };
+    })
+    .filter((l) => l.len > 0.1), [doc.annotations]);
+
+  /**
+   * Park a stall against the nearest road: aligned to the road's tangent, offset
+   * clear of its edge on the side that was clicked, and slotted to whole stall
+   * widths along the road so neighbours abut exactly. Null when no road is near.
+   */
+  const snapStallToRoad = (click) => {
+    const w = doc.params.stallWidth, d = doc.params.stallDepth;
+    let best = null;
+    for (const line of roadLines) {
+      const hit = nearestOnPolyline(click, line.pts, line.cum);
+      if (hit && (!best || hit.dd < best.hit.dd)) best = { line, hit };
+    }
+    if (!best) return null;
+    if (best.hit.dd > best.line.half + d * 1.75) return null;
+    const slotted = (Math.floor(best.hit.s / w) + 0.5) * w;
+    const s = Math.min(Math.max(slotted, w / 2), Math.max(w / 2, best.line.len - w / 2));
+    const at = polylineAt(best.line.pts, best.line.cum, s);
+    const nx = -at.ty, ny = at.tx;
+    const side = (click.x - at.x) * nx + (click.y - at.y) * ny >= 0 ? 1 : -1;
+    const off = best.line.half + d / 2;
+    return {
+      center: { x: at.x + nx * side * off, y: at.y + ny * side * off },
+      theta: Math.atan2(at.ty, at.tx),
+      onRoad: true,
+    };
+  };
+
+  // Road snap wins; otherwise fall back to the neighbouring-stall lattice.
+  const snapStall = (click) => {
+    const r = snapStallToRoad(click);
+    const base = r || { center: snapStallCenter(click), theta: result.angleUsed || 0, onRoad: false };
+    return { ...base, theta: base.theta + (stallRot * Math.PI) / 180 };
+  };
+
   const snapStallCenter = (click) => {
     const theta = result.angleUsed || 0;
     const w = doc.params.stallWidth, d = doc.params.stallDepth;
@@ -1453,6 +1504,10 @@ function App() {
   };
   const finishAnnotLine = (points, closed = false) => {
     const t = ANNOT_TYPES[annotKind];
+    // The double-click that ends a line lands on top of the last click, so the
+    // final point arrives two or three times. Those zero-length segments break
+    // tangent and arc-length maths downstream (snapping, point editing).
+    points = (points || []).filter((p, i, a) => i === 0 || dist(p, a[i - 1]) > 1e-6);
     if (points.length >= (closed ? 3 : 2)) {
       addAnnotation({
         kind: annotKind, points, width: annotWidth,
@@ -1540,13 +1595,16 @@ function App() {
     }
 
     if (tool === 'placestall') {
-      addManualStall(stallAt(snapStallCenter(wp), result.angleUsed || 0));
+      const s = snapStall(wp);
+      addManualStall(stallAt(s.center, s.theta));
       return;
     }
 
     if (tool === 'select') {
       const v = hitVertex(sp);
-      if (v) { dragRef.current = { mode: 'vertex', target: v }; return; }
+      // CHECKPOINT here, not COMMIT on pointer-up: an identity updater is a
+      // no-op in the reducer, so a reshape used not to be its own undo step.
+      if (v) { dispatch({ type: 'CHECKPOINT' }); dragRef.current = { mode: 'vertex', target: v }; return; }
       // Site boundary → select the whole site; drag the border to move it.
       if (hitSiteEdge(sp)) {
         setSelection({ type: 'site' }); setStallSel([]); setAisleSel(null);
@@ -1554,22 +1612,56 @@ function App() {
         dragRef.current = { mode: 'siteMove', start: wp, orig: doc.site };
         return;
       }
-      // Stall? (topmost first) — click selects, shift+click toggles.
+      // Stall? (topmost first) — click selects, shift+click toggles, drag moves.
       for (let i = deco.stalls.length - 1; i >= 0; i--) {
         if (pointInPolygon(wp, deco.stalls[i].poly)) {
           const key = deco.stalls[i].key;
           setSelection(null); setAisleSel(null);
           const multi = e.shiftKey || e.metaKey || e.ctrlKey;
-          setStallSel((cur) => multi
-            ? (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key])
-            : [key]);
+          const keys = multi
+            ? (stallSel.includes(key) ? stallSel.filter((k) => k !== key) : [...stallSel, key])
+            : (stallSel.includes(key) ? stallSel : [key]);
+          setStallSel(keys);
+          if (!multi) {
+            // Solver stalls have no stored position, and stallKey is centroid-
+            // based, so moving one would be undone by the next solve. Convert
+            // it to a hand-placed stall first (the user's chosen behaviour).
+            const moving = keys.map((k) => deco.stalls.find((s) => s.key === k)).filter(Boolean);
+            if (moving.length) {
+              dispatch({ type: 'CHECKPOINT' });
+              const solverOnes = moving.filter((s) => !s.manual);
+              const added = solverOnes.map((s) => ({ poly: s.poly.map((p) => ({ ...p })), type: s.type }));
+              // Snapshot the post-conversion array and the indices this drag
+              // owns. Keys are centroid-based and change as the stall moves, so
+              // indices are the only stable handle mid-drag.
+              const baseManual = [...(doc.manualStalls || []), ...added];
+              const movingKeys = new Set(moving.map((s) => s.key));
+              const idxs = baseManual.reduce((acc, ms, i) => (movingKeys.has(stallKey(ms.poly)) ? [...acc, i] : acc), []);
+              if (solverOnes.length) {
+                dispatch({ type: 'LIVE', updater: (d) => {
+                  const ov = ovOf(d);
+                  for (const s of solverOnes) ov.removed[s.key] = 1;
+                  return { ...d, overrides: ov, manualStalls: baseManual };
+                } });
+              }
+              dragRef.current = { mode: 'stallMove', start: wp, baseManual, idxs };
+            }
+          }
           return;
         }
       }
       // Infrastructure annotation (checked before aisles so a lane drawn over
       // a drive aisle is still selectable)?
       const ai = hitAnnotation(sp);
-      if (ai >= 0) { setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null); return; }
+      if (ai >= 0) {
+        setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null);
+        const a = (doc.annotations || [])[ai];
+        if (a && a.points) {
+          dispatch({ type: 'CHECKPOINT' });
+          dragRef.current = { mode: 'annotMove', start: wp, index: ai, orig: a.points, origAnchor: a.anchor };
+        }
+        return;
+      }
       // Aisle?
       for (let i = deco.aisles.length - 1; i >= 0; i--) {
         if (pointInPolygon(wp, deco.aisles[i].poly)) {
@@ -1577,10 +1669,13 @@ function App() {
           return;
         }
       }
-      // Obstacle interior?
+      // Obstacle interior? — click selects, drag moves.
       for (let i = doc.obstacles.length - 1; i >= 0; i--) {
         if (pointInPolygon(wp, polyOf(doc.obstacles[i]))) {
-          setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null); return;
+          setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null);
+          dispatch({ type: 'CHECKPOINT' });
+          dragRef.current = { mode: 'obsMove', start: wp, index: i, orig: polyOf(doc.obstacles[i]) };
+          return;
         }
       }
       // Empty space → marquee-select stalls (drag a box).
@@ -1675,7 +1770,7 @@ function App() {
         return;
       }
       if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
-      else if (tool === 'placestall') setHover({ stallPreview: stallAt(snapStallCenter(wp), result.angleUsed || 0) });
+      else if (tool === 'placestall') { const s = snapStall(wp); setHover({ stallPreview: stallAt(s.center, s.theta), onRoad: s.onRoad }); }
       return;
     }
     if (drag.mode === 'pan') {
@@ -1684,6 +1779,35 @@ function App() {
     } else if (drag.mode === 'siteMove') {
       const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
       dispatch({ type: 'LIVE', updater: (d) => ({ ...d, site: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })) }) });
+    } else if (drag.mode === 'annotMove') {
+      // Always rebuilt from the pre-drag geometry + total delta, so the move is
+      // idempotent and cannot drift.
+      const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
+      dispatch({ type: 'LIVE', updater: (d) => ({
+        ...d,
+        annotations: (d.annotations || []).map((a, i) => (i !== drag.index ? a : {
+          ...a,
+          points: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+          ...(drag.origAnchor ? { anchor: { x: drag.origAnchor.x + dx, y: drag.origAnchor.y + dy } } : {}),
+        })),
+      }) });
+    } else if (drag.mode === 'obsMove') {
+      const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
+      dispatch({ type: 'LIVE', updater: (d) => ({
+        ...d,
+        obstacles: d.obstacles.map((o, i) => (i !== drag.index ? o
+          : { ...(o && o.poly ? o : {}), poly: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })), floors: (o && o.floors) || 1 })),
+      }) });
+    } else if (drag.mode === 'stallMove') {
+      const dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
+      drag.dx = dx; drag.dy = dy; // pointer-up needs the final delta to re-key
+      const own = new Set(drag.idxs);
+      dispatch({ type: 'LIVE', updater: (d) => ({
+        ...d,
+        manualStalls: drag.baseManual.map((ms, i) => (own.has(i)
+          ? { ...ms, poly: ms.poly.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+          : ms)),
+      }) });
     } else if (drag.mode === 'annotArea') {
       drag.cur = wp;
       setHover({ preview: rectFrom(drag.start, wp) });
@@ -1767,8 +1891,12 @@ function App() {
     dragRef.current = null;
     if (!drag) return;
     if (drag.mode === 'vertex') {
-      // Promote the live drag into a committed history entry.
-      dispatch({ type: 'COMMIT', updater: (d) => d });
+      // History is already handled by the CHECKPOINT taken at pointer-down.
+    } else if (drag.mode === 'stallMove') {
+      // Keys are centroid-based, so the moved stalls have new ones — re-select
+      // them or the selection would silently point at their old positions.
+      const dx = drag.dx || 0, dy = drag.dy || 0;
+      setStallSel(drag.idxs.map((i) => stallKey(drag.baseManual[i].poly.map((p) => ({ x: p.x + dx, y: p.y + dy })))));
     } else if (drag.mode === 'rect') {
       const r = rectFrom(drag.start, drag.cur);
       if (Math.abs(r.w) > 1 && Math.abs(r.h) > 1) {
@@ -1810,7 +1938,7 @@ function App() {
     }
   };
 
-  const onDoubleClick = () => {
+  const onDoubleClick = (e) => {
     if (tool === 'site' && drawing && drawing.points.length >= 3) {
       commitSite(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'obstaclepoly' && drawing && drawing.points.length >= 3) {
@@ -1819,6 +1947,39 @@ function App() {
       finishAreaPoly(drawing.points);
     } else if (tool === 'annot' && drawing && drawing.points.length >= 2) {
       finishAnnotLine(drawing.points, false);
+    } else if (!drawing) {
+      // Double-click a road (or any annotation) to add a point where you
+      // clicked, so the shape can be refined by dragging. Selection itself
+      // already happened on the preceding pointer-down.
+      const sp = getScreen(e);
+      const ai = hitAnnotation(sp);
+      if (ai < 0) return;
+      setTool('select'); setStallSel([]); setAisleSel(null);
+      setSelection({ type: 'annot', index: ai });
+      const ann = (doc.annotations || [])[ai];
+      if (!ann || ann.kind === 'driveway' || !ann.points || ann.points.length < 2) return;
+      const { w2s } = makeTransform(view);
+      // Insert on the segment nearest the click, in the raw (control) points.
+      let best = null;
+      const closed = ann.closed || ANNOT_TYPES[ann.kind].mode === 'area';
+      const n = ann.points.length;
+      for (let i = 0; i < (closed ? n : n - 1); i++) {
+        const a = w2s(ann.points[i]), b = w2s(ann.points[(i + 1) % n]);
+        const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+        if (len2 < 1e-6) continue;
+        let t = ((sp.x - a.x) * dx + (sp.y - a.y) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(sp.x - (a.x + t * dx), sp.y - (a.y + t * dy));
+        if (!best || d < best.d) best = { d, i, t };
+      }
+      if (!best || best.d > 14) return;
+      const p1 = ann.points[best.i], p2 = ann.points[(best.i + 1) % n];
+      const np = { x: p1.x + (p2.x - p1.x) * best.t, y: p1.y + (p2.y - p1.y) * best.t };
+      dispatch({ type: 'COMMIT', updater: (d) => ({
+        ...d,
+        annotations: (d.annotations || []).map((a, i) => (i !== ai ? a
+          : { ...a, points: [...a.points.slice(0, best.i + 1), np, ...a.points.slice(best.i + 1)] })),
+      }) });
     }
   };
 
@@ -1902,6 +2063,19 @@ function App() {
         case 'k': setTool('placestall'); break;
         case ' ': setTool('pan'); break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
+        // R rotates in 15° steps: the stall about to be placed, or the selected
+        // ones. Shift+R goes back. The HUD reports the current offset.
+        case 'r': {
+          const step = e.shiftKey ? -ANGLE_SNAP_DEG : ANGLE_SNAP_DEG;
+          if (stallSel.length) {
+            const cur = deco.stalls.find((s) => s.key === stallSel[0]);
+            const base = cur && cur.angle != null ? cur.angle : Math.round(((result.angleUsed || 0) * 180) / Math.PI);
+            setStallAngles(stallSel, (((base + step) % 360) + 360) % 360);
+          } else {
+            setStallRot((r) => (((r + step) % 360) + 360) % 360);
+          }
+          break;
+        }
         case '+': case '=': zoomBy(1.2); break;
         case '-': case '_': zoomBy(1 / 1.2); break;
         case 'escape': setDrawing(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); break;
@@ -2373,6 +2547,9 @@ function App() {
           <span>schaal <b>${view.scale.toFixed(1)}</b> px/m</span>
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
+          ${tool === 'placestall' && html`
+            <span>·</span>
+            <span className="hud-rot">gedraaid <b>${stallRot}°</b>${stallRot ? '' : ' · R draait 15°'}</span>`}
         </div>
         ${mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
 
@@ -2417,7 +2594,7 @@ function App() {
               </div>`}
           </div>`}
 
-        ${!mbToken && html`
+        ${!mbToken && mapStyle !== 'none' && html`
           <div className="token-panel">
             <h4>🗺️ Mapbox-kaart activeren</h4>
             <p>De planner draait op een Mapbox Standard-kaart. Voer je eigen Mapbox <b>public token</b> (pk.…) in — die blijft lokaal in je browser.</p>
