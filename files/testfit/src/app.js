@@ -4,14 +4,15 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=19ab1f5e';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf,
-} from './geometry.js';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js';
-import { parseParcel, simplifyRing } from './importers.js';
+} from './geometry.js?v=19ab1f5e';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=19ab1f5e';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=19ab1f5e';
+import { parseParcel, simplifyRing } from './importers.js?v=19ab1f5e';
+import { BUILD_ID } from './build.js?v=19ab1f5e';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1081,7 +1082,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=19ab1f5e', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1210,7 +1211,7 @@ function App() {
     setMap3dError('');
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js').then(async (m) => {
+    import('./map3d.js?v=19ab1f5e').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => setMap3dError(msg), MAP_STYLES[mapStyle], onDiag);
@@ -2242,6 +2243,7 @@ function App() {
                 <div><span>Stijl</span><b>${mapDiag.style || '—'}</b></div>
                 <div><span>Tegels</span><b>${mapDiag.tiles == null ? '—' : mapDiag.tiles}</b></div>
                 <div><span>Canvas</span><b>${mapDiag.canvas || '—'}</b></div>
+                <div><span>Build</span><b>${BUILD_ID}</b></div>
                 ${mapDiag.detail && html`<div className="map-diag-detail">${mapDiag.detail}</div>`}
               </div>`}`}
         </div>
