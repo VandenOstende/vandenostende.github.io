@@ -961,3 +961,20 @@ body.resizing .panel-resize { pointer-events: auto; }
 .kn-label { font-size: 12px; }
 .kn-need { color: var(--muted); font-size: 11px; line-height: 1.35; }
 .kn-ok { font-size: 12px; color: #22c55e; margin-top: 6px; }
+
+/* The light map's legend. One hue, six steps — the same sequential ramp the
+   canvas fills with, so the strip is the key and not a decoration. Each theme
+   gets its own steps: on dark paper "more light" has to read brighter, and an
+   inverted copy of the light ramp would read backwards. */
+.ramp { margin-top: 10px; }
+.ramp-bar {
+  height: 8px; border-radius: 4px; border: 1px solid var(--line);
+  background: linear-gradient(to right, #fef3c7, #fde68a, #fcd34d, #fbbf24, #f59e0b, #d97706);
+}
+:root[data-theme='dark'] .ramp-bar {
+  background: linear-gradient(to right, #78350f, #92400e, #b45309, #d97706, #f59e0b, #fbbf24);
+}
+.ramp-ends {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--muted); margin-top: 3px;
+}

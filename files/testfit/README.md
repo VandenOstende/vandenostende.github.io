@@ -93,6 +93,15 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
 - Every vehicle dimension is an editable constant. They are common design
   values, **not a verified norm citation** — parking and fire-access figures
   differ per municipality and per fire zone.
+- The lighting model treats each luminaire as a point source radiating evenly
+  into the lower hemisphere. That is the first-pass hand calculation, **not
+  photometry**: a real design reads an IES intensity distribution per luminaire.
+  The lux and uniformity targets are common design values, not a norm citation.
+- The solar model is a clear-sky shape calibrated onto two published climate
+  numbers — annual irradiation and annual diffuse fraction — because a cloudless
+  year overstates the total and, worse, gets the beam/diffuse split wrong, which
+  is what sets the gain from tilting. There is no weather year and no
+  temperature or soiling model beyond a single performance ratio.
 - **Accessible stalls land near an entrance** when the plan has one (an access
   point, else a driveway, else the nearest corner of the largest building). With
   none, placement is unchanged.
@@ -110,6 +119,17 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   light takes the computed position, and a 2D layer draws the ground shadows and
   counts how many stalls stand in one. The clock is mean solar time for the
   site's longitude, so no summer time — the panel says so.
+- **How much light lands here** — one heat map, two sources. Switch it to
+  *artificial* and lamp posts you place light the plan: horizontal illuminance
+  on a grid, average and minimum over the **parking surface** (not the parcel —
+  the setback strip is unlit by design and would peg uniformity at zero), the
+  U₀ ratio against a target, and the darkest stall as a row you can click.
+  Switch it to *sun* and the same grid shows annual irradiation, with your own
+  buildings taking their bite out of it.
+- **Solar carports** — roof over the rows and the app reports kWp, kWh per year,
+  specific yield and the shading loss your own buildings cost. Buildings block
+  the canopy only where they rise above it. A carport adds **no** impervious
+  area: it stands over paving that is already counted.
 - **Metrics** — stall count, site area, built %, m²/stall, impervious %, FAR,
   per-type counts, an automatic accessible-stall table (2010 ADA Standards,
   Table 208.2 plus the 1-in-6 van rule), and a programme/parking-ratio panel
@@ -156,6 +176,7 @@ files/testfit/
     ├── solver.worker.js  # the solver off the main thread
     ├── drive.js          # design vehicles + the drivability check (pure)
     ├── sun.js            # solar position + ground shadows (pure)
+    ├── light.js          # illuminance, annual irradiance, PV yield (pure)
     ├── annots.js         # the annotation type catalogue
     ├── buildings.js      # deterministic building exteriors per use
     ├── basemap.js        # slippy-map tiles (OSM/Esri) + geocoding + geo↔metres
@@ -169,10 +190,12 @@ files/testfit/
 Map tiles (OpenStreetMap, Esri World Imagery) and geocoding (Nominatim) are the
 only outbound requests; without a network the rest keeps working.
 
-`geometry.js`, `solver.js`, `drive.js` and `sun.js` are dependency-free, pure ES
-modules and can be tested on their own with Node — the last two deliberately so,
-since a geometric check and an almanac both deserve assertions that need no
-browser.
+`geometry.js`, `solver.js`, `drive.js`, `sun.js` and `light.js` are
+dependency-free, pure ES modules and can be tested on their own with Node — the
+last three deliberately so, since a geometric check, an almanac and a light
+calculation all deserve assertions that need no browser. It pays: the tilt gain
+in the PV model was wrong by a factor of three until the tests compared it
+against the optimum tilt for the latitude, which is a fact and not an opinion.
 
 ## Keyboard
 

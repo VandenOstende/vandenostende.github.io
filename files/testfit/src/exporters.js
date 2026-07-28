@@ -5,9 +5,9 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=75096443';
-import { polyOf, ribbonPoly } from './geometry.js?v=75096443';
-import { ANNOT_TYPES } from './annots.js?v=75096443';
+import { localToLatLon } from './basemap.js?v=8c2bb381';
+import { polyOf, ribbonPoly } from './geometry.js?v=8c2bb381';
+import { ANNOT_TYPES } from './annots.js?v=8c2bb381';
 
 // A drawn carriageway is an area, not a centreline: exporting the hairline lost
 // its width, its offset and its corners.
@@ -89,7 +89,10 @@ export function toDXF(plan) {
 }
 
 // ---------- CSV (quantity takeoff) ----------
-export function toCSV(plan, metrics) {
+// `light` is optional: the lighting and yield figures only exist once those
+// panels have been opened, and a takeoff must never claim a number that was
+// never computed.
+export function toCSV(plan, metrics, light) {
   const rows = [['Categorie', 'Waarde']];
   rows.push(['Totaal vakken', metrics.total]);
   Object.entries(metrics.counts || {}).forEach(([k, v]) => rows.push(['Vakken — ' + k, v]));
@@ -105,6 +108,20 @@ export function toCSV(plan, metrics) {
   if ((plan.turnarounds || []).length) rows.push(['Keerruimtes', plan.turnarounds.length]);
   if ((plan.islands || []).length) rows.push(['Plantvakken', plan.islands.length]);
   if (metrics.requiredStalls != null) rows.push(['Vereiste plaatsen (zoning)', metrics.requiredStalls]);
+  const pv = light && light.pv;
+  if (pv && pv.area > 0) {
+    rows.push(['Carport overkapt (m2)', Math.round(pv.area)]);
+    rows.push(['PV vermogen (kWp)', pv.kWp.toFixed(1)]);
+    rows.push(['PV opbrengst (kWh/jaar)', Math.round(pv.kWh)]);
+    rows.push(['PV specifiek (kWh/kWp)', Math.round(pv.specific)]);
+    rows.push(['PV schaduwverlies (%)', (pv.shadeLoss * 100).toFixed(1)]);
+  }
+  const lx = light && light.lux;
+  if (lx && lx.avg != null) {
+    rows.push(['Verlichting gemiddeld (lx)', lx.avg.toFixed(1)]);
+    rows.push(['Verlichting minimum (lx)', lx.min.toFixed(1)]);
+    rows.push(['Verlichting gelijkmatigheid U0', lx.u0.toFixed(2)]);
+  }
   const esc = (c) => '"' + String(c).replace(/"/g, '""') + '"';
   return rows.map((r) => r.map(esc).join(',')).join('\n');
 }
