@@ -7,11 +7,11 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=1f937a2e';
-import { STALL_TYPES } from './solver.js?v=1f937a2e';
-import { polyOf, ribbonPoly } from './geometry.js?v=1f937a2e';
-import { ANNOT_TYPES } from './annots.js?v=1f937a2e';
-import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=1f937a2e';
+import { localToLatLon } from './basemap.js?v=6ed44f65';
+import { STALL_TYPES } from './solver.js?v=6ed44f65';
+import { polyOf, ribbonPoly } from './geometry.js?v=6ed44f65';
+import { ANNOT_TYPES } from './annots.js?v=6ed44f65';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=6ed44f65';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -195,7 +195,13 @@ export function planToGeoJSON(plan, geo) {
     stalls: fc((plan.stalls || []).map((s) => polyFeature(s.poly, geo, {
       color: s.type && s.type !== 'standard' ? (STALL_TYPES[s.type] || STALL_TYPES.standard).color : '#3f4650',
     }))),
-    aisles: fc([...(plan.aisles || []).map((a) => a.poly), ...roadPolys(anns)].map((q) => polyFeature(q, geo, {}))),
+    // Turnarounds are carriageway too: same layer as the aisles and the drawn
+    // roads, so the tarmac is one surface in 3D as well as on the canvas.
+    aisles: fc([
+      ...(plan.aisles || []).map((a) => a.poly),
+      ...(plan.turnarounds || []).map((t) => t.poly || t),
+      ...roadPolys(anns),
+    ].map((q) => polyFeature(q, geo, {}))),
     buildings: fc(buildingParts(plan, geo)),
     bays: fc((plan.stalls || []).flatMap((s) => bayMarks(s.poly)).map((seg) => lineFeature(seg, geo, {}))),
     site: fc(plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : []),

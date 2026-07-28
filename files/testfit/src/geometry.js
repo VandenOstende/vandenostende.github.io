@@ -331,21 +331,70 @@ export function rectPoly(x, y, w, h) {
  * and the 3D drape, so all four agree on where the asphalt actually is.
  */
 export function ribbonPoly(points, width, align, curved) {
+  const mid = ribbonCentre(points, width, align, curved);
+  if (!mid) return null;
+  const hw = Math.max(0.25, (width || 3) / 2);
+  const left = [], right = [];
+  for (const p of mid) {
+    left.push({ x: p.x + p.nx * hw, y: p.y + p.ny * hw });
+    right.push({ x: p.x - p.nx * hw, y: p.y - p.ny * hw });
+  }
+  return [...left, ...right.reverse()];
+}
+
+/**
+ * The centreline of that same carriageway: the middle of the asphalt, not the
+ * line the user drew. For `align: 'left'` or `'right'` those are half a
+ * carriageway apart, and anything that reasons about where you can drive has to
+ * use this one — measuring a turn on the kerb instead of the middle of the road
+ * is wrong by exactly half the width.
+ *
+ * Each point carries the unit normal used to build it (`nx`, `ny`, pointing
+ * left of travel), so callers that need the edges do not recompute it.
+ */
+export function ribbonCentre(points, width, align, curved) {
   const pts = tessellateOpen(points || [], !!curved, 10);
   if (pts.length < 2) return null;
   const hw = Math.max(0.25, (width || 3) / 2);
   const shift = align === 'left' ? hw : align === 'right' ? -hw : 0;
-  const left = [], right = [];
+  const out = [];
   for (let i = 0; i < pts.length; i++) {
     let dx = 0, dy = 0;
     if (i > 0) { dx += pts[i].x - pts[i - 1].x; dy += pts[i].y - pts[i - 1].y; }
     if (i < pts.length - 1) { dx += pts[i + 1].x - pts[i].x; dy += pts[i + 1].y - pts[i].y; }
     const len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
-    const cx = pts[i].x + nx * shift, cy = pts[i].y + ny * shift;
-    left.push({ x: cx + nx * hw, y: cy + ny * hw });
-    right.push({ x: cx - nx * hw, y: cy - ny * hw });
+    out.push({ x: pts[i].x + nx * shift, y: pts[i].y + ny * shift, nx, ny });
   }
-  return [...left, ...right.reverse()];
+  return out;
+}
+
+/**
+ * Points every `step` metres along a closed polygon's edges, each with the
+ * outward unit normal of the edge it sits on. Used to walk a building facade.
+ * The polygon is assumed counter-clockwise in screen space (y down), which is
+ * what `ensureCCW` produces.
+ */
+export function sampleEdges(poly, step = 2) {
+  const out = [];
+  if (!poly || poly.length < 3) return out;
+  const c = polygonCentroid(poly);
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const ex = b.x - a.x, ey = b.y - a.y, len = Math.hypot(ex, ey);
+    if (len < 1e-9) continue;
+    const ux = ex / len, uy = ey / len;
+    // Outward = away from the centroid, decided per edge so a concave
+    // footprint does not flip half its normals inward.
+    let nx = -uy, ny = ux;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if ((mx - c.x) * nx + (my - c.y) * ny < 0) { nx = -nx; ny = -ny; }
+    const n = Math.max(1, Math.round(len / step));
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) / n;
+      out.push({ x: a.x + ex * t, y: a.y + ey * t, nx, ny, edge: i });
+    }
+  }
+  return out;
 }
 
 /**
