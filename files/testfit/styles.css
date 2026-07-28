@@ -880,3 +880,26 @@ body.resizing .panel-resize { pointer-events: auto; }
 }
 .tool-opts h3 { color: var(--accent); }
 .tool-opts > label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* "Your tab is running an old build" — the one message that has to reach you
+   even when everything else on screen is from the wrong version. */
+.stale-bar {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92%, 620px);
+  padding: 7px 10px 7px 14px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.stale-bar b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.stale-bar .btn { padding: 4px 12px; }

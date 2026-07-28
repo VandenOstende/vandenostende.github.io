@@ -4,18 +4,18 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8a002ada';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=29238a68';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=8a002ada';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=8a002ada';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8a002ada';
-import { parseParcel, simplifyRing } from './importers.js?v=8a002ada';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=8a002ada';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=8a002ada';
-import { BUILD_ID } from './build.js?v=8a002ada';
+} from './geometry.js?v=29238a68';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=29238a68';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=29238a68';
+import { parseParcel, simplifyRing } from './importers.js?v=29238a68';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=29238a68';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=29238a68';
+import { BUILD_ID } from './build.js?v=29238a68';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1517,6 +1517,11 @@ function App() {
   const [annotAlign, setAnnotAlign] = useState('center');
   const [buildUse, setBuildUse] = useState(DEFAULT_USE);
   const [buildMat, setBuildMat] = useState('');   // '' = whatever the type usually is
+  // Alt+drag carries whatever stands on a road, but most Linux desktops and
+  // some Windows setups grab Alt+drag to move windows, so the browser never
+  // sees it. This is the same thing without a modifier.
+  const [carryRiders, setCarryRiders] = useState(false);
+  const [staleBuild, setStaleBuild] = useState('');
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
   // Imported symbols. The library is per-browser; a document carries its own
@@ -1600,6 +1605,8 @@ function App() {
   const geoRef = useRef(null);         // latest doc.geo, same reason
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
+  const leftPanelRef = useRef(null);
+  const carryRidersRef = useRef(false); // read inside the drag handler
   const wheelRef = useRef({ at: -1e9, zoom: true }); // latched wheel gesture mode
   const spaceRef = useRef(null); // tool to restore when Space (hold-to-pan) is released
   const geoAppliedRef = useRef(null); // last geo anchor pushed to the 3D camera
@@ -1655,7 +1662,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=8a002ada', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=29238a68', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1766,6 +1773,7 @@ function App() {
   }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure]);
 
   renderRef.current = renderNow;
+  carryRidersRef.current = carryRiders;
   docRef.current = doc;
   vmRef.current = viewMode;
   // The map lifecycle effect finishes asynchronously, long after the render that
@@ -1774,6 +1782,37 @@ function App() {
   viewRef.current = view;
   geoRef.current = doc.geo;
   useEffect(() => { renderNow(); }, [renderNow]);
+
+  // Is this tab running the build that is actually deployed? The ?v= stamp
+  // busts the cache for every module, but not for index.html itself — a browser
+  // holding an old copy of that loads an old app.js and silently misses
+  // everything shipped since. Nothing told you that; the build id only appeared
+  // inside the map diagnostics. Once, at boot, and it fails quietly: an offline
+  // tab should not be nagged about something that does not matter.
+  useEffect(() => {
+    let gone = false;
+    (async () => {
+      try {
+        const r = await fetch('index.html', { cache: 'no-store' });
+        if (!r.ok) return;
+        const m = (await r.text()).match(/app\.js\?v=([0-9a-f]+)/);
+        if (!gone && m && m[1] && m[1] !== BUILD_ID) setStaleBuild(m[1]);
+      } catch (e) { /* offline, or served from a file:// URL */ }
+    })();
+    return () => { gone = true; };
+  }, []);
+
+  // The tool options sit at the top of the left panel, but the panel keeps its
+  // scroll position across renders — so after scrolling down to hunt for a
+  // setting, the block appears above the fold you are no longer looking at.
+  // Only on an actual tool change: this panel re-renders on every mouse move
+  // while drawing, and resetting there would pin it to the top for good.
+  useEffect(() => {
+    const el = leftPanelRef.current;
+    if (!el) return;
+    if (tool !== 'annot' && tool !== 'obstacle' && tool !== 'obstaclepoly') return;
+    el.scrollTop = 0;
+  }, [tool, annotKind]);
 
   // Asset types must exist in ANNOT_TYPES before anything tries to draw them:
   // drawAnnotation bails without a sound on an unknown kind, so a document
@@ -1806,7 +1845,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=8a002ada').then(async (m) => {
+    import('./map3d.js?v=29238a68').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -2540,7 +2579,7 @@ function App() {
       guidesRef.current = a0.guides;
       // Alt takes everything standing on the road with it. Held live, so you can
       // press and release it mid-drag and watch the difference.
-      const withRiders = e.altKey && drag.riders ? drag.riders : null;
+      const withRiders = (e.altKey || carryRidersRef.current) && drag.riders ? drag.riders : null;
       const moved = withRiders ? new Map(withRiders.anns.map((r) => [r.i, r])) : null;
       dispatch({ type: 'LIVE', updater: (d) => ({
         ...d,
@@ -3698,7 +3737,7 @@ function App() {
       </div>
 
       ${vis('panelLeft') && html`
-      <div className="panel left">
+      <div className="panel left" ref=${leftPanelRef}>
         ${resizer('left')}
         ${/* Options for whatever tool is active, at the very top of the panel.
               They used to sit under the palette — 2000 px below the fold, so
@@ -3950,6 +3989,11 @@ function App() {
 
       <div className="canvas-wrap" ref=${wrapRef}>
         <div id="pp-map" className="pp-map"></div>
+        ${staleBuild && html`
+          <div className="stale-bar">
+            <span>Nieuwe versie beschikbaar — je tab draait build <b>${BUILD_ID}</b>, live staat <b>${staleBuild}</b>.</span>
+            <button className="btn" onClick=${() => window.location.reload(true)}>Herladen</button>
+          </div>`}
         <canvas ref=${canvasRef}
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
           onDoubleClick=${onDoubleClick} onContextMenu=${onContextMenu}
@@ -4114,8 +4158,13 @@ function App() {
                   <button className=${al === 'left' ? 'active' : ''} onClick=${() => updateAnnotation(ai, { align: 'left' })}>Linkerrand</button>
                   <button className=${al === 'right' ? 'active' : ''} onClick=${() => updateAnnotation(ai, { align: 'right' })}>Rechterrand</button>
                 </div>
-                <div className="mix-note">Omschakelen verlegt de weg zonder je lijn te verplaatsen · <b>Alt</b> ingedrukt houden tijdens het slepen neemt alles mee wat op de weg staat.</div>
+                <div className="mix-note">Omschakelen verlegt de weg zonder je lijn te verplaatsen.</div>
               </div>
+              <label className="toggle">
+                <span>Objecten op de weg meenemen</span>
+                <input type="checkbox" checked=${carryRiders} onChange=${(e) => setCarryRiders(e.target.checked)} />
+              </label>
+              <div className="mix-note">Borden, markeringen en handmatige vakken die op het asfalt staan schuiven mee bij het verslepen. <b>Alt</b> ingedrukt houden doet hetzelfde, maar veel bureaubladen kapen Alt+slepen om vensters te verplaatsen.</div>
               <label className="toggle">
                 <span>Vloeiende bochten</span>
                 <input type="checkbox" checked=${!!ann.curved}
