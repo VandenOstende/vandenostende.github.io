@@ -4,18 +4,19 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=1f937a2e';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=30378781';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=1f937a2e';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=1f937a2e';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=1f937a2e';
-import { parseParcel, simplifyRing } from './importers.js?v=1f937a2e';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=1f937a2e';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=1f937a2e';
-import { BUILD_ID } from './build.js?v=1f937a2e';
+} from './geometry.js?v=30378781';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=30378781';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=30378781';
+import { parseParcel, simplifyRing } from './importers.js?v=30378781';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=30378781';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=30378781';
+import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=30378781';
+import { BUILD_ID } from './build.js?v=30378781';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -42,6 +43,8 @@ const DEFAULT_PARAMS = {
   singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
   buildingGLA: 0, parkingRatio: 0, // GLA (m²) + stalls per 100 m² (zoning)
   layout: 'strip', // 'strip' (straight rows) | 'perimeter' (follows the curve)
+  designVehicle: 'car', // what the drivability check has to fit
+  fireMaxDist: 60,      // m from a facade to where a fire appliance can stand
   alignLongestEdge: false, // align rows to the site's longest edge
 };
 
@@ -136,52 +139,6 @@ function circlePoly(cx, cy, r, n = 40) {
 function ribbon(ann, t) {
   const ty = t || ANNOT_TYPES[ann.kind] || {};
   return ribbonPoly(ann.points, ann.width || ty.width || 3, ann.align, ann.curved);
-}
-
-// Where drawn ways cross each other. Keyed by position rounded to 0.5 m, the
-// same trick stalls and aisles use — a junction IS a place, and a position key
-// is the only identity two independent polylines can share. Move a road and the
-// crossing moves with it, so the question comes back; that is how every other
-// manual mark in this app behaves.
-const junctionKey = (p) => (Math.round(p.x * 2) / 2) + ',' + (Math.round(p.y * 2) / 2);
-function findCrossings(anns) {
-  const ways = [];
-  (anns || []).forEach((a, i) => {
-    const t = ANNOT_TYPES[a.kind];
-    if (t && t.body && !a.closed && a.points && a.points.length >= 2) ways.push({ i, a });
-  });
-  const out = new Map();
-  for (let m = 0; m < ways.length; m++) {
-    for (let n = m + 1; n < ways.length; n++) {
-      const A = ways[m], B = ways[n];
-      for (let p = 0; p < A.a.points.length - 1; p++) {
-        for (let q = 0; q < B.a.points.length - 1; q++) {
-          const at = segmentCross(A.a.points[p], A.a.points[p + 1], B.a.points[q], B.a.points[q + 1]);
-          if (!at) continue;
-          const key = junctionKey(at);
-          // Two segments of the same pair can meet twice at a shared vertex;
-          // one entry per place is what the user is being asked about.
-          if (!out.has(key)) out.set(key, { key, at, i: A.i, j: B.i });
-        }
-      }
-    }
-  }
-  return [...out.values()];
-}
-
-// The heading of one branch at a crossing, in degrees 0..180 — a way and its
-// reverse are the same branch. Stored instead of an index so reordering or
-// deleting another way cannot move the bollards to the wrong arm.
-function branchHeading(anns, c, branch) {
-  const a = (anns || [])[branch === 'j' ? c.j : c.i];
-  if (!a || !a.points || a.points.length < 2) return 0;
-  let bi = 0, bd = Infinity;
-  for (let k = 0; k < a.points.length - 1; k++) {
-    const d = distPointSegment(c.at, a.points[k], a.points[k + 1]);
-    if (d < bd) { bd = d; bi = k; }
-  }
-  const p = a.points[bi], q = a.points[bi + 1];
-  return ((Math.atan2(q.y - p.y, q.x - p.x) * 180) / Math.PI + 360) % 180;
 }
 
 function annotationBlocker(ann) {
@@ -298,6 +255,7 @@ export const UI_PARTS = [
   { id: 'secFoot', group: 'Linkerpaneel', label: 'Voettekst' },
 
   { id: 'secMetrics', group: 'Rechterpaneel', label: 'Metrics' },
+  { id: 'secDrive', group: 'Rechterpaneel', label: 'Bereikbaarheid' },
   { id: 'secStallAisle', group: 'Rechterpaneel', label: 'Vak & rijstrook' },
   { id: 'secConstraints', group: 'Rechterpaneel', label: 'Site-constraints' },
   { id: 'secMix', group: 'Rechterpaneel', label: 'Vaktypes (mix)' },
@@ -324,7 +282,7 @@ const WORKSPACE_PRESETS = {
   Alles: null, // null = everything visible
   Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
   Tekenen: ['panelLeft', 'secDraw', 'secLayers', 'secSiteShape', 'tbTools', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
-  Analyse: ['panelRight', 'secMetrics', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
+  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
 };
 const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
 
@@ -731,6 +689,11 @@ function draw(ctx, opts) {
       const a = (doc.annotations || [])[selection.index];
       if (a && a.kind !== 'driveway' && a.points) for (const p of a.points) drawHandle(ctx, w2s(p), '#60a5fa');
     }
+  }
+
+  // Knelpunten last of all — they are a verdict on the plan, not part of it.
+  if (opts.driveIssues && opts.driveIssues.length) {
+    drawIssues(ctx, opts.driveIssues, opts.focusIssue == null ? -1 : opts.focusIssue, w2s, view.scale);
   }
 
   // Alignment guides sit above everything: they are transient feedback, not plan.
@@ -1467,6 +1430,44 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   }
 }
 
+// Knelpunten from the drivability check. Numbered so a row in the panel and a
+// mark on the plan are obviously the same thing, and drawn last so nothing
+// hides them. Nothing here appears unless the user asked for it.
+function drawIssues(ctx, list, focus, w2s, scale) {
+  ctx.save();
+  list.forEach((it, i) => {
+    if (!it.at) return;
+    const active = i === focus;
+    if (!active && focus >= 0) ctx.globalAlpha = 0.45;
+    const p = w2s(it.at);
+    const col = it.sev === 'warn' ? '#f59e0b' : '#ef4444';
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = active ? 2.5 : 1.5;
+    if (it.kind === 'corner' && it.want > 0) {
+      // The radius the vehicle needs, at the corner that does not offer it.
+      ctx.beginPath(); ctx.arc(p.x, p.y, it.want * scale, 0, Math.PI * 2); ctx.stroke();
+    } else if (it.kind === 'fire' && it.to) {
+      const q = w2s(it.to);
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    } else {
+      const r = Math.max(10, 4 * scale);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // Numbered badge.
+    ctx.beginPath(); ctx.arc(p.x, p.y, active ? 11 : 9, 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = (active ? 'bold 12px ' : '11px ') + 'system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), p.x, p.y + 0.5);
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+    ctx.globalAlpha = 1;
+  });
+  ctx.restore();
+}
+
 // A crossing that has not been made into a junction gets a red bar across it:
 // the two ways only look joined because the tarmac is one surface, and nothing
 // should ever be silently connected.
@@ -1782,7 +1783,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=1f937a2e', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=30378781', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1870,6 +1871,36 @@ function App() {
   }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
   // Every place two drawn ways meet, with whatever was decided about it.
+  // ---------- Drivability ----------
+  // The check runs on demand, never in the render loop: it builds a network and
+  // measures every corner on it, which has no business happening on a keystroke.
+  // Hidden panel plus markers off → the memo does not run at all.
+  const [showIssues, setShowIssues] = useState(false);
+  const [focusIssue, setFocusIssue] = useState(-1);
+  const designVehicle = doc.params.designVehicle || DEFAULT_VEHICLE;
+  const fireMaxDist = doc.params.fireMaxDist > 0 ? doc.params.fireMaxDist : 60;
+  const driveReport = useMemo(() => {
+    if (hidden.secDrive && !showIssues) return null;
+    try {
+      return analysePlan({
+        site: sitePoly,
+        buildable: computeBuildable(sitePoly, doc.params.setback),
+        obstacles: doc.obstacles,
+        aisles: deco.aisles,
+        turnarounds: deco.turnarounds,
+        stalls: deco.stalls,
+        annotations: doc.annotations,
+        junctions: doc.junctions,
+        params: doc.params,
+      }, designVehicle, { fireMaxDist });
+    } catch (e) {
+      // A geometry failure must never take the whole app down with it.
+      return { issues: [], reach: { total: 0, ok: 0, bad: [] }, empty: true, failed: String(e && e.message || e) };
+    }
+  }, [sitePoly, doc.obstacles, doc.annotations, doc.junctions, doc.params, deco, designVehicle, fireMaxDist, hidden, showIssues]);
+  const driveIssues = driveReport ? driveReport.issues : [];
+  useEffect(() => { setFocusIssue(-1); }, [designVehicle, driveIssues.length]);
+
   const crossings = useMemo(() => {
     const jn = doc.junctions || {};
     return findCrossings(doc.annotations).map((c) => {
@@ -1930,10 +1961,13 @@ function App() {
         drawing, hover, selection, size: sizeRef.current,
         showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel,
+        // Only when asked: a checkbox, or a row the user clicked.
+        driveIssues: showIssues ? driveIssues : (focusIssue >= 0 && driveIssues[focusIssue] ? [driveIssues[focusIssue]] : null),
+        focusIssue: showIssues ? focusIssue : (focusIssue >= 0 ? 0 : -1),
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -2008,7 +2042,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=1f937a2e').then(async (m) => {
+    import('./map3d.js?v=30378781').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -4826,6 +4860,54 @@ function App() {
           ${metrics.onewayAisles > 0 && html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '4px' }}>
             Eenrichtings-rijbanen: <b style=${{ color: 'var(--text)' }}>${metrics.onewayAisles}</b> / ${metrics.aisleCount}.
           </div>`}
+        </div>`}
+
+        ${vis('secDrive') && html`
+        <div className="section">
+          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Bereikbaarheid</span>
+            <label className="toggle" style=${{ fontSize: '11px' }}>
+              <input type="checkbox" checked=${showIssues} onChange=${(e) => setShowIssues(e.target.checked)} />
+              <span>toon op plan</span>
+            </label>
+          </h3>
+          <div className="field"><label>Ontwerpvoertuig</label></div>
+          <div className="veh-grid">
+            ${Object.values(VEHICLES).map((v) => html`
+              <button key=${v.key}
+                className=${'type-btn' + (designVehicle === v.key ? ' active' : '')}
+                title=${`${v.label} · ${v.length.toFixed(1)}×${v.width.toFixed(2)} m · draaistraal ${v.rDesign.toFixed(1)} m`}
+                onClick=${() => setParam('designVehicle', v.key)}>${v.icon} ${v.label}</button>`)}
+          </div>
+          ${(() => {
+            if (!driveReport) return '';
+            if (driveReport.failed) return html`<div className="mix-warn">De controle kon niet draaien: ${driveReport.failed}</div>`;
+            if (driveReport.empty) return html`<div className="mix-note">Geen rijweg getekend. Teken een weg of in/uitrit — de rijbanen van de solver staan los van elkaar en van de openbare weg.</div>`;
+            const n = driveIssues.length;
+            return html`
+              <div className="kn-head">${n ? `⚠ ${n} knelpunt${n > 1 ? 'en' : ''}` : '✓ geen knelpunten'}</div>
+              ${driveIssues.map((it, i) => html`
+                <div key=${i} className=${'obj-row kn-row' + (focusIssue === i ? ' active' : '')}
+                  onClick=${() => { setFocusIssue(i); focusPoly(it.poly || [it.at]); }}>
+                  <span className="dot" style=${{ background: it.sev === 'warn' ? '#f59e0b' : '#ef4444' }}></span>
+                  <span className="kn-text">
+                    <span className="kn-label">${i + 1}. ${it.label}</span>
+                    <span className="kn-need">${it.need}</span>
+                  </span>
+                </div>`)}
+              <div className=${driveReport.reach.ok === driveReport.reach.total ? 'kn-ok' : 'mix-warn'}>
+                ${driveReport.reach.ok === driveReport.reach.total
+                  ? `✓ Alle ${driveReport.reach.total} vakken bereikbaar met het gekozen voertuig`
+                  : `${driveReport.reach.ok} van ${driveReport.reach.total} vakken bereikbaar met een ${vehicleOf(designVehicle).label.toLowerCase()}`}
+              </div>`;
+          })()}
+          <div className="field" style=${{ marginTop: 8 }}>
+            <label>Brandweer max. afstand tot gevel <span className="val">${fireMaxDist} m</span></label>
+            <input type="range" min="20" max="120" step="5" value=${fireMaxDist}
+              onInput=${(e) => setParam('fireMaxDist', +e.target.value, false)}
+              onChange=${(e) => setParam('fireMaxDist', +e.target.value)} />
+          </div>
+          <div className="mix-note">Gangbare ontwerpwaarden, geen normcitaat — maten verschillen per gemeente en per brandweerzone.</div>
         </div>`}
 
         ${vis('secStallAisle') && html`

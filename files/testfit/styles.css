@@ -948,3 +948,16 @@ body.resizing .panel-resize { pointer-events: auto; }
 /* Several objects picked at once: the panel says how many and of what, because
    the buttons below act on all of them. */
 .multi-sub { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+
+/* Drivability: the vehicle picker and the knelpunten list. Rows reuse .obj-row
+   so a problem reads like every other selectable thing in the app. */
+.veh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px; }
+.kn-head { font-size: 12px; font-weight: 600; margin: 4px 0 6px; }
+/* Two lines, not two columns: a knelpunt names a place and then says what is
+   wrong with it, and neither half is worth truncating. */
+.kn-row { align-items: flex-start; padding-top: 5px; padding-bottom: 5px; }
+.kn-row .dot { margin-top: 4px; flex: 0 0 auto; }
+.kn-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.kn-label { font-size: 12px; }
+.kn-need { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.kn-ok { font-size: 12px; color: #22c55e; margin-top: 6px; }
