@@ -7,11 +7,11 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=29238a68';
-import { STALL_TYPES } from './solver.js?v=29238a68';
-import { polyOf, ribbonPoly } from './geometry.js?v=29238a68';
-import { ANNOT_TYPES } from './annots.js?v=29238a68';
-import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=29238a68';
+import { localToLatLon } from './basemap.js?v=1f937a2e';
+import { STALL_TYPES } from './solver.js?v=1f937a2e';
+import { polyOf, ribbonPoly } from './geometry.js?v=1f937a2e';
+import { ANNOT_TYPES } from './annots.js?v=1f937a2e';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=1f937a2e';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';

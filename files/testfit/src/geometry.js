@@ -347,3 +347,19 @@ export function ribbonPoly(points, width, align, curved) {
   }
   return [...left, ...right.reverse()];
 }
+
+/**
+ * Where two segments cross, or null. Endpoints touching count: a T-junction is
+ * a junction too. Parallel and collinear segments never report a crossing —
+ * there is no single point to ask a question about.
+ */
+export function segmentCross(a, b, c, d) {
+  const rx = b.x - a.x, ry = b.y - a.y;
+  const sx = d.x - c.x, sy = d.y - c.y;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
+  const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
+  if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return null;
+  return { x: a.x + rx * t, y: a.y + ry * t };
+}

@@ -1,117 +1,182 @@
-# 🅿️ ParkPlanner — een TestFit-kloon in React
+# 🅿️ ParkPlanner — a TestFit-style parking planner in React
 
-Een open-source, in-browser **parkeerplanner**: teken een site-grens, plaats
-gebouwen/uitsluitingszones, en de solver genereert live parkeervakken,
-rijstroken en metrics — geïnspireerd op TestFit's *Parking Solver*.
+An open-source, in-browser **surface-parking planner**: draw a site boundary,
+drop in buildings and exclusion zones, and a solver lays out parking stalls,
+drive aisles and live metrics — inspired by TestFit's *Parking Solver*.
 
-**Live:** `/files/testfit/` (bijv. https://vandenostende.github.io/files/testfit/)
+**Live:** `/files/testfit/` (e.g. https://vandenostende.github.io/files/testfit/)
 
-## Wat het doet
+Everything runs client-side. There is no backend, no build step, and no bundler.
 
-- **Kaart-onderlaag** — plan bovenop **OpenStreetMap**, **satelliet** of **hybride**
-  (satelliet + labels) luchtbeelden. Zoek een adres/plaats (OSM Nominatim) en de
-  site wordt op die locatie geplaatst; de tegels lijnen uit met de site-geometrie.
-- **3D-weergave (Mapbox)** — schakel naar 3D met **echte gebouwen**; het plan wordt
-  over de 3D-kaart gedrapeerd. Vereist je **eigen Mapbox public token** (pk.…), die
-  alleen lokaal in je browser wordt bewaard.
-- **Vakken markeren** — selecteer één vak of sleep een kader over meerdere en
-  markeer ze als EV, minder-valide, personeel, bezoeker, gereserveerd, compact of motor.
-- **Rijbanen als eenrichting** — selecteer een rijbaan en zet 'm op eenrichting;
-  richtingspijlen verschijnen op de baan (met omkeer-knop).
-- **Infrastructuur tekenen** — wegen (met bochten), wandelpaden, fietspaden,
-  zebrapaden, fietsparking (met capaciteit), **gras**, **bomen** en markeringen.
-  Wegen/paden **snappen** aan bestaande hoekpunten en kunnen tot een **gesloten
-  vlak/plein** worden gesloten; **afmetingen** verschijnen live tijdens het tekenen.
-- **Gebogen site-grenzen** — teken multipoint-sites en zet "Vloeiende bochten"
-  aan; de solver plaatst automatisch vakken in de curves.
-- **Handmatig vakken plaatsen** — "Vak +" (K) plaatst vakken die aan bestaande
-  vakken snappen; selecteer vakken en verwijder ze (Delete). Verwijderde
-  solver-vakken blijven weg bij her-solve.
-- **Site verplaatsen/verwijderen** — klik de site-rand om de hele site te
-  selecteren, sleep om te verplaatsen, Delete om te verwijderen.
-- **Navigatie** — twee-vinger trackpad pant, pinch/Ctrl+scroll zoomt.
-- **Site tekenen** — polygoon-tool met sleepbare hoekpunten en numerieke oppervlakte.
-- **Gebouwen / uitsluitingszones** — sleep rechthoeken die de solver respecteert.
-- **Automatische parkeergeneratie** — dubbel-belaste modules, live herberekend.
-- **Parameters** — vakbreedte/-diepte, rijstrookbreedte, hoek (45/60/90°),
-  setback, padding-buffer en max. rijlengte (planter-gaps).
-- **Vaktypes** — standaard, compact, EV en ADA, met automatische ADA-tabel
-  (2010 ADA Standards, Tabel 208.2 + 1-op-6 van-regel).
-- **Rij-as wisselen** — cyclet door de gevonden oriëntaties (meeste vakken eerst).
-- **Metrics** — totaal vakken, site-oppervlak, bebouwd %, m²/vak, per-type telling.
-- **Lagen, undo/redo, opslaan/laden (JSON) en PNG-export.**
-- **Presets** — VS-standaard, VS-SUV, EU-metrisch, compact.
+## What it does
 
-## De solver-pijplijn
+### Site and solver
 
-Mirror van de publiek gedocumenteerde aanpak van surface-parking solvers:
+- **Draw a site** with the polygon tool: draggable vertices, a live area
+  readout, and smooth (spline) boundaries if you want the parking to follow a
+  curve.
+- **Import a real parcel** from GeoJSON or KML — the ring is anchored at its
+  centroid, converted to local metres and simplified.
+- **Buildings and exclusion zones** as rectangles or free polygons; the solver
+  works around them.
+- **Automatic parking generation**, recomputed live, with a **web-worker**
+  solve (and an inline fallback) so big sites never freeze the UI.
+- **Layouts**: straight rows, edge+middle, or concentric rings that follow the
+  site's curves.
+- **Parameters** — stall width and depth, aisle width, angle (45/60/90°),
+  setback, padding buffer, and a maximum row length that inserts planter gaps.
+- **Options** — single-loaded rows, dead-end turnarounds, and an alignment
+  toggle that squares the rows to the longest site edge.
+- **Presets** — US standard, US SUV, EU metric, compact.
 
-1. **Buildable** = `offset(site, −setback)` minus gebouwen/uitsluitingen
-   (met padding-buffer).
-2. **Oriëntaties** = elke site-rand-richting én de loodrechte daarvan.
-3. Per oriëntatie: roteer naar een uitgelijnd assenstelsel, **tegel
-   dubbel-belaste modules** (vak + rijstrook + vak) en "vorm" elke bruikbare
-   plek tot een vak, met containment-tests tegen de buildable-polygoon en de
-   obstakels. Max. rijlengte plaatst planter-gaps.
-4. Kies de oriëntatie met de **meeste vakken**.
+### Editing what the solver produced
 
-Alles draait client-side; er is geen backend en geen build-stap nodig.
+- **Mark stalls** — click one, or drag a marquee over many, and tag them EV,
+  accessible, staff, visitor, reserved, compact or motorcycle.
+- **One-way aisles** — select an aisle, make it one-way, and direction arrows
+  appear on it (with a reverse button). Generated aisles can also be deleted.
+- **Pin/lock** stalls and aisles so they survive "clear marks" and re-solves.
+- **Place stalls by hand** (`K`) — they snap to existing stalls and to roads;
+  delete solver stalls and they stay gone across re-solves.
+- Every manual mark is keyed on its **position**, not on an array index, so it
+  survives the layout being recomputed underneath it.
 
-## Architectuur
+### Infrastructure you draw yourself
 
-Bewust **geen build-tooling** (past bij deze GitHub Pages-site). React, ReactDOM
-en `htm` zijn lokaal gevendord in `vendor/` als klassieke UMD-scripts en via kleine
-ESM-shims geïmporteerd met **relatieve paden** — geen import-map en geen runtime-CDN.
-Daardoor boot de app ook op oudere browsers (ES-modules, geen import-maps vereist),
-met een foutmelding-overlay als er toch iets misgaat.
+- Roads, driveways, drive-thrus, walkways, cycle paths, crosswalks, bike
+  parking (with capacity), grass, trees, and free-hand markings.
+- **Roads are surfaces, not strokes**: square ends, mitred corners, and the
+  line you draw can be the centreline *or* a kerb. Walkways and cycle paths
+  work the same way. They merge into one seamless tarmac surface together with
+  the solver's own aisles.
+- **Belgian/EU road markings and signage** — arrows, shark's teeth, stop lines,
+  hatched zones, speed numerals, ground pictograms, and plate-on-a-post signs
+  (B1, B5, C1, C43, E9a, F19, accessible, EV).
+- **Junctions.** Where two drawn ways cross, the app asks what that place is: a
+  junction, a junction with an interruption (bollards across the arm you name),
+  or not linked. Undecided crossings are marked in red until you answer.
+  A junction behaves as one object — one row in the object list, and dragging
+  one arm moves the whole network.
+- **Alt-drag** takes everything standing on a road (signs, markings, stalls)
+  along with it; there is a sticky toggle if you want that to be the default.
+- Ways **snap** to existing vertices, can be **closed** into a square or plaza,
+  and show live dimensions while you draw.
+
+### Buildings
+
+- Pick a **use** — retail, residential or office — and a full exterior design is
+  generated: row houses with front and back gardens, a retail shed with canopy
+  and loading dock, or an office with a set-back top floor and a forecourt.
+- **Facade materials** — brick, concrete, wood, render, metal or glass, drawn as
+  real textures on the 3D walls.
+- Storeys per building, with floor heights that follow the use.
+
+### Views and output
+
+- **Basemaps** — plan on top of **OpenStreetMap**, **satellite**, or **hybrid**
+  imagery. Search an address (OSM Nominatim) and the site is placed there; the
+  tiles stay aligned with the site geometry.
+- **3D (Mapbox)** — switch to 3D and the plan is draped over the map with real
+  buildings around it. Your own buildings and the parking bays are extruded,
+  each separately toggleable. Needs your **own Mapbox public token** (`pk.…`),
+  which is only ever stored in your browser.
+- **2.5D** — a tilted read-only view that needs no token.
+- **Metrics** — stall count, site area, built %, m²/stall, impervious %, FAR,
+  per-type counts, an automatic accessible-stall table (2010 ADA Standards,
+  Table 208.2 plus the 1-in-6 van rule), and a programme/parking-ratio panel
+  (GLA → required stalls).
+- **Export** to PNG, JSON, GeoJSON, DXF (CAD) and CSV (takeoff).
+- **Import your own symbols** — drop in a PNG or SVG, give it a real-world size
+  and height, and it becomes a placeable symbol that shows up in the palette,
+  the object list, copy/paste, the exporters and (extruded) the 3D view.
+- **Object list** with search: everything you placed, grouped, selectable and
+  deletable from one panel.
+- Undo/redo, save/load, layers, light and dark themes, and hideable/resizable
+  UI parts you can save as a workspace.
+
+## The solver pipeline
+
+A mirror of the publicly documented approach used by surface-parking solvers:
+
+1. **Buildable** = `offset(site, −setback)` minus buildings and exclusions
+   (with the padding buffer applied).
+2. **Orientations** = every site-edge direction and its perpendicular.
+3. Per orientation: rotate into an aligned frame, tile **double-loaded modules**
+   (stall + aisle + stall), and "shape" every usable spot into a stall, testing
+   containment against the buildable polygon and the obstacles. The maximum row
+   length inserts planter gaps.
+4. Keep the orientation with the **most stalls**.
+
+## Architecture
+
+Deliberately **no build tooling** — it has to work as a plain folder on GitHub
+Pages. React, ReactDOM and `htm` are vendored locally in `vendor/` as classic
+UMD scripts and imported through small ESM shims using **relative paths**: no
+import map, no runtime CDN. That means the app boots on older browsers too (ES
+modules are enough), with an error overlay if anything does go wrong.
 
 ```
 files/testfit/
-├── index.html            # gevendorde <script>-tags + boot-foutoverlay
-├── styles.css            # donkere CAD-achtige UI
-├── vendor/               # React 18, ReactDOM, htm (UMD + ESM-shims)
+├── index.html            # vendored <script> tags + boot error overlay
+├── styles.css            # dark/light CAD-like UI
+├── tools/stamp.js        # rewrites ?v=<hash> on every import (run before commit)
+├── vendor/               # React 18, ReactDOM, htm (UMD + ESM shims)
 └── src/
-    ├── geometry.js       # pure 2D-polygoongeometrie (offset, clip, hit-tests)
-    ├── solver.js         # parkeer-solver + ADA-tabel + metrics
-    ├── basemap.js        # slippy-map tegels (OSM/Esri) + geocoding + geo↔meters
-    └── app.js            # React-UI (htm) + imperatieve canvas-rendering
+    ├── geometry.js       # pure 2D polygon geometry (offset, clip, hit tests)
+    ├── solver.js         # parking solver + accessible-stall table + metrics
+    ├── solver.worker.js  # the solver off the main thread
+    ├── annots.js         # the annotation type catalogue
+    ├── buildings.js      # deterministic building exteriors per use
+    ├── basemap.js        # slippy-map tiles (OSM/Esri) + geocoding + geo↔metres
+    ├── map3d.js          # Mapbox drape: extrusions, facade textures, lighting
+    ├── importers.js      # GeoJSON/KML parcel rings + simplification
+    ├── exporters.js      # GeoJSON, DXF, CSV
+    ├── build.js          # the build stamp the app checks itself against
+    └── app.js            # React UI (htm) + imperative canvas rendering
 ```
 
-De kaart-tegels (OpenStreetMap, Esri World Imagery) en geocoding (Nominatim) zijn
-de enige externe netwerkverzoeken; zonder internet werkt de rest gewoon door.
+Map tiles (OpenStreetMap, Esri World Imagery) and geocoding (Nominatim) are the
+only outbound requests; without a network the rest keeps working.
 
-`geometry.js` en `solver.js` zijn dependency-vrije, pure ES-modules en zijn
-los te testen met Node.
+`geometry.js` and `solver.js` are dependency-free, pure ES modules and can be
+tested on their own with Node.
 
-## Toetsenbord
+## Keyboard
 
-| Toets | Actie | Toets | Actie |
-|-------|-------|-------|-------|
-| `V` | Selecteren | `G` | Raster aan/uit |
-| `P` | Site tekenen | `Esc` | Annuleren |
-| `B` | Gebouw tekenen | `Del` | Selectie verwijderen |
-| `Space` | Pan | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo |
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `V` | Select | `G` | Grid on/off |
+| `P` | Draw site | `M` | Measure |
+| `B` | Draw building | `N` | Draw building (polygon) |
+| `Del` | Delete selection | `Esc` | Cancel |
+| `K` | Place stall | `/` | Focus the tool search |
+| `R` / `Shift+R` | Rotate in 15° steps | `?` | Shortcut list |
+| `Space` | Pan (hold) | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo |
+| `Ctrl/⌘+D` | Duplicate | `Ctrl/⌘+C` / `+V` | Copy / Paste |
 
-Zoom met het muiswiel; pan met de rechtermuisknop slepen, de middelste muisknop,
-`Spatie` ingedrukt houden, of de Pan-tool. Op een trackpad pant een veeg met twee
-vingers en zoomt knijpen.
+Scroll to zoom. Pan by dragging with the right mouse button, the middle button,
+`Space` held down, or the Pan tool. On a trackpad, a two-finger swipe pans and
+pinch zooms. Hold `Alt` while dragging a road to take its furniture with it.
 
-## Recente uitbreidingen
+## Development
 
-- **Export** naar GeoJSON, DXF (CAD) en CSV (takeoff), naast PNG/JSON.
-- **Web-worker solve** (met inline-fallback) zodat grote sites de UI niet bevriezen.
-- **Single-loaded rijen & dead-end turnarounds** als solver-opties.
-- **Pin/lock** op vakken en rijstroken (blijven bij "wis markering").
-- **2.5D** gekantelde alleen-lezen weergave (naast de Mapbox 3D).
-- **Programma & parkeerratio** (GLA → vereiste plaatsen), **impervious/verhard %**,
-  en **toegangspunten** op de site-rand.
+There is nothing to install. Serve the folder and open it:
 
-## Roadmap (grotere epics)
+```sh
+python3 -m http.server 8199        # from files/testfit/
+```
 
-Meerlaags structured/garage-parking (tray counts), site-import (GeoJSON/KML/DXF),
-generatieve varianten, en PDF/Revit/glTF-export.
+`src/*.js` are imported with a `?v=<hash>` query so a stale browser cache can
+never serve a half-updated app. **Run `node tools/stamp.js` before every
+commit** — it rewrites those hashes, and the running app compares its own stamp
+against the live one and offers a reload when it falls behind.
+
+## Roadmap
+
+Multi-level structured/garage parking (tray counts), generative variants, and
+PDF/Revit/glTF export.
 
 ---
 
-Demonstrator ter educatie; geen affiliatie met TestFit. Parkeerafmetingen en
-ADA-aantallen variëren per jurisdictie — alle waarden zijn configureerbaar.
+An educational demonstrator; not affiliated with TestFit. Parking dimensions and
+accessible-stall counts vary by jurisdiction — every value is configurable.

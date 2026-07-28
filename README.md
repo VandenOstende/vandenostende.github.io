@@ -64,7 +64,7 @@
 
 ## 🌟 Featured Projects
 
-### 🅿️ ParkPlanner — een TestFit-kloon (parkeerplanner) in React
+### 🅿️ ParkPlanner — a TestFit-style parking planner in React
 A self-contained, in-browser **parking planner** inspired by TestFit's Parking Solver.
 Draw a site, and it auto-generates parking stalls, drive aisles and live metrics.
 
@@ -72,8 +72,9 @@ Draw a site, and it auto-generates parking stalls, drive aisles and live metrics
 
 - Real-time parametric **parking solver** (setback offset → orientation search → strip-packing) — runs fully client-side, no build step.
 - Plan on **OpenStreetMap / satellite / hybrid** basemaps with address search, or view your plan in **3D** with real buildings (bring your own Mapbox token).
-- Mark stalls (EV, accessible, staff, …), set one-way aisles with arrows, and draw **roads, paths, crosswalks, bike parking, grass and trees**.
-- Undo/redo, JSON save/load, PNG export, and jurisdiction presets (US / EU).
+- Mark stalls (EV, accessible, staff, …), set one-way aisles with arrows, and draw **roads, paths, crosswalks, bike parking, grass and trees** — with junctions where they cross.
+- Generated building exteriors per use (retail / residential / office) with real facade materials.
+- Undo/redo, JSON save/load, PNG/GeoJSON/DXF/CSV export, and jurisdiction presets (US / EU).
 
 Built with React + `htm` (no bundler), a from-scratch geometry/solver engine, and HTML5 Canvas.
 
