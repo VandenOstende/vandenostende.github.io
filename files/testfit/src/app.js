@@ -4,18 +4,18 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=b4d3aaba';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=6752bd72';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=b4d3aaba';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=b4d3aaba';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=b4d3aaba';
-import { parseParcel, simplifyRing } from './importers.js?v=b4d3aaba';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=b4d3aaba';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS } from './buildings.js?v=b4d3aaba';
-import { BUILD_ID } from './build.js?v=b4d3aaba';
+} from './geometry.js?v=6752bd72';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=6752bd72';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=6752bd72';
+import { parseParcel, simplifyRing } from './importers.js?v=6752bd72';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=6752bd72';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=6752bd72';
+import { BUILD_ID } from './build.js?v=6752bd72';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -240,6 +240,7 @@ export const UI_PARTS = [
   { id: 'panelLeft', group: 'Panelen', label: 'Linkerpaneel' },
   { id: 'panelRight', group: 'Panelen', label: 'Rechterpaneel' },
 
+  { id: 'secToolOpts', group: 'Linkerpaneel', label: 'Gereedschapsopties' },
   { id: 'secLocation', group: 'Linkerpaneel', label: 'Locatie' },
   { id: 'secDraw', group: 'Linkerpaneel', label: 'Teken (infrastructuur)' },
   { id: 'secAssets', group: 'Linkerpaneel', label: 'Eigen assets' },
@@ -413,12 +414,14 @@ function draw(ctx, opts) {
       pathPoly(ctx, op, w2s, true);
       ctx.fillStyle = sel ? 'rgba(239,68,68,0.28)' : TH.building;
       ctx.fill();
+      const mat = materialOf(o);
       for (const part of design.areas) {
         if (part.h1 <= 0.5 && part.role !== 'garden' && part.role !== 'forecourt' && part.role !== 'dock') continue;
+        const isWall = !!WALL_ROLES[part.role];
         pathPoly(ctx, part.poly, w2s, true);
-        ctx.fillStyle = hexA(PART_COLORS[part.role] || '#c3c8d0', part.role === 'plant' ? 0.55 : 0.92);
+        ctx.fillStyle = isWall ? mat.tint : hexA(PART_COLORS[part.role] || '#c3c8d0', part.role === 'plant' ? 0.55 : 0.92);
         ctx.fill();
-        ctx.strokeStyle = 'rgba(15,23,42,0.28)';
+        ctx.strokeStyle = isWall ? mat.line : 'rgba(15,23,42,0.28)';
         ctx.lineWidth = 0.8;
         ctx.stroke();
       }
@@ -1478,7 +1481,7 @@ function App() {
   );
   const [tool, setTool] = useState('select');
   const [measure, setMeasure] = useState(null); // { points:[], cur } while measuring
-  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true });
+  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
@@ -1488,6 +1491,7 @@ function App() {
   // kerbs (seen in the direction you draw).
   const [annotAlign, setAnnotAlign] = useState('center');
   const [buildUse, setBuildUse] = useState(DEFAULT_USE);
+  const [buildMat, setBuildMat] = useState('');   // '' = whatever the type usually is
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
   // Imported symbols. The library is per-browser; a document carries its own
@@ -1626,7 +1630,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=b4d3aaba', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=6752bd72', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1777,7 +1781,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=b4d3aaba').then(async (m) => {
+    import('./map3d.js?v=6752bd72').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -1830,6 +1834,9 @@ function App() {
 
   // Tilt / plan-drape on 2D↔3D switch, and keep the draped plan fresh in 3D.
   useEffect(() => { if (map3dRef.current) map3dRef.current.setMode(viewMode === '3d'); }, [viewMode]);
+  // The Lagen switches drive the 3D drape too. The controller decides what that
+  // means for the current mode, so the order of these two effects cannot matter.
+  useEffect(() => { if (map3dRef.current && map3dRef.current.setLayers) map3dRef.current.setLayers(layers); }, [layers, viewMode, mapReady]);
   useEffect(() => { if (map3dRef.current && viewMode === '3d') map3dRef.current.setPlan(buildPlan()); }, [buildPlan, viewMode]);
 
   const metrics = useMemo(
@@ -2695,12 +2702,21 @@ function App() {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, newBuilding(points.slice())] }) });
   };
   // Every building carries its use; the storey default follows from it.
-  const newBuilding = (poly) => ({ poly, use: buildUse, floors: (BUILDING_USES[buildUse] || {}).floors || 1 });
+  const newBuilding = (poly) => ({
+    poly, use: buildUse, floors: (BUILDING_USES[buildUse] || {}).floors || 1,
+    material: buildMat || DEFAULT_MATERIAL[buildUse] || 'render',
+  });
   const setObsUse = (index, use) => dispatch({ type: 'COMMIT', updater: (d) => ({
     ...d,
     obstacles: d.obstacles.map((o, i) => (i === index
       ? { ...(o && o.poly ? o : { poly: polyOf(o) }), poly: polyOf(o).slice(), use,
-          floors: (BUILDING_USES[use] || {}).floors || 1 } : o)),
+          floors: (BUILDING_USES[use] || {}).floors || 1,
+          material: DEFAULT_MATERIAL[use] || 'render' } : o)),
+  }) });
+  const setObsMaterial = (index, material) => dispatch({ type: 'COMMIT', updater: (d) => ({
+    ...d,
+    obstacles: d.obstacles.map((o, i) => (i === index
+      ? { ...(o && o.poly ? o : { poly: polyOf(o) }), poly: polyOf(o).slice(), material } : o)),
   }) });
   const setObsFloors = (index, floors) => dispatch({ type: 'COMMIT', updater: (d) => ({
     ...d,
@@ -3610,6 +3626,85 @@ function App() {
       ${vis('panelLeft') && html`
       <div className="panel left">
         ${resizer('left')}
+        ${/* Options for whatever tool is active, at the very top of the panel.
+              They used to sit under the palette — 2000 px below the fold, so
+              the building-type choice existed and could never be found. */ ''}
+        ${vis('secToolOpts') && (tool === 'annot' || tool === 'obstacle' || tool === 'obstaclepoly') && html`
+        <div className="section tool-opts">
+          <h3>${tool === 'annot' ? ANNOT_TYPES[annotKind].label : 'Gebouw'}</h3>
+          ${(tool === 'obstacle' || tool === 'obstaclepoly') && html`
+            <div>
+          <div className="seg">
+            ${Object.values(BUILDING_USES).map((u) => html`
+              <button key=${u.key} className=${buildUse === u.key ? 'active' : ''}
+                title=${u.keywords} onClick=${() => setBuildUse(u.key)}>${u.label}</button>`)}
+          </div>
+          <label style=${{ display: 'block', marginTop: '10px' }}>Gevel</label>
+          <div className="type-grid">
+            ${Object.values(MATERIALS).map((m) => html`
+              <button key=${m.key} className=${'type-btn' + ((buildMat || DEFAULT_MATERIAL[buildUse]) === m.key ? ' active' : '')}
+                onClick=${() => setBuildMat(m.key)}>
+                <span className="dot" style=${{ background: m.tint }}></span>${m.label}
+              </button>`)}
+          </div>
+          <div className="mix-note">
+            ${BUILDING_USES[buildUse].floors} verdieping${BUILDING_USES[buildUse].floors > 1 ? 'en' : ''} standaard ·
+            het exterieur volgt de vorm, dus een hoek verslepen hertekent het.
+          </div>
+            </div>`}
+          ${tool === 'annot' && annotKind === 'driveway' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Breedte in/uitrit</label>
+              <div className="row">
+                <input type="number" min="3" max="20" step="0.5" value=${annotWidth}
+                  onChange=${(e) => setAnnotWidth(Math.max(3, Math.min(20, parseFloat(e.target.value) || 6.5)))} />
+                <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
+              </div>
+              <div className="mix-note">Klik op de siterand om te plaatsen — de in/uitrit snapt op de rand.</div>
+            </div>`}
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode === 'area' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Vorm</label>
+              <div className="seg">
+                <button className=${areaShape === 'poly' ? 'active' : ''} onClick=${() => setAreaShape('poly')}>Veelhoek</button>
+                <button className=${areaShape === 'rect' ? 'active' : ''} onClick=${() => setAreaShape('rect')}>Rechthoek</button>
+                <button className=${areaShape === 'circle' ? 'active' : ''} onClick=${() => setAreaShape('circle')}>Cirkel</button>
+              </div>
+              <div className="mix-note">${areaShape === 'poly' ? 'Klik punten · klik beginpunt of dubbelklik om te sluiten.' : areaShape === 'circle' ? 'Klik het midden en sleep voor de straal.' : 'Sleep een rechthoek.'}</div>
+            </div>`}
+          ${tool === 'annot' && annotKind === 'road' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Weg tekenen als</label>
+              <div className="seg">
+                <button className=${roadShape === 'line' ? 'active' : ''} onClick=${() => setRoadShape('line')}>Lijn</button>
+                <button className=${roadShape === 'rect' ? 'active' : ''} onClick=${() => setRoadShape('rect')}>Object (rechthoek)</button>
+              </div>
+              <div className="mix-note">${roadShape === 'rect' ? 'Sleep een rechthoek; daarna selecteren en aan de hoeken slepen om te vergroten.' : 'Klik punten voor een weglijn.'}</div>
+            </div>`}
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].body && !(annotKind === 'road' && roadShape === 'rect') && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>De lijn is</label>
+              <div className="seg">
+                <button className=${annotAlign === 'center' ? 'active' : ''} onClick=${() => setAnnotAlign('center')}>Hartlijn</button>
+                <button className=${annotAlign === 'left' ? 'active' : ''} onClick=${() => setAnnotAlign('left')}>Linkerrand</button>
+                <button className=${annotAlign === 'right' ? 'active' : ''} onClick=${() => setAnnotAlign('right')}>Rechterrand</button>
+              </div>
+              <div className="mix-note">${annotAlign === 'center'
+                ? 'De weg ligt half links en half rechts van je lijn.'
+                : 'De weg ligt volledig aan de ' + (annotAlign === 'left' ? 'rechter' : 'linker') + 'kant van je lijn, gezien in de richting waarin je tekent — teken langs een gevel of perceelgrens.'}</div>
+            </div>`}
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && !(annotKind === 'road' && roadShape === 'rect') && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
+              <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
+                onInput=${(e) => setAnnotWidth(parseFloat(e.target.value))} />
+              ${ANNOT_TYPES[annotKind].mode === 'line' && html`
+                <label className="toggle" style=${{ marginTop: '8px' }}>
+                  <span>Vloeiende bochten</span>
+                  <input type="checkbox" checked=${annotCurved} onChange=${(e) => setAnnotCurved(e.target.checked)} />
+                </label>`}
+            </div>`}
+        </div>`}
         ${vis('secLocation') && html`
         <div className="section">
           <h3>Locatie</h3>
@@ -3670,58 +3765,6 @@ function App() {
                     </button>`)}
                 </div>`}
             </div>`)}
-          ${tool === 'annot' && annotKind === 'driveway' && html`
-            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
-              <label>Breedte in/uitrit</label>
-              <div className="row">
-                <input type="number" min="3" max="20" step="0.5" value=${annotWidth}
-                  onChange=${(e) => setAnnotWidth(Math.max(3, Math.min(20, parseFloat(e.target.value) || 6.5)))} />
-                <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
-              </div>
-              <div className="mix-note">Klik op de siterand om te plaatsen — de in/uitrit snapt op de rand.</div>
-            </div>`}
-          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode === 'area' && html`
-            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
-              <label>Vorm</label>
-              <div className="seg">
-                <button className=${areaShape === 'poly' ? 'active' : ''} onClick=${() => setAreaShape('poly')}>Veelhoek</button>
-                <button className=${areaShape === 'rect' ? 'active' : ''} onClick=${() => setAreaShape('rect')}>Rechthoek</button>
-                <button className=${areaShape === 'circle' ? 'active' : ''} onClick=${() => setAreaShape('circle')}>Cirkel</button>
-              </div>
-              <div className="mix-note">${areaShape === 'poly' ? 'Klik punten · klik beginpunt of dubbelklik om te sluiten.' : areaShape === 'circle' ? 'Klik het midden en sleep voor de straal.' : 'Sleep een rechthoek.'}</div>
-            </div>`}
-          ${tool === 'annot' && annotKind === 'road' && html`
-            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
-              <label>Weg tekenen als</label>
-              <div className="seg">
-                <button className=${roadShape === 'line' ? 'active' : ''} onClick=${() => setRoadShape('line')}>Lijn</button>
-                <button className=${roadShape === 'rect' ? 'active' : ''} onClick=${() => setRoadShape('rect')}>Object (rechthoek)</button>
-              </div>
-              <div className="mix-note">${roadShape === 'rect' ? 'Sleep een rechthoek; daarna selecteren en aan de hoeken slepen om te vergroten.' : 'Klik punten voor een weglijn.'}</div>
-            </div>`}
-          ${tool === 'annot' && ANNOT_TYPES[annotKind].body && !(annotKind === 'road' && roadShape === 'rect') && html`
-            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
-              <label>De lijn is</label>
-              <div className="seg">
-                <button className=${annotAlign === 'center' ? 'active' : ''} onClick=${() => setAnnotAlign('center')}>Hartlijn</button>
-                <button className=${annotAlign === 'left' ? 'active' : ''} onClick=${() => setAnnotAlign('left')}>Linkerrand</button>
-                <button className=${annotAlign === 'right' ? 'active' : ''} onClick=${() => setAnnotAlign('right')}>Rechterrand</button>
-              </div>
-              <div className="mix-note">${annotAlign === 'center'
-                ? 'De weg ligt half links en half rechts van je lijn.'
-                : 'De weg ligt volledig aan de ' + (annotAlign === 'left' ? 'rechter' : 'linker') + 'kant van je lijn, gezien in de richting waarin je tekent — teken langs een gevel of perceelgrens.'}</div>
-            </div>`}
-          ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && !(annotKind === 'road' && roadShape === 'rect') && html`
-            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
-              <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
-              <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
-                onInput=${(e) => setAnnotWidth(parseFloat(e.target.value))} />
-              ${ANNOT_TYPES[annotKind].mode === 'line' && html`
-                <label className="toggle" style=${{ marginTop: '8px' }}>
-                  <span>Vloeiende bochten</span>
-                  <input type="checkbox" checked=${annotCurved} onChange=${(e) => setAnnotCurved(e.target.checked)} />
-                </label>`}
-            </div>`}
         </div>`}
         ${vis('secAssets') && html`
         <div className="section">
@@ -3758,19 +3801,6 @@ function App() {
             ${Math.round(assetLibChars(assetLib) / 1024)} van ${Math.round(ASSET_LIB_MAX_CHARS / 1024)} kB gebruikt ·
             verwijderen laat geplaatste exemplaren staan · hoogte geldt voor 3D.
           </div>`}
-        </div>`}
-        ${(tool === 'obstacle' || tool === 'obstaclepoly') && html`
-        <div className="section">
-          <h3>Gebouwtype</h3>
-          <div className="seg">
-            ${Object.values(BUILDING_USES).map((u) => html`
-              <button key=${u.key} className=${buildUse === u.key ? 'active' : ''}
-                title=${u.keywords} onClick=${() => setBuildUse(u.key)}>${u.label}</button>`)}
-          </div>
-          <div className="mix-note">
-            ${BUILDING_USES[buildUse].floors} verdieping${BUILDING_USES[buildUse].floors > 1 ? 'en' : ''} standaard ·
-            het exterieur wordt uit de vorm afgeleid, dus een hoek verslepen hertekent het.
-          </div>
         </div>`}
         ${vis('secObjects') && html`
         <div className="section">
@@ -3827,6 +3857,8 @@ function App() {
           ${layerRow('building', 'Gebouwen', '#64748b', layers, setLayers)}
           ${layerRow('parking', 'Parkeren', '#3b82f6', layers, setLayers)}
           ${layerRow('infra', 'Infrastructuur', '#0e7490', layers, setLayers)}
+          ${layerRow('context', 'Omgeving (3D)', '#c3c8d2', layers, setLayers)}
+          <div className="mix-note">Omgeving = de bestaande bebouwing rondom; die bestaat alleen in de 3D-weergave.</div>
         </div>`}
         ${vis('secPreset') && html`
         <div className="section">
@@ -4036,7 +4068,17 @@ function App() {
                 <button key=${u.key} className=${((o && o.use) || DEFAULT_USE) === u.key ? 'active' : ''}
                   onClick=${() => setObsUse(selection.index, u.key)}>${u.label}</button>`)}
             </div>
-            <div className="mix-note">Wisselen zet ook de standaard verdiepingen van dat type.</div>
+            <div className="mix-note">Wisselen zet ook de standaard verdiepingen en gevel van dat type.</div>
+          </div>
+          <div className="field">
+            <label>Gevel</label>
+            <div className="type-grid">
+              ${Object.values(MATERIALS).map((m) => html`
+                <button key=${m.key} className=${'type-btn' + (materialOf(o).key === m.key ? ' active' : '')}
+                  onClick=${() => setObsMaterial(selection.index, m.key)}>
+                  <span className="dot" style=${{ background: m.tint }}></span>${m.label}
+                </button>`)}
+            </div>
           </div>
           <div className="field">
             <label>Verdiepingen<span className="val">${floors}</span></label>

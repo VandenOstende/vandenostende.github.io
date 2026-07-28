@@ -872,3 +872,11 @@ body.resizing .panel-resize { pointer-events: auto; }
 }
 .asset-row .obj-x { opacity: 0.55; align-self: flex-start; }
 .asset-row:hover .obj-x { opacity: 1; }
+
+/* Contextual options for the active tool, pinned to the top of the panel. */
+.tool-opts {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.tool-opts h3 { color: var(--accent); }
+.tool-opts > label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
