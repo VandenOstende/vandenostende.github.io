@@ -4,18 +4,18 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=29238a68';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=4e14b294';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
-  pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly,
+  pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=29238a68';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=29238a68';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=29238a68';
-import { parseParcel, simplifyRing } from './importers.js?v=29238a68';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=29238a68';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=29238a68';
-import { BUILD_ID } from './build.js?v=29238a68';
+} from './geometry.js?v=4e14b294';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=4e14b294';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=4e14b294';
+import { parseParcel, simplifyRing } from './importers.js?v=4e14b294';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=4e14b294';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=4e14b294';
+import { BUILD_ID } from './build.js?v=4e14b294';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -138,6 +138,52 @@ function ribbon(ann, t) {
   return ribbonPoly(ann.points, ann.width || ty.width || 3, ann.align, ann.curved);
 }
 
+// Where drawn ways cross each other. Keyed by position rounded to 0.5 m, the
+// same trick stalls and aisles use — a junction IS a place, and a position key
+// is the only identity two independent polylines can share. Move a road and the
+// crossing moves with it, so the question comes back; that is how every other
+// manual mark in this app behaves.
+const junctionKey = (p) => (Math.round(p.x * 2) / 2) + ',' + (Math.round(p.y * 2) / 2);
+function findCrossings(anns) {
+  const ways = [];
+  (anns || []).forEach((a, i) => {
+    const t = ANNOT_TYPES[a.kind];
+    if (t && t.body && !a.closed && a.points && a.points.length >= 2) ways.push({ i, a });
+  });
+  const out = new Map();
+  for (let m = 0; m < ways.length; m++) {
+    for (let n = m + 1; n < ways.length; n++) {
+      const A = ways[m], B = ways[n];
+      for (let p = 0; p < A.a.points.length - 1; p++) {
+        for (let q = 0; q < B.a.points.length - 1; q++) {
+          const at = segmentCross(A.a.points[p], A.a.points[p + 1], B.a.points[q], B.a.points[q + 1]);
+          if (!at) continue;
+          const key = junctionKey(at);
+          // Two segments of the same pair can meet twice at a shared vertex;
+          // one entry per place is what the user is being asked about.
+          if (!out.has(key)) out.set(key, { key, at, i: A.i, j: B.i });
+        }
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+// The heading of one branch at a crossing, in degrees 0..180 — a way and its
+// reverse are the same branch. Stored instead of an index so reordering or
+// deleting another way cannot move the bollards to the wrong arm.
+function branchHeading(anns, c, branch) {
+  const a = (anns || [])[branch === 'j' ? c.j : c.i];
+  if (!a || !a.points || a.points.length < 2) return 0;
+  let bi = 0, bd = Infinity;
+  for (let k = 0; k < a.points.length - 1; k++) {
+    const d = distPointSegment(c.at, a.points[k], a.points[k + 1]);
+    if (d < bd) { bd = d; bi = k; }
+  }
+  const p = a.points[bi], q = a.points[bi + 1];
+  return ((Math.atan2(q.y - p.y, q.x - p.x) * 180) / Math.PI + 360) % 180;
+}
+
 function annotationBlocker(ann) {
   const t = ANNOT_TYPES[ann.kind];
   if (!t || !ann.points || ann.points.length < 2) return null;
@@ -154,6 +200,7 @@ const initialDoc = {
   params: DEFAULT_PARAMS, orientationIndex: 0, autoParking: true,
   overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} }, removed: {}, angles: {} },
   annotations: [], // { kind, points:[{x,y}], width, curved }
+  junctions: {}, // crossing key -> { mode: 'merged'|'break'|'none', dir? }; absent = undecided
   manualStalls: [], // hand-placed stalls: { poly, type }
   assets: [], // imported symbols used by this plan: { id, name, src, w, h, height }
 };
@@ -329,7 +376,7 @@ let TH = THEMES.dark;
 // ---------- Rendering ----------
 function draw(ctx, opts) {
   const { view, doc, result, layers, dpr, drawing, hover, selection, size,
-          stallSel, aisleSel, marquee, sitePoly } = opts;
+          stallSel, aisleSel, marquee, sitePoly, crossings } = opts;
   TH = THEMES[opts.theme] || THEMES.dark;
   const site = sitePoly || doc.site;
   const { w2s } = makeTransform(view);
@@ -337,7 +384,15 @@ function draw(ctx, opts) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, size.w, size.h); // transparent — the Mapbox basemap shows through
 
-  const selAnnIdx = selection && selection.type === 'annot' ? selection.index : -1;
+  // A Set, not an index: selecting one branch of a junction network highlights
+  // the whole network, because that is what a drag will move.
+  const selAnnIdx = new Set();
+  if (selection && selection.type === 'annot') {
+    const roots = opts.netRoot || [];
+    if (roots[selection.index] != null) {
+      roots.forEach((r, i) => { if (r === roots[selection.index]) selAnnIdx.add(i); });
+    } else selAnnIdx.add(selection.index);
+  }
 
   // Grid
   if (layers.grid) drawGrid(ctx, view, size);
@@ -594,6 +649,7 @@ function draw(ctx, opts) {
   // Infrastructure drawn over the parking (paths, crosswalks, markings)
   if (layers.infra && doc.annotations) {
     drawAnnotations(ctx, doc.annotations, w2s, view.scale, false, selAnnIdx);
+    if (crossings) drawCrossings(ctx, crossings, doc.annotations, w2s, view.scale);
   }
 
   // Driveway placement preview (snapped to the site edge)
@@ -1407,11 +1463,60 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   }
 }
 
+// A crossing that has not been made into a junction gets a red bar across it:
+// the two ways only look joined because the tarmac is one surface, and nothing
+// should ever be silently connected.
+function drawCrossings(ctx, list, anns, w2s, scale) {
+  for (const c of list) {
+    if (c.mode === 'merged') continue;
+    const s = w2s(c.at);
+    if (c.mode === 'break') {
+      // Bollards across the branch that is closed to traffic: the arm whose
+      // heading matches the one recorded when the choice was made.
+      const di = Math.abs(((branchHeading(anns, c, 'i') - (c.dir || 0) + 270) % 180) - 90);
+      const dj = Math.abs(((branchHeading(anns, c, 'j') - (c.dir || 0) + 270) % 180) - 90);
+      const ref = anns[dj < di ? c.j : c.i];
+      if (!ref || !ref.points || ref.points.length < 2) continue;
+      // Direction of the closed branch at this point; the bollards stand across it.
+      let bi = 0, bd = Infinity;
+      for (let k = 0; k < ref.points.length - 1; k++) {
+        const d = distPointSegment(c.at, ref.points[k], ref.points[k + 1]);
+        if (d < bd) { bd = d; bi = k; }
+      }
+      const a = ref.points[bi], b = ref.points[bi + 1];
+      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+      const half = ((ref.width || ANNOT_TYPES[ref.kind]?.width || 6) / 2) - 0.35;
+      const n = Math.max(2, Math.round((half * 2) / 1.4));
+      ctx.fillStyle = '#e2e8f0';
+      ctx.strokeStyle = 'rgba(15,23,42,0.55)';
+      ctx.lineWidth = 1;
+      for (let k = 0; k <= n; k++) {
+        const t = -half + (2 * half * k) / n;
+        const p = w2s({ x: c.at.x + nx * t, y: c.at.y + ny * t });
+        const r = Math.max(1.6, 0.22 * scale);
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+      continue;
+    }
+    const r = Math.max(7, 1.8 * scale);
+    ctx.save();
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = Math.max(2, 0.3 * scale);
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.moveTo(s.x - r, s.y - r); ctx.lineTo(s.x + r, s.y + r);
+    ctx.moveTo(s.x - r, s.y + r); ctx.lineTo(s.x + r, s.y - r);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 function drawAnnotations(ctx, anns, w2s, scale, under, selIdx) {
   for (let i = 0; i < anns.length; i++) {
     const t = ANNOT_TYPES[anns[i].kind];
     if (!t || !!t.under !== under) continue;
-    drawAnnotation(ctx, anns[i], w2s, scale, i === selIdx, i);
+    drawAnnotation(ctx, anns[i], w2s, scale, !!(selIdx && selIdx.has(i)), i);
   }
 }
 
@@ -1522,6 +1627,7 @@ function App() {
   // sees it. This is the same thing without a modifier.
   const [carryRiders, setCarryRiders] = useState(false);
   const [staleBuild, setStaleBuild] = useState('');
+  const [askJunction, setAskJunction] = useState(null); // the crossing whose popover is open
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
   // Imported symbols. The library is per-browser; a document carries its own
@@ -1605,6 +1711,7 @@ function App() {
   const geoRef = useRef(null);         // latest doc.geo, same reason
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
+  const netRootRef = useRef([]); // per-annotation junction-network root, for the pointer handlers
   const leftPanelRef = useRef(null);
   const carryRidersRef = useRef(false); // read inside the drag handler
   const wheelRef = useRef({ at: -1e9, zoom: true }); // latched wheel gesture mode
@@ -1662,7 +1769,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=29238a68', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=4e14b294', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1749,6 +1856,49 @@ function App() {
     return { stalls, aisles, islands: result.islands || [], orientationCount: result.orientationCount };
   }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
+  // Every place two drawn ways meet, with whatever was decided about it.
+  const crossings = useMemo(() => {
+    const jn = doc.junctions || {};
+    return findCrossings(doc.annotations).map((c) => {
+      const rec = jn[c.key] || {};
+      return { ...c, mode: rec.mode || '', dir: rec.dir };
+    });
+  }, [doc.annotations, doc.junctions]);
+  // Which network each way belongs to: union–find over the joined crossings.
+  // Derived, never stored on the annotations — so a duplicate can never inherit
+  // the original's network, and taking a junction apart dissolves it by itself.
+  const netRoot = useMemo(() => {
+    const par = (doc.annotations || []).map((_, i) => i);
+    const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+    for (const c of crossings) {
+      if (c.mode !== 'merged' && c.mode !== 'break') continue;
+      const a = find(c.i), b = find(c.j);
+      if (a !== b) par[a] = b;
+    }
+    return par.map((_, i) => find(i));
+  }, [crossings, doc.annotations]);
+  netRootRef.current = netRoot;
+  const openCrossings = crossings.filter((c) => !c.mode);
+  // Ask as soon as a crossing appears. It is a small popover on the crossing
+  // itself rather than a modal: you can ignore it and keep drawing, and the red
+  // cross stays behind as the reminder.
+  useEffect(() => {
+    if (!openCrossings.length) { setAskJunction((cur) => (cur ? null : cur)); return; }
+    setAskJunction((cur) => (cur && openCrossings.some((c) => c.key === cur.key) ? cur : openCrossings[0]));
+  }, [crossings]);
+
+  // Record what a crossing is. Joining is not written onto the ways themselves:
+  // it is a fact about the *place*, so it lives in `junctions` under the position
+  // key and the networks fall out of it. The closed branch of an interruption is
+  // stored as its heading, not its index, so it survives ways being reordered.
+  const setJunction = (c, mode, branch) => {
+    const rec = { mode };
+    if (mode === 'break') rec.dir = branchHeading(doc.annotations, c, branch);
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, junctions: { ...(d.junctions || {}), [c.key]: rec } }) });
+    setAskJunction(null);
+  };
+
+
   const renderNow = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1766,11 +1916,11 @@ function App() {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
         showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
-        stallSel, aisleSel, marquee: marqueeRef.current, sitePoly,
+        stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot,
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -1845,7 +1995,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=29238a68').then(async (m) => {
+    import('./map3d.js?v=4e14b294').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -2172,6 +2322,24 @@ function App() {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: (d.annotations || []).filter((_, i) => i !== index) }) });
     reindexAfterDelete('annot', index);
   };
+  // Removing a whole junction network at once. Doing it one index at a time
+  // would shift the indices under the remaining ones.
+  const deleteAnnotations = (indices) => {
+    const kill = new Set(indices);
+    if (!kill.size) return;
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: (d.annotations || []).filter((_, i) => !kill.has(i)) }) });
+    setSelection((cur) => (cur && cur.type === 'annot' ? null : cur));
+  };
+  // Every branch of the junction network a way belongs to, itself included. An
+  // unjoined way is its own network of one, so callers never have to branch.
+  // Through the ref because the pointer handlers run outside this render.
+  const netIndices = (index) => {
+    const roots = netRootRef.current || [];
+    if (roots[index] == null) return [index];
+    const out = [];
+    roots.forEach((r, i) => { if (r === roots[index]) out.push(i); });
+    return out.length ? out : [index];
+  };
   const deleteObstacle = (index) => {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== index) }) });
     reindexAfterDelete('obs', index);
@@ -2363,6 +2531,11 @@ function App() {
     }
 
     if (tool === 'select') {
+      // A red crossing is a question, so clicking it asks again. Tested first:
+      // it sits on top of the tarmac it is marking.
+      const { w2s: w2sJ } = makeTransform(view);
+      const askHit = crossings.find((c) => c.mode !== 'merged' && c.mode !== 'break' && dist(w2sJ(c.at), sp) < 12);
+      if (askHit) { setAskJunction(askHit); return; }
       const v = hitVertex(sp);
       // CHECKPOINT here, not COMMIT on pointer-up: an identity updater is a
       // no-op in the reducer, so a reshape used not to be its own undo step.
@@ -2436,6 +2609,19 @@ function App() {
             // Gathered at pointer-down so Alt can be pressed and released mid
             // drag and the riders follow live.
             riders: ridersOn(a, ai),
+            // The other branches of the junction network. Unlike the riders
+            // these are not optional: a junction is one object.
+            mates: netIndices(ai).filter((i) => i !== ai)
+              .map((i) => ({ i, orig: doc.annotations[i].points, anchor: doc.annotations[i].anchor })),
+            // Junction decisions are keyed on position, so a rigid move of the
+            // whole network would otherwise leave every one of its crossings
+            // behind and ask about them again. Both arms travel together here,
+            // so the crossing travels with them — carry the keys along.
+            junc: doc.junctions || {},
+            juncAt: (() => {
+              const set = new Set(netIndices(ai));
+              return crossings.filter((c) => set.has(c.i) && set.has(c.j) && c.mode).map((c) => ({ key: c.key, at: c.at }));
+            })(),
           };
         }
         return;
@@ -2580,7 +2766,9 @@ function App() {
       // Alt takes everything standing on the road with it. Held live, so you can
       // press and release it mid-drag and watch the difference.
       const withRiders = (e.altKey || carryRidersRef.current) && drag.riders ? drag.riders : null;
-      const moved = withRiders ? new Map(withRiders.anns.map((r) => [r.i, r])) : null;
+      const moved = new Map();
+      for (const r of (drag.mates || [])) moved.set(r.i, r);
+      if (withRiders) for (const r of withRiders.anns) moved.set(r.i, r);
       dispatch({ type: 'LIVE', updater: (d) => ({
         ...d,
         annotations: (d.annotations || []).map((a, i) => {
@@ -2589,7 +2777,7 @@ function App() {
             points: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })),
             ...(drag.origAnchor ? { anchor: { x: drag.origAnchor.x + dx, y: drag.origAnchor.y + dy } } : {}),
           };
-          const r = moved && moved.get(i);
+          const r = moved.get(i);
           if (!r) return a;
           return {
             ...a,
@@ -2597,6 +2785,14 @@ function App() {
             ...(r.anchor ? { anchor: { x: r.anchor.x + dx, y: r.anchor.y + dy } } : {}),
           };
         }),
+        junctions: drag.juncAt && drag.juncAt.length ? (() => {
+          // Rebuilt from the pre-drag map every frame, so the remap is
+          // idempotent no matter how many times the pointer moves.
+          const jn = { ...drag.junc };
+          for (const j of drag.juncAt) delete jn[j.key];
+          for (const j of drag.juncAt) jn[junctionKey({ x: j.at.x + dx, y: j.at.y + dy })] = drag.junc[j.key];
+          return jn;
+        })() : d.junctions,
         manualStalls: withRiders && withRiders.stalls.length
           ? (d.manualStalls || []).map((ms, i) => {
             const r = withRiders.stalls.find((x) => x.i === i);
@@ -2851,8 +3047,21 @@ function App() {
     const q = objQuery.trim().toLowerCase();
     const groups = new Map();
     const push = (grp, row) => { if (!groups.has(grp)) groups.set(grp, []); groups.get(grp).push(row); };
+    // A junction network is one object, so it is one row — listing its branches
+    // separately would contradict the fact that they select and move together.
+    const netsDone = new Set();
     (doc.annotations || []).forEach((a, i) => {
       const t = ANNOT_TYPES[a.kind] || {};
+      const grp = netRoot[i] != null ? netIndices(i) : [i];
+      if (grp.length > 1) {
+        if (netsDone.has(netRoot[i])) return;
+        netsDone.add(netRoot[i]);
+        push(t.group || 'Rijden', {
+          key: 'n' + netRoot[i], kind: 'net', net: netRoot[i], index: i, color: t.color || '#94a3b8', type: t,
+          label: 'Wegennet', sub: grp.length + ' segmenten',
+        });
+        return;
+      }
       push(t.group || 'Overig', {
         key: 'a' + i, kind: 'annot', index: i, color: t.color || '#94a3b8', type: t,
         label: t.label || a.kind, sub: a.points && a.points.length > 1 ? a.points.length + ' punten' : '',
@@ -2885,7 +3094,7 @@ function App() {
       if (hit.length) out.push([grp, hit]);
     }
     return out;
-  }, [doc.annotations, doc.obstacles, doc.manualStalls, deco.stalls, deco.aisles, objQuery]);
+  }, [doc.annotations, doc.obstacles, doc.manualStalls, deco.stalls, deco.aisles, objQuery, netRoot]);
 
   // An imported symbol shows its own thumbnail where the built-in kinds show a
   // colour dot — otherwise every custom asset is the same grey circle.
@@ -2923,6 +3132,7 @@ function App() {
     setSelection({ type: r.kind === 'obs' ? 'obs' : 'annot', index: r.index });
   };
   const rowPoly = (r) => {
+    if (r.kind === 'net') return netIndices(r.index).flatMap((i) => doc.annotations[i].points);
     if (r.kind === 'annot') return (doc.annotations || [])[r.index]?.points;
     if (r.kind === 'obs') return polyOf(doc.obstacles[r.index]);
     if (r.kind === 'manual') return (doc.manualStalls || [])[r.index]?.poly;
@@ -2934,7 +3144,8 @@ function App() {
     return null;
   };
   const deleteRow = (r) => {
-    if (r.kind === 'annot') deleteAnnotation(r.index);
+    if (r.kind === 'net') deleteAnnotations(netIndices(r.index));
+    else if (r.kind === 'annot') deleteAnnotation(r.index);
     else if (r.kind === 'obs') deleteObstacle(r.index);
     else if (r.kind === 'manual') {
       const ms = (doc.manualStalls || [])[r.index];
@@ -2942,6 +3153,8 @@ function App() {
     } else if (r.kind === 'aisle') deleteAisle(r.aisleKey);
   };
   const isRowSelected = (r) => {
+    if (r.kind === 'net') return !!(selection && selection.type === 'annot'
+      && netRoot[selection.index] === r.net);
     if (r.kind === 'annot') return selection && selection.type === 'annot' && selection.index === r.index;
     if (r.kind === 'obs') return selection && selection.type === 'obs' && selection.index === r.index;
     if (r.kind === 'aisle') return aisleSel === r.aisleKey;
@@ -2968,7 +3181,8 @@ function App() {
     const d = docRef.current || doc;
     let items = null;
     if (selection && selection.type === 'annot' && (d.annotations || [])[selection.index]) {
-      items = [{ what: 'annot', data: d.annotations[selection.index] }];
+      // A junction network is one object everywhere else, so it copies as one.
+      items = netIndices(selection.index).map((i) => ({ what: 'annot', data: d.annotations[i] }));
     } else if (selection && selection.type === 'obs' && d.obstacles[selection.index]) {
       const o = d.obstacles[selection.index];
       items = [{ what: 'obs', data: { ...(o && o.poly ? o : {}), poly: polyOf(o), floors: (o && o.floors) || 1, use: (o && o.use) || DEFAULT_USE } }];
@@ -2984,8 +3198,10 @@ function App() {
   const cutSelection = () => {
     if (!copySelection()) return;
     // Reuse the delete paths so override cleanup and reindexing are not bypassed.
-    if (selection && selection.type === 'annot') deleteAnnotation(selection.index);
-    else if (selection && selection.type === 'obs') deleteObstacle(selection.index);
+    if (selection && selection.type === 'annot') {
+      const grp = netIndices(selection.index);
+      if (grp.length > 1) deleteAnnotations(grp); else deleteAnnotation(selection.index);
+    } else if (selection && selection.type === 'obs') deleteObstacle(selection.index);
     else if (stallSel.length) { deleteStalls(stallSel); setStallSel([]); }
   };
   const pasteClipboard = () => {
@@ -3026,11 +3242,17 @@ function App() {
       dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, copy] }) });
       setSelection({ type: 'obs', index: idx });
     } else if (selection && selection.type === 'annot' && (doc.annotations || [])[selection.index]) {
-      const a = doc.annotations[selection.index];
-      const copy = { ...a, points: offsetPts(a.points, D, D) };
-      if (a.anchor) copy.anchor = { x: a.anchor.x + D, y: a.anchor.y + D };
+      // The whole network, so what you duplicate is what the object list calls
+      // one thing. The copies cross each other again in their new place, so the
+      // app asks about those crossings afresh rather than assuming.
+      const copies = netIndices(selection.index).map((i) => {
+        const a = doc.annotations[i];
+        const c = { ...a, points: offsetPts(a.points, D, D) };
+        if (a.anchor) c.anchor = { x: a.anchor.x + D, y: a.anchor.y + D };
+        return c;
+      });
       const idx = (doc.annotations || []).length;
-      dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: [...(d.annotations || []), copy] }) });
+      dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, annotations: [...(d.annotations || []), ...copies] }) });
       setSelection({ type: 'annot', index: idx });
     } else if (stallSel.length) {
       const copies = stallSel.map((k) => { const st = deco.stalls.find((s) => s.key === k); return st ? { poly: offsetPts(st.poly, D, D), type: st.type } : null; }).filter(Boolean);
@@ -3155,7 +3377,11 @@ function App() {
           } else if (selection && selection.type === 'obs') {
             deleteObstacle(selection.index);
           } else if (selection && selection.type === 'annot') {
-            deleteAnnotation(selection.index); setSelection(null);
+            // A junction network goes as one; that is what the object list shows.
+            const anns = (docRef.current || {}).annotations || [];
+            const grp = netIndices(selection.index);
+            if (grp.length > 1) deleteAnnotations(grp);
+            else { deleteAnnotation(selection.index); setSelection(null); }
           } else if (selection && selection.type === 'site') {
             dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: [] }) }); setSelection(null);
           }
@@ -3989,6 +4215,30 @@ function App() {
 
       <div className="canvas-wrap" ref=${wrapRef}>
         <div id="pp-map" className="pp-map"></div>
+        ${askJunction && viewMode === '2d' && (() => {
+          const { w2s } = makeTransform(view);
+          const p = w2s(askJunction.at);
+          const anns = doc.annotations || [];
+          // Numbered, because two roads crossing are both called "Weg" and a
+          // choice between two identical buttons is not a choice.
+          const nameOf = (i) => ((ANNOT_TYPES[(anns[i] || {}).kind] || {}).label || 'weg') + ' ' + (i + 1);
+          return html`
+            <div className="cross-ask" style=${{ left: Math.round(p.x) + 'px', top: Math.round(p.y) + 'px' }}>
+              <div className="cross-ask-h">Kruising · ${nameOf(askJunction.i)} × ${nameOf(askJunction.j)}</div>
+              <button className="btn" onClick=${() => setJunction(askJunction, 'merged')}>Kruispunt</button>
+              <div className="cross-ask-row">
+                <span>Onderbreking op</span>
+                <button className="btn ghost" onClick=${() => setJunction(askJunction, 'break', 'i')}>${nameOf(askJunction.i)}</button>
+                <button className="btn ghost" onClick=${() => setJunction(askJunction, 'break', 'j')}>${nameOf(askJunction.j)}</button>
+              </div>
+              <button className="btn ghost" onClick=${() => setJunction(askJunction, 'none')}>Niet koppelen</button>
+              <button className="cross-ask-x" title="Later beslissen" onClick=${() => setAskJunction(null)}>✕</button>
+            </div>`;
+        })()}
+        ${openCrossings.length > 0 && !askJunction && html`
+          <button className="cross-pending" onClick=${() => setAskJunction(openCrossings[0])}>
+            ${openCrossings.length} onbesliste kruising${openCrossings.length > 1 ? 'en' : ''} — beslissen
+          </button>`}
         ${staleBuild && html`
           <div className="stale-bar">
             <span>Nieuwe versie beschikbaar — je tab draait build <b>${BUILD_ID}</b>, live staat <b>${staleBuild}</b>.</span>

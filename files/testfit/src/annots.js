@@ -33,8 +33,10 @@ export const ANNOT_TYPES = {
   road:        { label: 'Weg',          color: '#3b424e', width: 6.0, mode: 'line', curved: false, under: true, blocks: true, body: true, aisleColor: true, group: 'Rijden', keywords: 'straat rijbaan asfalt baan rijstrook' },
   driveway:    { label: 'In/uitrit',    color: '#525b68', width: 6.5, depth: 12, mode: 'driveway', under: true, blocks: true, group: 'Rijden', keywords: 'oprit inrit uitrit toegang entree' },
   drivethru:   { label: 'Drive-thru',   color: '#f97316', width: 3.5, mode: 'line', curved: true, under: true, blocks: true, group: 'Rijden', keywords: 'drive through afhaal loket wachtrij' },
-  walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true, group: 'Langzaam verkeer', keywords: 'voetpad trottoir stoep voetganger' },
-  bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true, group: 'Langzaam verkeer', keywords: 'fiets bike cyclepad' },
+  // `body` like the road: a filled surface, so the ends are square and the
+  // corners are mitred. They keep their own colour — only the road is asphalt.
+  walkway:     { label: 'Wandelpad',    color: '#9aa4b2', width: 1.8, mode: 'line', curved: true, body: true, group: 'Langzaam verkeer', keywords: 'voetpad trottoir stoep voetganger boulevard promenade' },
+  bikepath:    { label: 'Fietspad',     color: '#b91c1c', width: 2.0, mode: 'line', curved: true, body: true, group: 'Langzaam verkeer', keywords: 'fiets bike cyclepad' },
   crosswalk:   { label: 'Zebrapad',     color: '#e5e7eb', width: 3.5, mode: 'cross', group: 'Langzaam verkeer', keywords: 'zebra oversteek voetganger kruising' },
   bikeparking: { label: 'Fietsparking', color: '#0e7490', width: 0,   mode: 'area', under: true, group: 'Langzaam verkeer', keywords: 'fietsenstalling fietsrek stalling' },
   grass:       { label: 'Gras',         color: '#3f9b46', width: 0,   mode: 'area', under: true, group: 'Groen', keywords: 'groen gazon berm perk' },
