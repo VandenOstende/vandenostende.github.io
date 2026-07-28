@@ -115,6 +115,11 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   buildings around it. Your own buildings and the parking bays are extruded,
   each separately toggleable. Needs your **own Mapbox public token** (`pk.…`),
   which is only ever stored in your browser.
+- **Everything you draw is in 3D**, not just the big shapes: road markings and
+  pictograms lie flat on the tarmac at their real size and their own heading,
+  signs stand on a post, zebra crossings keep their bars, hatched zones keep
+  their stripes, and a cycle path stays red instead of dissolving into asphalt.
+  Switching basemap style keeps the camera where you left it.
 - **Sun and shadow** — set a date and a time and the sun really moves: the 3D
   light takes the computed position, and a 2D layer draws the ground shadows and
   counts how many stalls stand in one. The clock is mean solar time for the
@@ -177,10 +182,11 @@ files/testfit/
     ├── drive.js          # design vehicles + the drivability check (pure)
     ├── sun.js            # solar position + ground shadows (pure)
     ├── light.js          # illuminance, annual irradiance, PV yield (pure)
+    ├── pictos.js         # the unit-box painters: markings, pictograms, signage
     ├── annots.js         # the annotation type catalogue
     ├── buildings.js      # deterministic building exteriors per use
     ├── basemap.js        # slippy-map tiles (OSM/Esri) + geocoding + geo↔metres
-    ├── map3d.js          # Mapbox drape: extrusions, facade textures, lighting
+    ├── map3d.js          # Mapbox drape: extrusions, textures, markings, lighting
     ├── importers.js      # GeoJSON/KML parcel rings + simplification
     ├── exporters.js      # GeoJSON, DXF, CSV
     ├── build.js          # the build stamp the app checks itself against
