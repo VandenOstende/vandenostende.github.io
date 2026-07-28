@@ -4,19 +4,20 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=0aa617d1';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=75096443';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=0aa617d1';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=0aa617d1';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=0aa617d1';
-import { parseParcel, simplifyRing } from './importers.js?v=0aa617d1';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=0aa617d1';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=0aa617d1';
-import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=0aa617d1';
-import { BUILD_ID } from './build.js?v=0aa617d1';
+} from './geometry.js?v=75096443';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=75096443';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=75096443';
+import { parseParcel, simplifyRing } from './importers.js?v=75096443';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=75096443';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=75096443';
+import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=75096443';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=75096443';
+import { BUILD_ID } from './build.js?v=75096443';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -49,6 +50,8 @@ const DEFAULT_PARAMS = {
   endAisles: 'one',     // 'none' | 'one' | 'both'
   designVehicle: 'car', // what the drivability check has to fit
   fireMaxDist: 60,      // m from a facade to where a fire appliance can stand
+  sunDate: '2026-06-21', // which moment the shadow study shows
+  sunHour: 15,
   alignLongestEdge: false, // align rows to the site's longest edge
 };
 
@@ -260,6 +263,7 @@ export const UI_PARTS = [
 
   { id: 'secMetrics', group: 'Rechterpaneel', label: 'Metrics' },
   { id: 'secDrive', group: 'Rechterpaneel', label: 'Bereikbaarheid' },
+  { id: 'secSun', group: 'Rechterpaneel', label: 'Zon en schaduw' },
   { id: 'secStallAisle', group: 'Rechterpaneel', label: 'Vak & rijstrook' },
   { id: 'secConstraints', group: 'Rechterpaneel', label: 'Site-constraints' },
   { id: 'secMix', group: 'Rechterpaneel', label: 'Vaktypes (mix)' },
@@ -617,6 +621,28 @@ function draw(ctx, opts) {
     }
     ctx.textAlign = 'start';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  // Building shadows, over the ground surfaces rather than under them: a shadow
+  // falls on whatever is there, and drawn any earlier the tarmac and the stalls
+  // paint straight over it.
+  //
+  // Every quad goes into ONE path and is filled once. Fill them separately and
+  // the overlaps double up, so two buildings whose shadows cross would show a
+  // darker patch that means nothing at all.
+  if (layers.shadow && opts.shadows) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.22)';
+    ctx.beginPath();
+    for (const sh of opts.shadows) {
+      if (!sh || sh.length < 3) continue;
+      const a = w2s(sh[0]);
+      ctx.moveTo(a.x, a.y);
+      for (let i = 1; i < sh.length; i++) { const q = w2s(sh[i]); ctx.lineTo(q.x, q.y); }
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.restore();
   }
 
   // Infrastructure drawn over the parking (paths, crosswalks, markings)
@@ -1627,7 +1653,7 @@ function App() {
   );
   const [tool, setTool] = useState('select');
   const [measure, setMeasure] = useState(null); // { points:[], cur } while measuring
-  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true });
+  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true, shadow: false });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
@@ -1817,7 +1843,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=0aa617d1', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=75096443', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1908,6 +1934,24 @@ function App() {
   }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
   // Every place two drawn ways meet, with whatever was decided about it.
+  // ---------- Sun and shadow ----------
+  // Derived every render from the plan's own moment. Cheap: one almanac
+  // evaluation plus a sweep per building edge.
+  const sun = useMemo(
+    () => sunPosition(momentUTC(doc.params.sunDate || '2026-06-21',
+      doc.params.sunHour == null ? 15 : doc.params.sunHour, (doc.geo || {}).lon),
+    (doc.geo || {}).lat || 52, (doc.geo || {}).lon || 5),
+    [doc.params.sunDate, doc.params.sunHour, doc.geo]
+  );
+  const shadows = useMemo(
+    () => (layers.shadow ? shadowPolys(doc.obstacles, sun) : []),
+    [doc.obstacles, sun, layers.shadow]
+  );
+  const shadedStalls = useMemo(
+    () => (layers.shadow ? stallsInShadow(deco.stalls, shadows, polygonCentroid) : []),
+    [deco.stalls, shadows, layers.shadow]
+  );
+
   // ---------- Drivability ----------
   // The check runs on demand, never in the render loop: it builds a network and
   // measures every corner on it, which has no business happening on a keystroke.
@@ -1997,14 +2041,14 @@ function App() {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
         showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
-        stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel,
+        stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel, shadows,
         // Only when asked: a checkbox, or a row the user clicked.
         driveIssues: showIssues ? driveIssues : (focusIssue >= 0 && driveIssues[focusIssue] ? [driveIssues[focusIssue]] : null),
         focusIssue: showIssues ? focusIssue : (focusIssue >= 0 ? 0 : -1),
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -2083,7 +2127,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=0aa617d1').then(async (m) => {
+    import('./map3d.js?v=75096443').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -2140,6 +2184,11 @@ function App() {
   // means for the current mode, so the order of these two effects cannot matter.
   useEffect(() => { if (map3dRef.current && map3dRef.current.setLayers) map3dRef.current.setLayers(layers); }, [layers, viewMode, mapReady]);
   useEffect(() => { if (map3dRef.current && viewMode === '3d') map3dRef.current.setPlan(buildPlan()); }, [buildPlan, viewMode]);
+  // The 3D light follows the same sun the 2D shadows use, so the two views can
+  // never disagree about where it is.
+  useEffect(() => {
+    if (map3dRef.current && map3dRef.current.setSun) map3dRef.current.setSun(sun.azimuth, sun.altitude);
+  }, [sun, mapReady, viewMode]);
 
   const metrics = useMemo(
     () => computeMetrics(sitePoly, doc.obstacles, deco, doc.params, doc.annotations),
@@ -4528,6 +4577,7 @@ function App() {
           ${layerRow('parking', 'Parkeren', '#3b82f6', layers, setLayers)}
           ${layerRow('infra', 'Infrastructuur', '#0e7490', layers, setLayers)}
           ${layerRow('context', 'Omgeving (3D)', '#c3c8d2', layers, setLayers)}
+          ${layerRow('shadow', 'Schaduw', '#334155', layers, setLayers)}
           <div className="mix-note">Omgeving = de bestaande bebouwing rondom; die bestaat alleen in de 3D-weergave.</div>
         </div>`}
         ${vis('secPreset') && html`
@@ -4949,6 +4999,30 @@ function App() {
               onChange=${(e) => setParam('fireMaxDist', +e.target.value)} />
           </div>
           <div className="mix-note">Gangbare ontwerpwaarden, geen normcitaat — maten verschillen per gemeente en per brandweerzone.</div>
+        </div>`}
+
+        ${vis('secSun') && html`
+        <div className="section">
+          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Zon en schaduw</span>
+            <label className="toggle" style=${{ fontSize: '11px' }}>
+              <input type="checkbox" checked=${!!layers.shadow} onChange=${(e) => setLayers((l) => ({ ...l, shadow: e.target.checked }))} />
+              <span>toon</span>
+            </label>
+          </h3>
+          <div className="field">
+            <label>Datum</label>
+            <input type="date" value=${doc.params.sunDate || '2026-06-21'}
+              onChange=${(e) => setParam('sunDate', e.target.value)} />
+          </div>
+          ${slider('Tijd', 'sunHour', doc.params.sunHour == null ? 15 : doc.params.sunHour, 0, 23.5, 0.5, 'u', setParam)}
+          <div className="mix-note">
+            ${sun.altitude > 0
+              ? `Zon staat ${sun.altitude.toFixed(0)}° hoog, azimut ${sun.azimuth.toFixed(0)}°.`
+              : 'De zon staat onder de horizon — alles ligt in de schaduw.'}
+            ${layers.shadow ? ` ${shadedStalls.length} van ${deco.stalls.length} vakken in de schaduw.` : ''}
+          </div>
+          <div className="mix-note">Klok is zonnetijd voor deze lengtegraad (UTC${zoneOffsetHours((doc.geo || {}).lon) >= 0 ? '+' : ''}${zoneOffsetHours((doc.geo || {}).lon)}); geen zomertijd.</div>
         </div>`}
 
         ${vis('secStallAisle') && html`

@@ -106,6 +106,10 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   buildings around it. Your own buildings and the parking bays are extruded,
   each separately toggleable. Needs your **own Mapbox public token** (`pk.…`),
   which is only ever stored in your browser.
+- **Sun and shadow** — set a date and a time and the sun really moves: the 3D
+  light takes the computed position, and a 2D layer draws the ground shadows and
+  counts how many stalls stand in one. The clock is mean solar time for the
+  site's longitude, so no summer time — the panel says so.
 - **Metrics** — stall count, site area, built %, m²/stall, impervious %, FAR,
   per-type counts, an automatic accessible-stall table (2010 ADA Standards,
   Table 208.2 plus the 1-in-6 van rule), and a programme/parking-ratio panel
@@ -151,6 +155,7 @@ files/testfit/
     ├── solver.js         # parking solver + accessible-stall table + metrics
     ├── solver.worker.js  # the solver off the main thread
     ├── drive.js          # design vehicles + the drivability check (pure)
+    ├── sun.js            # solar position + ground shadows (pure)
     ├── annots.js         # the annotation type catalogue
     ├── buildings.js      # deterministic building exteriors per use
     ├── basemap.js        # slippy-map tiles (OSM/Esri) + geocoding + geo↔metres
@@ -164,9 +169,10 @@ files/testfit/
 Map tiles (OpenStreetMap, Esri World Imagery) and geocoding (Nominatim) are the
 only outbound requests; without a network the rest keeps working.
 
-`geometry.js`, `solver.js` and `drive.js` are dependency-free, pure ES modules
-and can be tested on their own with Node — `drive.js` deliberately so, since a
-geometric check deserves assertions that need no browser.
+`geometry.js`, `solver.js`, `drive.js` and `sun.js` are dependency-free, pure ES
+modules and can be tested on their own with Node — the last two deliberately so,
+since a geometric check and an almanac both deserve assertions that need no
+browser.
 
 ## Keyboard
 
