@@ -7,8 +7,8 @@
 // Node.
 // ============================================================
 
-import { polyOf, pointInPolygon } from './geometry.js?v=75096443';
-import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=75096443';
+import { polyOf, pointInPolygon } from './geometry.js?v=8c2bb381';
+import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=8c2bb381';
 
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
@@ -87,8 +87,12 @@ export function buildingHeight(o) {
  * With the sun at or below the horizon there is no direction to sweep along, so
  * the answer is `null`: everything is in shadow, and saying that is different
  * from returning an empty list.
+ *
+ * `atHeight` asks the question on a plane above the ground — a carport roof,
+ * say. Only the part of a building that stands above that plane can shade it,
+ * so a building at or below it drops out entirely.
  */
-export function shadowPolys(obstacles, sun) {
+export function shadowPolys(obstacles, sun, atHeight = 0) {
   if (!sun || sun.altitude <= 0) return null;
   const len = Math.min(MAX_SHADOW, 1 / Math.tan(sun.altitude * RAD));
   // The shadow points away from the sun. Azimuth is clockwise from north and y
@@ -99,7 +103,9 @@ export function shadowPolys(obstacles, sun) {
   for (const o of (obstacles || [])) {
     const poly = polyOf(o);
     if (!poly || poly.length < 3) continue;
-    const d = len * buildingHeight(o);
+    const above = buildingHeight(o) - atHeight;
+    if (above <= 0) continue;                        // not tall enough to reach the plane
+    const d = len * above;
     const dx = ux * d, dy = uy * d;
     out.push(poly.map((p) => ({ x: p.x, y: p.y })));
     for (let i = 0; i < poly.length; i++) {

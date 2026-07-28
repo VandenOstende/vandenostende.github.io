@@ -13,7 +13,7 @@
 // `under: true` draws beneath the parking (roads, bike parking).
 // `group` buckets the palette; `keywords` are extra search terms so you can find
 // a tool by what you call it rather than by its label.
-export const ANNOT_GROUPS = ['Rijden', 'Markeringen', 'Pictogrammen', 'Borden', 'Retail', 'Langzaam verkeer', 'Groen', 'Eigen', 'Overig'];
+export const ANNOT_GROUPS = ['Rijden', 'Markeringen', 'Pictogrammen', 'Borden', 'Retail', 'Langzaam verkeer', 'Groen', 'Licht', 'Eigen', 'Overig'];
 // Belgian road markings and signage. `picto` names a painter in PICTOS;
 // `sign` marks a plate-on-a-post rather than paint on the asphalt; `value`
 // gives an editable number (speed limits). Point markings carry an `angle`.
@@ -78,6 +78,18 @@ export const ANNOT_TYPES = {
   trolleyBay:  { label: 'Winkelwagens', color: '#38bdf8', width: 0, mode: 'area', under: true, group: 'Retail', keywords: 'winkelwagen winkelkar karren trolley stalling caddy' },
   clickCollect: { label: 'Click & collect', color: '#a78bfa', width: 0, mode: 'area', under: true, group: 'Retail', keywords: 'afhaal ophalen bestelling collect pickup' },
   familyBay:   PICTO('Familieplaats', 'family', 'gezin kind kinderwagen zwanger familie', { group: 'Retail', color: '#f472b6' }),
+
+  // ---- Licht ----
+  // The lamp post carries its own mounting height in `value`, because the one
+  // thing that differs from post to post on a site is how high the light hangs;
+  // the luminaire's output is a document parameter.
+  lightPole:   { label: 'Lichtmast', color: '#fcd34d', width: 1.2, mode: 'point', group: 'Licht',
+                 value: 6, valueLabel: 'Lichtpunthoogte (m)', valueMin: 3, valueMax: 16, valueStep: 0.5,
+                 keywords: 'verlichting lamp mast paal armatuur straatlantaarn lantaarn licht lux' },
+  // A carport roofs over parking that is already paved, so it adds no impervious
+  // surface of its own — see NON_PAVED in solver.js.
+  carport:     { label: 'Zonnecarport', color: '#0ea5e9', width: 0, mode: 'area', group: 'Licht',
+                 keywords: 'carport overkapping zonnepanelen pv luifel afdak zonnedak solar' },
 };
 
 // ---------- Imported assets ----------

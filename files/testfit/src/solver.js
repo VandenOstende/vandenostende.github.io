@@ -15,7 +15,7 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=75096443';
+} from './geometry.js?v=8c2bb381';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -585,6 +585,10 @@ const NON_PAVED = new Set([
   // signage stands on a post
   'signYield', 'signStop', 'signSpeed', 'signNoEntry', 'signParking',
   'signOneWay', 'signAda', 'signEV',
+  // a lamp post stands on a post too, and a carport roofs over parking that is
+  // already counted — adding its footprint again would raise the impervious
+  // share without a square metre of new paving
+  'lightPole', 'carport',
 ]);
 
 export function computeMetrics(site, obstacles, result, params, annotations) {

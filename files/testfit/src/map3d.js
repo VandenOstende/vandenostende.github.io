@@ -7,11 +7,11 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=75096443';
-import { STALL_TYPES } from './solver.js?v=75096443';
-import { polyOf, ribbonPoly } from './geometry.js?v=75096443';
-import { ANNOT_TYPES } from './annots.js?v=75096443';
-import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=75096443';
+import { localToLatLon } from './basemap.js?v=8c2bb381';
+import { STALL_TYPES } from './solver.js?v=8c2bb381';
+import { polyOf, ribbonPoly } from './geometry.js?v=8c2bb381';
+import { ANNOT_TYPES } from './annots.js?v=8c2bb381';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=8c2bb381';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -184,7 +184,25 @@ export function planToGeoJSON(plan, geo) {
     const t = ANNOT_TYPES[an.kind];
     return t && t.asset && an.points && an.points[0];
   });
+  // A carport is a roof, not a footprint: it needs a base as well as a height,
+  // so that in 3D you can see the cars parked underneath it. A lamp post is the
+  // same trick with a much thinner rectangle.
+  const canopies = anns.filter((an) => an.kind === 'carport' && an.points && an.points.length >= 3);
+  const lamps = anns.filter((an) => an.kind === 'lightPole' && an.points && an.points[0]);
   return {
+    canopies: fc([
+      ...canopies.map((an) => polyFeature(an.points, geo, {
+        base: (plan.params && plan.params.pvHeight) || 3,
+        height: ((plan.params && plan.params.pvHeight) || 3) + 0.25,
+      })),
+      ...lamps.map((an) => {
+        const p = an.points[0], r = 0.12;
+        return polyFeature([
+          { x: p.x - r, y: p.y - r }, { x: p.x + r, y: p.y - r },
+          { x: p.x + r, y: p.y + r }, { x: p.x - r, y: p.y + r },
+        ], geo, { base: 0, height: an.value != null ? an.value : 6 });
+      }),
+    ]),
     assets: fc(assetAnns.map((an) => {
       const t = ANNOT_TYPES[an.kind];
       return polyFeature(assetFootprint(an, t), geo, { height: (t.asset.height != null ? t.asset.height : 2.5) });
@@ -277,7 +295,7 @@ function addFacadeTextures(map) {
   }
 }
 
-const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-bays-line', 'pp-buildings-3d', 'pp-walls-3d', 'pp-trees-3d', 'pp-assets-3d'];
+const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-bays-line', 'pp-buildings-3d', 'pp-walls-3d', 'pp-trees-3d', 'pp-assets-3d', 'pp-canopies-3d'];
 
 function addPlanLayers(map, plan, geo) {
   // Real 3D buildings of the surroundings from the style's vector source.
@@ -296,6 +314,7 @@ function addPlanLayers(map, plan, geo) {
   src('pp-site', g.site); src('pp-aisles', g.aisles); src('pp-stalls', g.stalls);
   src('pp-buildings', g.buildings); src('pp-lines', g.lines); src('pp-areas', g.areas); src('pp-trees', g.trees);
   src('pp-assets', g.assets); src('pp-bays', g.bays);
+  src('pp-canopies', g.canopies);
   const L = (layer) => { if (!map.getLayer(layer.id)) map.addLayer(layer); };
   L({ id: 'pp-areas-fill', type: 'fill', source: 'pp-areas', layout: { visibility: 'none' }, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 } });
   L({ id: 'pp-site-line', type: 'line', source: 'pp-site', layout: { visibility: 'none' }, paint: { 'line-color': '#f8b500', 'line-width': 2.5 } });
@@ -326,6 +345,7 @@ function addPlanLayers(map, plan, geo) {
     filter: ['==', ['get', 'wall'], 1],
     paint: { ...EXTRUDE, 'fill-extrusion-color': ['coalesce', ['get', 'color'], '#c3c8d0'], 'fill-extrusion-pattern': ['get', 'pattern'] } });
   L({ id: 'pp-assets-3d', type: 'fill-extrusion', source: 'pp-assets', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#cbd5e1', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.95 } });
+  L({ id: 'pp-canopies-3d', type: 'fill-extrusion', source: 'pp-canopies', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#0ea5e9', 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.9 } });
   L({ id: 'pp-trees-3d', type: 'circle', source: 'pp-trees', layout: { visibility: 'none' }, paint: { 'circle-color': '#2f9e44', 'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 3, 20, ['*', ['get', 'r'], 6]], 'circle-stroke-color': '#14532d', 'circle-stroke-width': 1, 'circle-opacity': 0.9 } });
 }
 // Which Lagen switch owns which drape layer. The 2D canvas already honours
@@ -343,6 +363,7 @@ const LAYER_OWNER = {
   'pp-lines-line': 'infra',
   'pp-areas-fill': 'infra',
   'pp-assets-3d': 'infra',
+  'pp-canopies-3d': 'infra',
   'pp-trees-3d': 'infra',
 };
 // Visible = we are in 3D AND the layer is switched on. The mode leads: in 2D
@@ -363,6 +384,7 @@ function setData(map, plan, geo) {
   set('pp-site', g.site); set('pp-aisles', g.aisles); set('pp-stalls', g.stalls);
   set('pp-buildings', g.buildings); set('pp-lines', g.lines); set('pp-areas', g.areas); set('pp-trees', g.trees);
   set('pp-assets', g.assets); set('pp-bays', g.bays);
+  set('pp-canopies', g.canopies);
 }
 
 /**

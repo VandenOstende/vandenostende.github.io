@@ -4,20 +4,21 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=75096443';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8c2bb381';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=75096443';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=75096443';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=75096443';
-import { parseParcel, simplifyRing } from './importers.js?v=75096443';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=75096443';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=75096443';
-import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=75096443';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=75096443';
-import { BUILD_ID } from './build.js?v=75096443';
+} from './geometry.js?v=8c2bb381';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=8c2bb381';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8c2bb381';
+import { parseParcel, simplifyRing } from './importers.js?v=8c2bb381';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=8c2bb381';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=8c2bb381';
+import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=8c2bb381';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=8c2bb381';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=8c2bb381';
+import { BUILD_ID } from './build.js?v=8c2bb381';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -52,6 +53,20 @@ const DEFAULT_PARAMS = {
   fireMaxDist: 60,      // m from a facade to where a fire appliance can stand
   sunDate: '2026-06-21', // which moment the shadow study shows
   sunHour: 15,
+  // How much light lands here — the same grid answered by two sources.
+  lightSource: 'lamps', // 'lamps' (lux tonight) | 'sun' (kWh/m² over a year)
+  lightStep: 3,         // m between grid samples
+  poleLumens: 12000,    // lm per luminaire
+  poleMaint: 0.8,       // maintenance factor: dirt and ageing
+  luxTarget: 10,        // lx average — a common design value, not a norm citation
+  u0Target: 0.25,       // Emin/Eavg
+  pvGHI: 1050,          // kWh/m²/yr on the horizontal (BE/NL)
+  pvDiffuse: 0.55,      // annual diffuse share; it sets the tilt gain
+  pvTilt: 10,           // ° — carports are laid flat to keep the height down
+  pvAzimuth: 180,       // ° clockwise from north
+  pvDensity: 0.2,       // kWp per m² of canopy
+  pvPerf: 0.8,          // performance ratio
+  pvHeight: 3,          // m clearance under the canopy
   alignLongestEdge: false, // align rows to the site's longest edge
 };
 
@@ -264,6 +279,7 @@ export const UI_PARTS = [
   { id: 'secMetrics', group: 'Rechterpaneel', label: 'Metrics' },
   { id: 'secDrive', group: 'Rechterpaneel', label: 'Bereikbaarheid' },
   { id: 'secSun', group: 'Rechterpaneel', label: 'Zon en schaduw' },
+  { id: 'secLight', group: 'Rechterpaneel', label: 'Licht en opbrengst' },
   { id: 'secStallAisle', group: 'Rechterpaneel', label: 'Vak & rijstrook' },
   { id: 'secConstraints', group: 'Rechterpaneel', label: 'Site-constraints' },
   { id: 'secMix', group: 'Rechterpaneel', label: 'Vaktypes (mix)' },
@@ -290,7 +306,7 @@ const WORKSPACE_PRESETS = {
   Alles: null, // null = everything visible
   Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
   Tekenen: ['panelLeft', 'secDraw', 'secLayers', 'secSiteShape', 'tbTools', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
-  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
+  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
 };
 const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
 
@@ -337,6 +353,17 @@ const THEMES = {
 };
 // Set once per frame by draw(). Module-level so the paint helpers don't each
 // need a theme parameter threaded through them; rendering is synchronous.
+// The light map's sequential ramp: one hue (amber — it is light, after all),
+// six steps, monotonic. Each theme's steps are picked against its own surface,
+// so neither is the other one inverted. Alpha stays well under 1 because this
+// is a wash over a drawing that still has to be readable underneath it.
+const LIGHT_RAMP = {
+  light: ['rgba(254,243,199,0.55)', 'rgba(253,230,138,0.60)', 'rgba(252,211,77,0.65)',
+    'rgba(251,191,36,0.70)', 'rgba(245,158,11,0.72)', 'rgba(217,119,6,0.75)'],
+  dark: ['rgba(120,53,15,0.55)', 'rgba(146,64,14,0.60)', 'rgba(180,83,9,0.65)',
+    'rgba(217,119,6,0.70)', 'rgba(245,158,11,0.72)', 'rgba(251,191,36,0.75)'],
+};
+
 let TH = THEMES.dark;
 
 // ---------- Rendering ----------
@@ -621,6 +648,46 @@ function draw(ctx, opts) {
     }
     ctx.textAlign = 'start';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  // The light map: how much light lands on each cell — from the sun over a
+  // whole year, or from the lamp posts tonight.
+  //
+  // One hue, stepping monotonically away from the surface. A sequential ramp,
+  // never a rainbow: the question here is *how much*, and a rainbow makes the
+  // reader decode a legend where they should simply see more and less. The
+  // dark theme gets its own steps chosen against the dark surface rather than
+  // an inverted copy of the light ones, because on dark paper "more" has to
+  // get brighter, not darker.
+  // Nothing to say when nothing arrives: with no lamps placed every cell reads
+  // zero, and painting the whole site in the palest step would claim a faint
+  // glow that is not there. Darkness is the absence of the wash, not its first
+  // rung — so a cell at zero stays bare and the plan shows through.
+  if (layers.lightmap && opts.lightField && opts.lightGrid && opts.lightField.stats.max > 0) {
+    const { values, stats } = opts.lightField;
+    const ramp = LIGHT_RAMP[opts.theme === 'light' ? 'light' : 'dark'];
+    const hi = stats.max;
+    const s = opts.lightGrid.step, half = s / 2;
+    ctx.save();
+    // One path per step, so neighbouring cells of the same value share a fill
+    // and no seam shows between them.
+    for (let k = 0; k < ramp.length; k++) {
+      ctx.fillStyle = ramp[k];
+      ctx.beginPath();
+      let any = false;
+      for (let i = 0; i < values.length; i++) {
+        if (values[i] <= 0) continue;
+        const f = values[i] / hi;
+        if (Math.min(ramp.length - 1, Math.floor(f * ramp.length)) !== k) continue;
+        const p = opts.lightGrid.pts[i];
+        const a = w2s({ x: p.x - half, y: p.y - half });
+        const b = w2s({ x: p.x + half, y: p.y + half });
+        ctx.rect(a.x, a.y, b.x - a.x, b.y - a.y);
+        any = true;
+      }
+      if (any) ctx.fill();
+    }
+    ctx.restore();
   }
 
   // Building shadows, over the ground surfaces rather than under them: a shadow
@@ -1653,7 +1720,7 @@ function App() {
   );
   const [tool, setTool] = useState('select');
   const [measure, setMeasure] = useState(null); // { points:[], cur } while measuring
-  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true, shadow: false });
+  const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true, shadow: false, lightmap: false });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
@@ -1843,7 +1910,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=75096443', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=8c2bb381', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1952,6 +2019,77 @@ function App() {
     [deco.stalls, shadows, layers.shadow]
   );
 
+  // ---------- How much light lands here ----------
+  // Two sources, one grid. Neither is cheap enough to run on a keystroke, so
+  // the whole thing is shut behind the layer and the panel: with both closed no
+  // sample is ever taken. Same bargain the drivability check makes.
+  const P = doc.params;
+  const lightOn = layers.lightmap || !hidden.secLight;
+  const lightSource = P.lightSource || 'lamps';
+  const poles = useMemo(() => (doc.annotations || [])
+    .filter((a) => a.kind === 'lightPole' && a.points && a.points[0])
+    .map((a) => ({
+      x: a.points[0].x, y: a.points[0].y,
+      h: a.value != null ? a.value : DEFAULT_POLE_H,
+      lumens: P.poleLumens || 12000,
+    })), [doc.annotations, P.poleLumens]);
+  const canopies = useMemo(() => (doc.annotations || [])
+    .filter((a) => a.kind === 'carport' && a.points && a.points.length >= 3)
+    .map((a) => ({ poly: a.points })), [doc.annotations]);
+
+  const lightGrid = useMemo(
+    () => (lightOn && sitePoly.length >= 3
+      ? sampleGrid(sitePoly, Math.max(1, P.lightStep || 3)) : { step: 3, pts: [] }),
+    [lightOn, sitePoly, P.lightStep]
+  );
+  // The sun's positions are shared by the map and the canopies, so they are
+  // computed once here rather than twice inside the two calls below.
+  const steps = useMemo(
+    () => (lightOn && lightSource === 'sun'
+      ? sunSteps((doc.geo || {}).lat || 51, (doc.geo || {}).lon || 4) : null),
+    [lightOn, lightSource, doc.geo]
+  );
+  const pvOpts = useMemo(() => ({
+    lat: (doc.geo || {}).lat || 51, lon: (doc.geo || {}).lon || 4,
+    ghi: P.pvGHI || 1050, diffuse: P.pvDiffuse == null ? 0.55 : P.pvDiffuse,
+    pv: {
+      tilt: P.pvTilt == null ? 10 : P.pvTilt, azimuth: P.pvAzimuth == null ? 180 : P.pvAzimuth,
+      density: P.pvDensity || 0.2, perf: P.pvPerf || 0.8, height: P.pvHeight || 3,
+    },
+  }), [doc.geo, P.pvGHI, P.pvDiffuse, P.pvTilt, P.pvAzimuth, P.pvDensity, P.pvPerf, P.pvHeight]);
+
+  const lightField = useMemo(() => {
+    if (!lightOn || !lightGrid.pts.length) return null;
+    const t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
+    const values = lightSource === 'sun'
+      ? annualIrradiance(lightGrid.pts, doc.obstacles, { ...pvOpts, steps })
+      : illuminance(lightGrid.pts, poles, doc.obstacles, { maintenance: P.poleMaint == null ? 0.8 : P.poleMaint });
+    const ms = (typeof performance !== 'undefined' ? performance.now() : 0) - t0;
+    return { values, stats: gridStats(values), unit: lightSource === 'sun' ? 'kWh/m²' : 'lx', ms };
+  }, [lightOn, lightSource, lightGrid, poles, doc.obstacles, steps, pvOpts, P.poleMaint]);
+
+  const pvReport = useMemo(
+    () => (lightOn && lightSource === 'sun' && canopies.length
+      ? canopyYield(canopies, doc.obstacles, { ...pvOpts, steps }) : null),
+    [lightOn, lightSource, canopies, doc.obstacles, pvOpts, steps]
+  );
+
+  // The grid is the picture; the stalls are the measurement.
+  //
+  // Averaging over the whole parcel reads U₀ = 0 on any real plan, because the
+  // setback strip and the landscape edges are unlit by design and drag the
+  // minimum to zero. A lighting requirement covers the surface people park and
+  // walk on, so that is what gets averaged — and the darkest stall becomes a
+  // place you can click rather than a statistic.
+  const stallLight = useMemo(() => {
+    if (!lightOn || lightSource !== 'lamps' || !deco.stalls.length || !poles.length) return null;
+    const values = illuminance(deco.stalls.map((s) => polygonCentroid(s.poly)), poles,
+      doc.obstacles, { maintenance: P.poleMaint == null ? 0.8 : P.poleMaint });
+    let worst = -1, wv = Infinity;
+    for (let i = 0; i < values.length; i++) if (values[i] < wv) { wv = values[i]; worst = i; }
+    return { stats: gridStats(values), worst, worstLux: wv };
+  }, [lightOn, lightSource, deco.stalls, poles, doc.obstacles, P.poleMaint]);
+
   // ---------- Drivability ----------
   // The check runs on demand, never in the render loop: it builds a network and
   // measures every corner on it, which has no business happening on a keystroke.
@@ -2042,13 +2180,14 @@ function App() {
         drawing, hover, selection, size: sizeRef.current,
         showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel, shadows,
+        lightField, lightGrid,
         // Only when asked: a checkbox, or a row the user clicked.
         driveIssues: showIssues ? driveIssues : (focusIssue >= 0 && driveIssues[focusIssue] ? [driveIssues[focusIssue]] : null),
         focusIssue: showIssues ? focusIssue : (focusIssue >= 0 ? 0 : -1),
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -2115,7 +2254,9 @@ function App() {
     site: sitePoly, obstacles: doc.obstacles,
     stalls: deco.stalls, aisles: deco.aisles, annotations: doc.annotations,
     islands: deco.islands, turnarounds: deco.turnarounds,
-  }), [sitePoly, doc.obstacles, deco, doc.annotations]);
+    // The 3D drape needs the carport clearance to know how high to hang the roof.
+    params: doc.params,
+  }), [sitePoly, doc.obstacles, deco, doc.annotations, doc.params]);
 
   // The Mapbox basemap lives for the whole session once a token is set. It sits
   // behind the canvas: flat in 2D (tracking our camera), tilted in 3D (with the
@@ -2127,7 +2268,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=75096443').then(async (m) => {
+    import('./map3d.js?v=8c2bb381').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -3989,7 +4130,8 @@ function App() {
   const exportDXF = () =>
     downloadBlob(new Blob([toDXF(buildPlan())], { type: 'application/dxf' }), 'parkplanner.dxf');
   const exportCSV = () =>
-    downloadBlob(new Blob([toCSV(buildPlan(), metrics)], { type: 'text/csv;charset=utf-8' }), 'parkplanner.csv');
+    downloadBlob(new Blob([toCSV(buildPlan(), metrics, { pv: pvReport, lux: stallLight && stallLight.stats })],
+      { type: 'text/csv;charset=utf-8' }), 'parkplanner.csv');
   const newRect = () => {
     dispatch({ type: 'RESET', doc: { ...initialDoc, site: rectPoly(0, 0, 80, 50), obstacles: [] } });
     setTimeout(fitToSite, 0);
@@ -4578,6 +4720,7 @@ function App() {
           ${layerRow('infra', 'Infrastructuur', '#0e7490', layers, setLayers)}
           ${layerRow('context', 'Omgeving (3D)', '#c3c8d2', layers, setLayers)}
           ${layerRow('shadow', 'Schaduw', '#334155', layers, setLayers)}
+          ${layerRow('lightmap', 'Lichtkaart', '#f59e0b', layers, setLayers)}
           <div className="mix-note">Omgeving = de bestaande bebouwing rondom; die bestaat alleen in de 3D-weergave.</div>
         </div>`}
         ${vis('secPreset') && html`
@@ -4752,8 +4895,11 @@ function App() {
               </div>
               ${t.value != null && html`
                 <div className="field">
-                  <label>Waarde (km/u)</label>
-                  <input type="number" min="5" max="130" step="5" value=${ann.value != null ? ann.value : t.value}
+                  <label>${t.valueLabel || 'Waarde (km/u)'}</label>
+                  <input type="number" min=${t.valueMin == null ? 5 : t.valueMin}
+                    max=${t.valueMax == null ? 130 : t.valueMax}
+                    step=${t.valueStep == null ? 5 : t.valueStep}
+                    value=${ann.value != null ? ann.value : t.value}
                     onChange=${(e) => updateAnnotation(ai, { value: +e.target.value })} />
                 </div>`}`;
           })()}
@@ -5023,6 +5169,101 @@ function App() {
             ${layers.shadow ? ` ${shadedStalls.length} van ${deco.stalls.length} vakken in de schaduw.` : ''}
           </div>
           <div className="mix-note">Klok is zonnetijd voor deze lengtegraad (UTC${zoneOffsetHours((doc.geo || {}).lon) >= 0 ? '+' : ''}${zoneOffsetHours((doc.geo || {}).lon)}); geen zomertijd.</div>
+        </div>`}
+
+        ${vis('secLight') && html`
+        <div className="section">
+          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Licht en opbrengst</span>
+            <label className="toggle" style=${{ fontSize: '11px' }}>
+              <input type="checkbox" checked=${!!layers.lightmap} onChange=${(e) => setLayers((l) => ({ ...l, lightmap: e.target.checked }))} />
+              <span>toon</span>
+            </label>
+          </h3>
+          <div className="field">
+            <label>Bron</label>
+            <div className="seg">
+              <button className=${lightSource === 'lamps' ? 'active' : ''} onClick=${() => setParam('lightSource', 'lamps')}>Kunstlicht</button>
+              <button className=${lightSource === 'sun' ? 'active' : ''} onClick=${() => setParam('lightSource', 'sun')}>Zon (jaar)</button>
+            </div>
+          </div>
+          ${slider('Rasterstap', 'lightStep', doc.params.lightStep || 3, 1, 8, 0.5, 'm', setParam)}
+
+          ${lightSource === 'lamps' ? html`
+            <div className="field">
+              <label>Lichtstroom per armatuur</label>
+              <input type="number" min="1000" max="80000" step="500" value=${doc.params.poleLumens || 12000}
+                onChange=${(e) => setParam('poleLumens', Math.max(1000, +e.target.value || 12000))} />
+            </div>
+            ${slider('Onderhoudsfactor', 'poleMaint', doc.params.poleMaint == null ? 0.8 : doc.params.poleMaint, 0.5, 1, 0.05, '', setParam)}
+            ${(() => {
+              if (!poles.length) return html`<div className="mix-note">Nog geen lichtmasten. Plaats ze met de tool <b>Lichtmast</b>; de lichtpunthoogte stel je per mast in.</div>`;
+              const st = stallLight ? stallLight.stats : null;
+              if (!st || st.avg == null) return html`<div className="mix-note">Zet de laag aan om te rekenen.</div>`;
+              const luxT = doc.params.luxTarget || 10, u0T = doc.params.u0Target || 0.25;
+              const okE = st.avg >= luxT, okU = st.u0 >= u0T;
+              return html`
+                <div className="kn-head">${poles.length} mast${poles.length > 1 ? 'en' : ''} · gemeten op ${st.n} vakken</div>
+                <div className="obj-row kn-row">
+                  <span className="dot" style=${{ background: okE ? '#22c55e' : '#f59e0b' }}></span>
+                  <span className="kn-text">
+                    <span className="kn-label">${st.avg.toFixed(1)} lx gemiddeld</span>
+                    <span className="kn-need">streefwaarde ${luxT} lx · laagste punt ${st.min.toFixed(1)} lx</span>
+                  </span>
+                </div>
+                <div className="obj-row kn-row">
+                  <span className="dot" style=${{ background: okU ? '#22c55e' : '#f59e0b' }}></span>
+                  <span className="kn-text">
+                    <span className="kn-label">U₀ = ${st.u0.toFixed(2)}</span>
+                    <span className="kn-need">streefwaarde ${u0T.toFixed(2)} — gelijkmatigheid Emin/Egem</span>
+                  </span>
+                </div>
+                ${stallLight.worst >= 0 && deco.stalls[stallLight.worst] && html`
+                  <div className="obj-row kn-row"
+                    onClick=${() => focusPoly(deco.stalls[stallLight.worst].poly)}>
+                    <span className="dot" style=${{ background: '#64748b' }}></span>
+                    <span className="kn-text">
+                      <span className="kn-label">Donkerste vak: ${stallLight.worstLux.toFixed(1)} lx</span>
+                      <span className="kn-need">klik om het aan te wijzen</span>
+                    </span>
+                  </div>`}
+                <div className="mix-note">Gemeten op het parkeervlak zelf, niet over de hele kavel — de setbackstrook is per definitie onverlicht en zou de gelijkmatigheid altijd op nul zetten.</div>
+                <div className="mix-note">Puntbron, gelijkmatig over de onderste halve bol. Dit is de eerste-orde handberekening, <b>geen fotometrisch bestand</b>: een echt ontwerp leest een IES-curve per armatuur. De streefwaarden zijn gangbaar, geen normcitaat.</div>`;
+            })()}
+          ` : html`
+            <div className="field">
+              <label>Jaarlijkse instraling (horizontaal)</label>
+              <input type="number" min="600" max="2400" step="10" value=${doc.params.pvGHI || 1050}
+                onChange=${(e) => setParam('pvGHI', Math.max(600, +e.target.value || 1050))} />
+            </div>
+            ${slider('Diffuus aandeel', 'pvDiffuse', doc.params.pvDiffuse == null ? 0.55 : doc.params.pvDiffuse, 0.3, 0.75, 0.01, '', setParam)}
+            ${slider('Helling', 'pvTilt', doc.params.pvTilt == null ? 10 : doc.params.pvTilt, 0, 60, 1, '°', setParam)}
+            ${slider('Oriëntatie', 'pvAzimuth', doc.params.pvAzimuth == null ? 180 : doc.params.pvAzimuth, 90, 270, 5, '°', setParam)}
+            ${(() => {
+              if (!canopies.length) return html`<div className="mix-note">Nog geen carports. Teken ze met de tool <b>Zonnecarport</b> over de parkeerrijen — de kaart toont ondertussen de instraling op maaiveld.</div>`;
+              if (!pvReport) return html`<div className="mix-note">Zet de laag aan om te rekenen.</div>`;
+              const r = pvReport;
+              return html`
+                <div className="kn-head">${r.area.toFixed(0)} m² overkapt · ${r.kWp.toFixed(0)} kWp</div>
+                <div className="obj-row kn-row">
+                  <span className="dot" style=${{ background: '#f59e0b' }}></span>
+                  <span className="kn-text">
+                    <span className="kn-label">${(r.kWh / 1000).toFixed(1)} MWh per jaar</span>
+                    <span className="kn-need">${r.specific.toFixed(0)} kWh/kWp · schaduwverlies ${(r.shadeLoss * 100).toFixed(1)} %</span>
+                  </span>
+                </div>
+                <div className="mix-note">Heldere-hemelmodel geijkt op de instraling en het diffuse aandeel hierboven; twaalf representatieve dagen per uur. Geen weerjaar, geen temperatuur- of vervuilingsmodel buiten de prestatieverhouding.</div>`;
+            })()}
+          `}
+          ${lightField && lightField.stats.max > 0 && html`
+            <div className="ramp">
+              <div className="ramp-bar"></div>
+              <div className="ramp-ends">
+                <span>0</span>
+                <span>${lightField.stats.max.toFixed(lightSource === 'sun' ? 0 : 1)} ${lightField.unit}</span>
+              </div>
+              <div className="mix-note">Kaart over ${lightField.stats.n} rasterpunten, gerekend in ${lightField.ms.toFixed(0)} ms.</div>
+            </div>`}
         </div>`}
 
         ${vis('secStallAisle') && html`
