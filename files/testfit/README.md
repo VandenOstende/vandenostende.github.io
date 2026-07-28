@@ -25,8 +25,9 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   site's curves.
 - **Parameters** — stall width and depth, aisle width, angle (45/60/90°),
   setback, padding buffer, and a maximum row length that inserts planter gaps.
-- **Options** — single-loaded rows, dead-end turnarounds, and an alignment
-  toggle that squares the rows to the longest site edge.
+- **Options** — single-loaded rows, dead-end turnarounds (which now draw the
+  hammerhead in the space they reserve), and an alignment toggle that squares
+  the rows to the longest site edge.
 - **Presets** — US standard, US SUV, EU metric, compact.
 
 ### Editing what the solver produced
@@ -71,6 +72,26 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   real textures on the 3D walls.
 - Storeys per building, with floor heights that follow the use.
 
+### Does the plan work?
+
+- **Pick a design vehicle** — car, van, rigid truck or fire appliance — and the
+  app lists the **knelpunten**: bends it cannot take, dead ends with no room to
+  turn and no room to reverse out, stalls it cannot reach at all, and facades
+  too far from where a fire appliance can stand. Each row is clickable and
+  highlights the place it is about.
+- Junction decisions gate the network: a junction joins, "not linked" does not,
+  and bollards sever the arm they cross. Walkways and cycle paths are surfaces
+  but not drivable, and the check knows the difference.
+- The turning check is **circular swept width** — the closed-form first pass
+  every design manual uses. It does not model the transition into a bend,
+  articulated vehicles, reversing, or corner-cutting, and it says so.
+- Every vehicle dimension is an editable constant. They are common design
+  values, **not a verified norm citation** — parking and fire-access figures
+  differ per municipality and per fire zone.
+- **Accessible stalls land near an entrance** when the plan has one (an access
+  point, else a driveway, else the nearest corner of the largest building). With
+  none, placement is unchanged.
+
 ### Views and output
 
 - **Basemaps** — plan on top of **OpenStreetMap**, **satellite**, or **hybrid**
@@ -80,7 +101,6 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   buildings around it. Your own buildings and the parking bays are extruded,
   each separately toggleable. Needs your **own Mapbox public token** (`pk.…`),
   which is only ever stored in your browser.
-- **2.5D** — a tilted read-only view that needs no token.
 - **Metrics** — stall count, site area, built %, m²/stall, impervious %, FAR,
   per-type counts, an automatic accessible-stall table (2010 ADA Standards,
   Table 208.2 plus the 1-in-6 van rule), and a programme/parking-ratio panel
@@ -125,6 +145,7 @@ files/testfit/
     ├── geometry.js       # pure 2D polygon geometry (offset, clip, hit tests)
     ├── solver.js         # parking solver + accessible-stall table + metrics
     ├── solver.worker.js  # the solver off the main thread
+    ├── drive.js          # design vehicles + the drivability check (pure)
     ├── annots.js         # the annotation type catalogue
     ├── buildings.js      # deterministic building exteriors per use
     ├── basemap.js        # slippy-map tiles (OSM/Esri) + geocoding + geo↔metres
@@ -138,8 +159,9 @@ files/testfit/
 Map tiles (OpenStreetMap, Esri World Imagery) and geocoding (Nominatim) are the
 only outbound requests; without a network the rest keeps working.
 
-`geometry.js` and `solver.js` are dependency-free, pure ES modules and can be
-tested on their own with Node.
+`geometry.js`, `solver.js` and `drive.js` are dependency-free, pure ES modules
+and can be tested on their own with Node — `drive.js` deliberately so, since a
+geometric check deserves assertions that need no browser.
 
 ## Keyboard
 

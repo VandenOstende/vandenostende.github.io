@@ -4,19 +4,19 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=f107ce47';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=6ed44f65';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=f107ce47';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=f107ce47';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=f107ce47';
-import { parseParcel, simplifyRing } from './importers.js?v=f107ce47';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=f107ce47';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=f107ce47';
-import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=f107ce47';
-import { BUILD_ID } from './build.js?v=f107ce47';
+} from './geometry.js?v=6ed44f65';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=6ed44f65';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=6ed44f65';
+import { parseParcel, simplifyRing } from './importers.js?v=6ed44f65';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=6ed44f65';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=6ed44f65';
+import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=6ed44f65';
+import { BUILD_ID } from './build.js?v=6ed44f65';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1786,11 +1786,34 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Where the site is entered, best source first: the access points you placed,
+  // then the inner edge of any driveway, then the corner of the largest building
+  // nearest the parking — a stand-in for the shop door, since buildings have no
+  // modelled entrance. Empty means "nothing said", and the solver then behaves
+  // exactly as it always did.
+  const entries = useMemo(() => {
+    const anns = doc.annotations || [];
+    const acc = anns.filter((a) => a.kind === 'access' && a.points && a.points[0]).map((a) => ({ x: a.points[0].x, y: a.points[0].y }));
+    if (acc.length) return acc;
+    const dw = anns.filter((a) => a.kind === 'driveway' && a.points && a.points.length >= 4)
+      .map((a) => { const c = polygonCentroid(a.points); return { x: c.x, y: c.y }; });
+    if (dw.length) return dw;
+    const obs = doc.obstacles || [];
+    if (!obs.length || !sitePoly || sitePoly.length < 3) return [];
+    let big = null, bigA = -1;
+    for (const o of obs) { const a = polygonArea(polyOf(o)); if (a > bigA) { bigA = a; big = polyOf(o); } }
+    if (!big) return [];
+    const sc = polygonCentroid(sitePoly);
+    let best = big[0], bestD = Infinity;
+    for (const p of big) { const d = dist(p, sc); if (d < bestD) { bestD = d; best = p; } }
+    return [{ x: best.x, y: best.y }];
+  }, [doc.annotations, doc.obstacles, sitePoly]);
+
   // Solve off the main thread via a web worker, so big sites don't freeze
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=f107ce47', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=6ed44f65', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1820,9 +1843,12 @@ function App() {
     setSolving(true);
     solveTimer.current = setTimeout(() => {
       // Align rows to the site's longest (control-point) edge when requested.
-      const solveP = doc.params.alignLongestEdge && doc.site.length >= 2
+      const base = doc.params.alignLongestEdge && doc.site.length >= 2
         ? { ...doc.params, alignAngle: longestEdgeAngle(doc.site) }
         : doc.params;
+      // Where people arrive, so the accessible spaces can land near it. Plain
+      // {x,y} only: this crosses postMessage into the worker.
+      const solveP = entries.length ? { ...base, entries } : base;
       const solveObstacles = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
       const args = [sitePoly, solveObstacles, solveP, doc.orientationIndex];
       lastArgsRef.current = args;
@@ -1835,7 +1861,7 @@ function App() {
       }
     }, 90);
     return () => clearTimeout(solveTimer.current);
-  }, [sitePoly, doc.obstacles, roadBlockers, doc.params, doc.orientationIndex, doc.autoParking]);
+  }, [sitePoly, doc.obstacles, roadBlockers, doc.params, doc.orientationIndex, doc.autoParking, entries]);
 
   // Apply manual overrides (stall type, aisle one-way) on top of the
   // solver output, keyed by position so marks survive re-solves.
@@ -2053,7 +2079,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=f107ce47').then(async (m) => {
+    import('./map3d.js?v=6ed44f65').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);

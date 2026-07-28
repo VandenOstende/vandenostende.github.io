@@ -15,7 +15,7 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=f107ce47';
+} from './geometry.js?v=6ed44f65';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -437,9 +437,18 @@ function stallQuad(x, y0, y1, pitch, shear, dir) {
 }
 
 /**
- * Distribute stall types across the placed stalls by ratio, then carve
- * out the ADA-required accessible spaces (placed nearest the centroid,
- * a stand-in for "closest to the entrance").
+ * Distribute stall types across the placed stalls by ratio, then carve out the
+ * ADA-required accessible spaces — nearest an entrance, when the plan says
+ * where its entrances are (`params.entries`, world points).
+ *
+ * With no entries the old behaviour is kept exactly: the first stalls in
+ * placement order. That used to be described as "nearest the centroid, a
+ * stand-in for closest to the entrance", which it never was — on the demo plan
+ * it put every accessible space in the far south-west corner.
+ *
+ * Straight-line distance, not a routed accessible path. An accessible route
+ * along the drivable network would be better and is a follow-up; this at least
+ * puts them at the right end of the site.
  */
 function assignStallTypes(stalls, params) {
   const n = stalls.length;
@@ -467,8 +476,19 @@ function assignStallTypes(stalls, params) {
 
   if (params.ada) {
     const { required } = adaRequirement(n);
-    // ADA spaces sit nearest the front (first stalls), overriding the mix.
-    for (let i = 0; i < Math.min(required, n); i++) stalls[i].type = 'ada';
+    const entries = (params.entries || []).filter((e) => e && isFinite(e.x) && isFinite(e.y));
+    let order = null;
+    if (entries.length && params.adaNearEntry !== false) {
+      order = stalls.map((st, i) => {
+        const c = polygonCentroid(st.poly);
+        let d = Infinity;
+        for (const e of entries) d = Math.min(d, Math.hypot(c.x - e.x, c.y - e.y));
+        // The key breaks ties deterministically: equal distances must never
+        // flip between two solves of the same plan.
+        return { i, d, k: stallKey(st.poly) };
+      }).sort((a, b) => (a.d - b.d) || (a.k < b.k ? -1 : 1)).map((x) => x.i);
+    }
+    for (let k = 0; k < Math.min(required, n); k++) stalls[order ? order[k] : k].type = 'ada';
   }
 }
 
