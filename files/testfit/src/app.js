@@ -4,18 +4,18 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=6752bd72';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8a002ada';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=6752bd72';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=6752bd72';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=6752bd72';
-import { parseParcel, simplifyRing } from './importers.js?v=6752bd72';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=6752bd72';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=6752bd72';
-import { BUILD_ID } from './build.js?v=6752bd72';
+} from './geometry.js?v=8a002ada';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=8a002ada';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8a002ada';
+import { parseParcel, simplifyRing } from './importers.js?v=8a002ada';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=8a002ada';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=8a002ada';
+import { BUILD_ID } from './build.js?v=8a002ada';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -342,6 +342,32 @@ function draw(ctx, opts) {
   // Grid
   if (layers.grid) drawGrid(ctx, view, size);
 
+  // All tarmac in ONE path and ONE fill: drive aisles, bays and every drawn
+  // carriageway. Filling them separately painted a translucent grey twice
+  // wherever two of them overlapped, which is exactly the seam you see where a
+  // road meets an aisle or another road. One fill composites once, and with no
+  // per-shape outline the internal edges are simply not there.
+  {
+    ctx.beginPath();
+    const addRing = (poly) => {
+      if (!poly || poly.length < 3) return;
+      poly.forEach((q, i) => { const sp = w2s(q); if (i) ctx.lineTo(sp.x, sp.y); else ctx.moveTo(sp.x, sp.y); });
+      ctx.closePath();
+    };
+    if (layers.parking) {
+      for (const a of result.aisles) addRing(a.poly);
+      for (const st of result.stalls) addRing(st.poly);
+    }
+    if (layers.infra) {
+      for (const an of doc.annotations || []) {
+        const t = ANNOT_TYPES[an.kind];
+        if (t && t.body && !an.closed) addRing(ribbon(an, t));
+      }
+    }
+    ctx.fillStyle = TH.aisle;
+    ctx.fill();
+  }
+
   // Infrastructure drawn under the parking (roads, bike parking)
   if (layers.infra && doc.annotations) {
     drawAnnotations(ctx, doc.annotations, w2s, view.scale, true, selAnnIdx);
@@ -383,13 +409,15 @@ function draw(ctx, opts) {
     }
   }
 
-  // Aisles (drawn under stalls) with one-way arrows and selection highlight
+  // Aisles: selection, arrows and locks. The surface itself is already painted.
   if (layers.parking) {
     for (const a of result.aisles) {
-      pathPoly(ctx, a.poly, w2s, true);
-      ctx.fillStyle = aisleSel === a.key ? 'rgba(59,130,246,0.32)' : TH.aisle;
-      ctx.fill();
-      if (aisleSel === a.key) { ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2; ctx.stroke(); }
+      if (aisleSel === a.key) {
+        pathPoly(ctx, a.poly, w2s, true);
+        ctx.fillStyle = 'rgba(59,130,246,0.32)';
+        ctx.fill();
+        ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2; ctx.stroke();
+      }
       if (a.oneway) drawAisleArrows(ctx, a, w2s, view.scale);
       if (a.locked) {
         const c = w2s(polygonCentroid(a.poly));
@@ -474,11 +502,8 @@ function draw(ctx, opts) {
       const info = STALL_TYPES[st.type] || STALL_TYPES.standard;
       const selected = selSet.has(st.key);
       const p = st.poly;
-      // Asphalt first, so bays and drive aisles read as one surface instead of
-      // coloured tiles floating on the site.
-      pathPoly(ctx, p, w2s, true);
-      ctx.fillStyle = TH.aisle;
-      ctx.fill();
+      // The tarmac under this bay is already down (one surface for the whole
+      // car park); only the type tint and the markings belong here.
       // Only the special types are tinted. A standard bay is plain tarmac with
       // white lines, which is what one looks like — and it makes the bays that
       // DO mean something (accessible, EV, reserved) stand out instead of
@@ -1327,11 +1352,11 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
       ctx.beginPath();
       bp.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.closePath();
-      ctx.fillStyle = t.aisleColor ? TH.aisle : hexA(t.color, 0.9);
-      ctx.fill();
-      ctx.strokeStyle = selected ? TH.sel : TH.outline;
-      ctx.lineWidth = selected ? 2.5 : 1;
-      ctx.stroke();
+      // The tarmac is laid in one pass for the whole plan so roads flow into
+      // each other without a seam; a kind that is NOT the aisle colour still
+      // paints itself, and only a selected road gets an outline.
+      if (!t.aisleColor) { ctx.fillStyle = hexA(t.color, 0.9); ctx.fill(); }
+      if (selected) { ctx.strokeStyle = TH.sel; ctx.lineWidth = 2.5; ctx.stroke(); }
       // When the line you drew is a kerb it no longer runs down the middle, so
       // show it while the road is selected — otherwise the handles look adrift.
       if (selected && ann.align) {
@@ -1630,7 +1655,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=6752bd72', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=8a002ada', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1781,7 +1806,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=6752bd72').then(async (m) => {
+    import('./map3d.js?v=8a002ada').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -2176,6 +2201,31 @@ function App() {
     return -1;
   };
 
+  // What is sitting on this carriageway. There is no stored link between a sign
+  // and the road it was snapped to — the snap only set an angle — so the only
+  // honest answer is geometric: anything whose position lies on the asphalt,
+  // plus a metre of tolerance for things placed against the kerb.
+  const ridersOn = (ann, index) => {
+    const t = ANNOT_TYPES[ann.kind] || {};
+    if (!t.body || ann.closed) return null;
+    const body = ribbon(ann, t);
+    if (!body || body.length < 3) return null;
+    const grown = offsetPolygon(body, 1) || body;
+    const inside = (p) => pointInPolygon(p, grown);
+    const anns = [];
+    (doc.annotations || []).forEach((o, i) => {
+      if (i === index || !o.points || !o.points.length) return;
+      // Every point has to be on the road, or a long road crossing this one
+      // would be dragged along by its single overlapping end.
+      if (o.points.every(inside)) anns.push({ i, orig: o.points, anchor: o.anchor });
+    });
+    const stalls = [];
+    (doc.manualStalls || []).forEach((ms, i) => {
+      if (ms && ms.poly && inside(polygonCentroid(ms.poly))) stalls.push({ i, orig: ms.poly });
+    });
+    return anns.length || stalls.length ? { anns, stalls } : null;
+  };
+
   const hitAnnotation = (sp) => {
     const { w2s } = makeTransform(view);
     const anns = doc.annotations || [];
@@ -2342,7 +2392,12 @@ function App() {
         const a = (doc.annotations || [])[ai];
         if (a && a.points) {
           dispatch({ type: 'CHECKPOINT' });
-          dragRef.current = { mode: 'annotMove', start: wp, index: ai, orig: a.points, origAnchor: a.anchor };
+          dragRef.current = {
+            mode: 'annotMove', start: wp, index: ai, orig: a.points, origAnchor: a.anchor,
+            // Gathered at pointer-down so Alt can be pressed and released mid
+            // drag and the riders follow live.
+            riders: ridersOn(a, ai),
+          };
         }
         return;
       }
@@ -2483,13 +2538,32 @@ function App() {
       const a0 = alignSnap(drag.orig, wp.x - drag.start.x, wp.y - drag.start.y);
       const dx = a0.dx, dy = a0.dy;
       guidesRef.current = a0.guides;
+      // Alt takes everything standing on the road with it. Held live, so you can
+      // press and release it mid-drag and watch the difference.
+      const withRiders = e.altKey && drag.riders ? drag.riders : null;
+      const moved = withRiders ? new Map(withRiders.anns.map((r) => [r.i, r])) : null;
       dispatch({ type: 'LIVE', updater: (d) => ({
         ...d,
-        annotations: (d.annotations || []).map((a, i) => (i !== drag.index ? a : {
-          ...a,
-          points: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })),
-          ...(drag.origAnchor ? { anchor: { x: drag.origAnchor.x + dx, y: drag.origAnchor.y + dy } } : {}),
-        })),
+        annotations: (d.annotations || []).map((a, i) => {
+          if (i === drag.index) return {
+            ...a,
+            points: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+            ...(drag.origAnchor ? { anchor: { x: drag.origAnchor.x + dx, y: drag.origAnchor.y + dy } } : {}),
+          };
+          const r = moved && moved.get(i);
+          if (!r) return a;
+          return {
+            ...a,
+            points: r.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+            ...(r.anchor ? { anchor: { x: r.anchor.x + dx, y: r.anchor.y + dy } } : {}),
+          };
+        }),
+        manualStalls: withRiders && withRiders.stalls.length
+          ? (d.manualStalls || []).map((ms, i) => {
+            const r = withRiders.stalls.find((x) => x.i === i);
+            return r ? { ...ms, poly: r.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : ms;
+          })
+          : d.manualStalls,
       }) });
     } else if (drag.mode === 'obsMove') {
       const a1 = alignSnap(drag.orig, wp.x - drag.start.x, wp.y - drag.start.y);
@@ -3481,7 +3555,7 @@ function App() {
   // nothing on screen mentioned G, R, Esc, Delete or Cmd+D.
   const SHORTCUTS = [
     ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['Spatie', 'Pannen']]],
-    ['Bewerken', [['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
+    ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
     ['Pannen & zoomen', [['Rechtermuis slepen', 'Pannen'], ['Middelste muisknop', 'Pannen'], ['Spatie ingedrukt', 'Pannen'], ['Muiswiel', 'In- en uitzoomen'], ['Trackpad (2 vingers)', 'Pannen'], ['Shift + scrollen', 'Pannen'], ['Ctrl + scrollen / knijpen', 'In- en uitzoomen'], ['+ / -', 'In- en uitzoomen']]],
     ['Weergave', [['G', 'Raster aan/uit'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
@@ -4040,7 +4114,7 @@ function App() {
                   <button className=${al === 'left' ? 'active' : ''} onClick=${() => updateAnnotation(ai, { align: 'left' })}>Linkerrand</button>
                   <button className=${al === 'right' ? 'active' : ''} onClick=${() => updateAnnotation(ai, { align: 'right' })}>Rechterrand</button>
                 </div>
-                <div className="mix-note">Omschakelen verlegt de weg zonder je lijn te verplaatsen.</div>
+                <div className="mix-note">Omschakelen verlegt de weg zonder je lijn te verplaatsen · <b>Alt</b> ingedrukt houden tijdens het slepen neemt alles mee wat op de weg staat.</div>
               </div>
               <label className="toggle">
                 <span>Vloeiende bochten</span>
