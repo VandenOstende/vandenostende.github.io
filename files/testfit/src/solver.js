@@ -15,7 +15,7 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=6ed44f65';
+} from './geometry.js?v=75096443';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -28,6 +28,19 @@ function insideSpans(poly, y, xMin, xMax, step) {
   }
   if (start !== null) spans.push([start, xMax]);
   return spans;
+}
+
+// Containment tests use ray casting, which is ambiguous for a point sitting
+// exactly ON the boundary — and asymmetric: a quad flush against the low-x edge
+// reads as inside while the identical quad at the high-x edge reads as outside.
+// Test a hair-shrunk copy and emit the real one.
+function insetQuad(q, e = 1e-3) {
+  const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4;
+  const cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4;
+  return q.map((p) => {
+    const dx = cx - p.x, dy = cy - p.y, len = Math.hypot(dx, dy) || 1;
+    return { x: p.x + (dx / len) * e, y: p.y + (dy / len) * e };
+  });
 }
 
 // A stall [x0,x1] is allowed if it sits in an aisle span and (for dead-end
@@ -332,11 +345,35 @@ function packOrientation(buildable, blockers, params, theta) {
   }
   const overlapsIsland = (x0, x1) => islandRanges && islandRanges.some(([a, b]) => x0 < b - 1e-6 && x1 > a + 1e-6);
 
+  // End aisles: a cross-aisle at one or both ends of the rows, running
+  // perpendicular to them. Without it the rows are parallel islands that touch
+  // nothing — the solver has never laid a connector, so a freshly solved plan
+  // was not drivable at all. Reserved exactly like the island columns above, so
+  // the stall loop needs one more test and nothing else.
+  const endMode = params.endAisles === 'none' || params.endAisles === 'both' ? params.endAisles : 'one';
+  const endW = aisle;
+  let endBands = null;
+  if (endMode !== 'none' && bb.maxX - bb.minX > endW * 2 + pitch) {
+    // With one band, put it at the end nearest an entrance so the drive in is
+    // short; with none given, the low-x end is as good as any.
+    let atLow = true;
+    if (endMode === 'one' && (params.entries || []).length) {
+      const local0 = (params.entries || []).map((e) => rotatePoint(e, -theta, pivot));
+      const mid = (bb.minX + bb.maxX) / 2;
+      atLow = local0.reduce((s, p) => s + (p.x < mid ? 1 : -1), 0) >= 0;
+    }
+    endBands = [];
+    if (endMode === 'both' || atLow) endBands.push([bb.minX, bb.minX + endW]);
+    if (endMode === 'both' || !atLow) endBands.push([bb.maxX - endW, bb.maxX]);
+  }
+  const overlapsEnd = (x0, x1) => endBands && endBands.some(([a, b]) => x0 < b - 1e-6 && x1 > a + 1e-6);
+
   // Place one row of stalls; returns how many were placed.
   const placeRow = (y0, y1, dir, spans) => {
     let placed = 0, run = 0;
     for (let x = bb.minX; x + pitch <= bb.maxX + 1e-6; x += pitch) {
       if (overlapsIsland(x, x + pitch)) { run = 0; continue; }   // landscape island
+      if (overlapsEnd(x, x + pitch)) { run = 0; continue; }       // end cross-aisle
       if (!islandRanges && run >= maxRun) { run = 0; continue; } // planter gap (no island strip)
       if (spans && !inAllowedSpan(x, x + pitch, spans, turn)) { run = 0; continue; } // turnaround
       const quad = stallQuad(x, y0, y1, pitch, shear, dir);
@@ -347,9 +384,10 @@ function packOrientation(buildable, blockers, params, theta) {
     }
     return placed;
   };
-  const pushAisle = (y0, y1) => aisles.push(
+  const aisleYs = [];   // [y0,y1] of every emitted aisle, for the end connectors
+  const pushAisle = (y0, y1) => (aisleYs.push([y0, y1]), aisles.push(
     [{ x: bb.minX, y: y0 }, { x: bb.maxX, y: y0 }, { x: bb.maxX, y: y1 }, { x: bb.minX, y: y1 }]
-      .map((p) => rotatePoint(p, theta, pivot)));
+      .map((p) => rotatePoint(p, theta, pivot))));
   // Emit landscape islands filling a single row band (only where inside the
   // buildable area and clear of blockers).
   const addIslandBand = (ry0, ry1) => {
@@ -378,7 +416,7 @@ function packOrientation(buildable, blockers, params, theta) {
       if (s1 - s0 < 2 * arm) continue;   // no room for two, and no dead end worth the name
       for (const [x0, x1] of [[s0, s0 + arm], [s1 - arm, s1]]) {
         const quad = [{ x: x0, y: ry0 }, { x: x1, y: ry0 }, { x: x1, y: ry1 }, { x: x0, y: ry1 }];
-        if (!quadInsidePolygon(quad, local)) continue;
+        if (!quadInsidePolygon(insetQuad(quad), local)) continue;
         if (localBlockers.some((b) => quadIntersectsPolygon(quad, b))) continue;
         turnarounds.push(quad.map((p) => rotatePoint(p, theta, pivot)));
       }
@@ -406,6 +444,48 @@ function packOrientation(buildable, blockers, params, theta) {
       pushAisle(aisleY0, aisleY1);
       addIslandBand(aisleY1, aisleY1 + rowDepth);
       addTurnarounds(spans, aisleY0, aisleY1 + rowDepth);
+    }
+  }
+
+  // Close the network. One quad per gap between consecutive aisles, inside each
+  // reserved end band: short pieces fit an irregular buildable where one band
+  // over the full height would fail containment and connect nothing at all.
+  if (endBands && aisleYs.length > 1) {
+    aisleYs.sort((a, b) => a[0] - b[0]);
+    for (const [x0, x1] of endBands) {
+      for (let i = 0; i + 1 < aisleYs.length; i++) {
+        const quad = [
+          { x: x0, y: aisleYs[i][1] }, { x: x1, y: aisleYs[i][1] },
+          { x: x1, y: aisleYs[i + 1][0] }, { x: x0, y: aisleYs[i + 1][0] },
+        ];
+        if (!quadInsidePolygon(insetQuad(quad), local)) continue;
+        if (localBlockers.some((b) => quadIntersectsPolygon(quad, b))) continue;
+        aisles.push(quad.map((p) => rotatePoint(p, theta, pivot)));
+      }
+    }
+    // And reach the street: a spur from the end band out across the setback, at
+    // the height of the nearest entrance. The buildable is the site shrunk by
+    // `setback`, so that is exactly how far there is to go.
+    const ent = (params.entries || []).map((e) => rotatePoint(e, -theta, pivot));
+    const reach = (params.setback || 0) + 1;
+    if (ent.length && reach > 1) {
+      const lo = aisleYs[0][0], hi = aisleYs[aisleYs.length - 1][1];
+      for (const [x0, x1] of endBands) {
+        const outward = x0 <= bb.minX + 1e-6;
+        // The entrance nearest this band, and the y where the spur leaves.
+        let best = null;
+        for (const e of ent) {
+          const d = Math.abs(e.x - (outward ? x0 : x1));
+          if (!best || d < best.d) best = { d, y: Math.max(lo, Math.min(hi, e.y)) };
+        }
+        if (!best) continue;
+        const y0 = Math.max(lo, Math.min(hi - aisle, best.y - aisle / 2));
+        const quad = outward
+          ? [{ x: x0 - reach, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y0 + aisle }, { x: x0 - reach, y: y0 + aisle }]
+          : [{ x: x0, y: y0 }, { x: x1 + reach, y: y0 }, { x: x1 + reach, y: y0 + aisle }, { x: x0, y: y0 + aisle }];
+        if (localBlockers.some((b) => quadIntersectsPolygon(quad, b))) continue;
+        aisles.push(quad.map((p) => rotatePoint(p, theta, pivot)));
+      }
     }
   }
 

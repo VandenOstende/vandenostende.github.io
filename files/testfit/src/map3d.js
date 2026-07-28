@@ -7,11 +7,11 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=6ed44f65';
-import { STALL_TYPES } from './solver.js?v=6ed44f65';
-import { polyOf, ribbonPoly } from './geometry.js?v=6ed44f65';
-import { ANNOT_TYPES } from './annots.js?v=6ed44f65';
-import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=6ed44f65';
+import { localToLatLon } from './basemap.js?v=75096443';
+import { STALL_TYPES } from './solver.js?v=75096443';
+import { polyOf, ribbonPoly } from './geometry.js?v=75096443';
+import { ANNOT_TYPES } from './annots.js?v=75096443';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=75096443';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -456,18 +456,32 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
   // final box is known.
   [0, 150, 500, 1200].forEach((t) => setTimeout(() => { try { map.resize(); } catch (e) {} }, t));
 
+  // Sun and sky. The direction used to be hardcoded and set once; it now comes
+  // from the real solar position for the plan's date, time and place. Only
+  // Mapbox Standard honours these, and an older style throws rather than
+  // ignoring them, so it stays advisory — which is also why the 2D shadow layer
+  // does its own maths instead of relying on this.
+  let sunDir = [200, 42];
+  const applyLights = () => {
+    try {
+      if (!map.setLights) return;
+      // Below the horizon: a dim, flat night rather than a light from nowhere.
+      const night = sunDir[1] <= 0;
+      map.setLights([
+        { id: 'sky', type: 'ambient', properties: { color: '#ffffff', intensity: night ? 0.35 : 0.55 } },
+        { id: 'sun', type: 'directional', properties: {
+          color: night ? '#94a3b8' : '#fff4e0',
+          intensity: night ? 0.15 : 0.75,
+          direction: [sunDir[0], Math.max(2, sunDir[1])],
+          'cast-shadows': true, 'shadow-intensity': night ? 0.2 : 0.7,
+        } },
+      ]);
+    } catch (e) { /* style has no lighting model */ }
+  };
+
   map.on('style.load', () => {
     ready = true;
-    // Sun and sky. Only Mapbox Standard honours these, and an older style
-    // throws rather than ignoring them, so it stays advisory.
-    try {
-      if (map.setLights) {
-        map.setLights([
-          { id: 'sky', type: 'ambient', properties: { color: '#ffffff', intensity: 0.55 } },
-          { id: 'sun', type: 'directional', properties: { color: '#fff4e0', intensity: 0.75, direction: [200, 42], 'cast-shadows': true, 'shadow-intensity': 0.7 } },
-        ]);
-      }
-    } catch (e) { /* style has no lighting model */ }
+    applyLights();
     clearTimeout(loadTimer);
     diag({ style: 'ok' });
     setTimeout(reportCanvas, 120);
@@ -506,6 +520,9 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
     // The mode is read from the controller, not passed in: two React effects
     // write the same visibility, and whichever ran last would otherwise win.
     setLayers(l) { layerState = l; if (ready) { try { applyVisibility(map, pending3d, layerState); } catch (e) {} } },
+    // Mapbox wants [azimuth clockwise from north, altitude]; sun.js already
+    // reports it that way, so this is a pass-through, not a conversion.
+    setSun(azimuth, altitude) { sunDir = [azimuth, altitude]; if (ready) applyLights(); },
     // A location search moves the geo anchor; without this the draped plan keeps
     // converting against the anchor captured at construction.
     setGeo(g) {
