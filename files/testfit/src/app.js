@@ -4,19 +4,19 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=30378781';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=f107ce47';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=30378781';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=30378781';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=30378781';
-import { parseParcel, simplifyRing } from './importers.js?v=30378781';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=30378781';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=30378781';
-import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=30378781';
-import { BUILD_ID } from './build.js?v=30378781';
+} from './geometry.js?v=f107ce47';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=f107ce47';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=f107ce47';
+import { parseParcel, simplifyRing } from './importers.js?v=f107ce47';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=f107ce47';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=f107ce47';
+import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=f107ce47';
+import { BUILD_ID } from './build.js?v=f107ce47';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -412,6 +412,13 @@ function draw(ctx, opts) {
       ctx.stroke();
       ctx.setLineDash([]);
     }
+  }
+
+  // Turnarounds: the pocket the dead-end option already reserved. Drawn as
+  // tarmac, under the parking, so it reads as part of the carriageway.
+  if (layers.parking && result.turnarounds) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.45)';
+    for (const t of result.turnarounds) { pathPoly(ctx, t, w2s, true); ctx.fill(); }
   }
 
   // Landscape islands (green planters that break up long rows)
@@ -1675,7 +1682,7 @@ function App() {
   const [multiSel, setMultiSel] = useState({ anns: [], obs: [] });
   const multiCount = multiSel.anns.length + multiSel.obs.length + stallSel.length;
   const [aisleSel, setAisleSel] = useState(null);         // selected aisle key
-  const [result, setResult] = useState({ stalls: [], aisles: [], orientationCount: 0 });
+  const [result, setResult] = useState({ stalls: [], aisles: [], islands: [], turnarounds: [], orientationCount: 0 });
   const [solving, setSolving] = useState(false);
   const [geoSearch, setGeoSearch] = useState('');
   const [geoBusy, setGeoBusy] = useState(false);
@@ -1783,7 +1790,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=30378781', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=f107ce47', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1806,7 +1813,7 @@ function App() {
     // Auto-parking off: keep the canvas free for manual placement only.
     if (!doc.autoParking) {
       reqRef.current++;
-      setResult({ stalls: [], aisles: [], islands: [], orientationCount: 0 });
+      setResult({ stalls: [], aisles: [], islands: [], turnarounds: [], orientationCount: 0 });
       setSolving(false);
       return;
     }
@@ -1867,7 +1874,7 @@ function App() {
       const o = ovAisles[key] || {};
       return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
     }).filter((a) => !gone[a.key]);
-    return { stalls, aisles, islands: result.islands || [], orientationCount: result.orientationCount };
+    return { stalls, aisles, islands: result.islands || [], turnarounds: result.turnarounds || [], orientationCount: result.orientationCount };
   }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
   // Every place two drawn ways meet, with whatever was decided about it.
@@ -2027,9 +2034,13 @@ function App() {
   }, [assetLib, doc.assets]);
 
   // Snapshot of everything the 3D view draws.
+  // Islands and turnarounds belong here too. They were drawn on the canvas and
+  // in no export at all — a rebuilt literal that quietly dropped a field, the
+  // same trap that nearly ate `use` on the buildings.
   const buildPlan = useCallback(() => ({
     site: sitePoly, obstacles: doc.obstacles,
     stalls: deco.stalls, aisles: deco.aisles, annotations: doc.annotations,
+    islands: deco.islands, turnarounds: deco.turnarounds,
   }), [sitePoly, doc.obstacles, deco, doc.annotations]);
 
   // The Mapbox basemap lives for the whole session once a token is set. It sits
@@ -2042,7 +2053,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=30378781').then(async (m) => {
+    import('./map3d.js?v=f107ce47').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);

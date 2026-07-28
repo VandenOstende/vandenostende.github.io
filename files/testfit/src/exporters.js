@@ -5,9 +5,9 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=30378781';
-import { polyOf, ribbonPoly } from './geometry.js?v=30378781';
-import { ANNOT_TYPES } from './annots.js?v=30378781';
+import { localToLatLon } from './basemap.js?v=f107ce47';
+import { polyOf, ribbonPoly } from './geometry.js?v=f107ce47';
+import { ANNOT_TYPES } from './annots.js?v=f107ce47';
 
 // A drawn carriageway is an area, not a centreline: exporting the hairline lost
 // its width, its offset and its corners.
@@ -39,6 +39,8 @@ export function toGeoJSON(plan, geo) {
   if (plan.site && plan.site.length >= 3) feats.push(poly(plan.site, { kind: 'site' }));
   (plan.obstacles || []).forEach((o) => feats.push(poly(polyOf(o), { kind: 'building', floors: (o && o.floors) || 1 })));
   (plan.aisles || []).forEach((a) => feats.push(poly(a.poly, { kind: 'aisle', oneway: !!a.oneway })));
+  (plan.turnarounds || []).forEach((t) => feats.push(poly(t.poly || t, { kind: 'turnaround' })));
+  (plan.islands || []).forEach((i) => feats.push(poly(i.poly || i, { kind: 'island' })));
   (plan.stalls || []).forEach((s) => feats.push(poly(s.poly, { kind: 'stall', type: s.type })));
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
@@ -70,6 +72,8 @@ export function toDXF(plan) {
   if (plan.site && plan.site.length >= 3) addPoly(plan.site, 'SITE', true);
   (plan.obstacles || []).forEach((o) => addPoly(polyOf(o), 'BUILDINGS', true));
   (plan.aisles || []).forEach((a) => addPoly(a.poly, 'AISLES', true));
+  (plan.turnarounds || []).forEach((t) => addPoly(t.poly || t, 'TURNAROUNDS', true));
+  (plan.islands || []).forEach((i) => addPoly(i.poly || i, 'ISLANDS', true));
   (plan.stalls || []).forEach((s) => addPoly(s.poly, 'STALLS_' + (s.type || 'standard').toUpperCase(), true));
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
@@ -98,6 +102,8 @@ export function toCSV(plan, metrics) {
   rows.push(['Minder-valide vereist', metrics.adaRequired]);
   rows.push(['Minder-valide geleverd', metrics.adaProvided]);
   rows.push(['Eenrichtings-rijbanen', (metrics.onewayAisles || 0) + '/' + (metrics.aisleCount || 0)]);
+  if ((plan.turnarounds || []).length) rows.push(['Keerruimtes', plan.turnarounds.length]);
+  if ((plan.islands || []).length) rows.push(['Plantvakken', plan.islands.length]);
   if (metrics.requiredStalls != null) rows.push(['Vereiste plaatsen (zoning)', metrics.requiredStalls]);
   const esc = (c) => '"' + String(c).replace(/"/g, '""') + '"';
   return rows.map((r) => r.map(esc).join(',')).join('\n');

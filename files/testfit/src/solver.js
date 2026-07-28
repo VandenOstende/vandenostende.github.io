@@ -15,7 +15,7 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=30378781';
+} from './geometry.js?v=f107ce47';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -118,7 +118,7 @@ export function adaRequirement(totalStalls) {
  * (the "Row Axis change" cycle); defaults to the best.
  */
 export function solveParking(site, obstacles, params, orientationIndex = 0) {
-  const empty = { stalls: [], aisles: [], islands: [], angleUsed: 0, orientationCount: 0 };
+  const empty = { stalls: [], aisles: [], islands: [], turnarounds: [], angleUsed: 0, orientationCount: 0 };
   const buildable = computeBuildable(site, params.setback);
   if (!buildable || polygonArea(buildable) < 1) return empty;
 
@@ -169,7 +169,7 @@ function packStripBest(buildable, blockers, params, orientationIndex = 0) {
   if (angleSet.length === 0) angleSet.push(0);
   const results = angleSet.map((theta) => packOrientation(buildable, blockers, params, theta));
   results.sort((a, b) => b.stalls.length - a.stalls.length);
-  const chosen = results[Math.min(orientationIndex, results.length - 1)] || { stalls: [], aisles: [], islands: [], angleUsed: 0 };
+  const chosen = results[Math.min(orientationIndex, results.length - 1)] || { stalls: [], aisles: [], islands: [], turnarounds: [], angleUsed: 0 };
   return { ...chosen, orientationCount: results.length };
 }
 
@@ -250,7 +250,7 @@ function packConcentric(buildable, blockers, params) {
     if (outer.length || inner.length) for (const q of aq) aisles.push(q);
   }
   assignStallTypes(stalls, params);
-  return { stalls, aisles, islands: [], angleUsed: 0 };
+  return { stalls, aisles, islands: [], turnarounds: [], angleUsed: 0 };
 }
 
 /**
@@ -282,7 +282,7 @@ function packHybrid(buildable, blockers, params) {
   // Straight interior can carry landscape islands.
   const islands = strip.islands ? strip.islands.filter((is) => distPointToPolygonBoundary(polygonCentroid(is), buildable) > d) : [];
   assignStallTypes(stalls, params);
-  return { stalls, aisles, islands, angleUsed: 0 };
+  return { stalls, aisles, islands, turnarounds: [], angleUsed: 0 };
 }
 
 /**
@@ -313,6 +313,7 @@ function packOrientation(buildable, blockers, params, theta) {
   const stalls = [];
   const aisles = [];
   const islands = [];
+  const turnarounds = [];
   const maxRun = params.maxRun > 0 ? params.maxRun : Infinity;
   const islandW = params.islandWidth > 0 ? params.islandWidth : 0;
   const singleLoaded = !!params.singleLoaded;
@@ -362,6 +363,28 @@ function packOrientation(buildable, blockers, params, theta) {
     }
   };
 
+  // The dead-end reservation already keeps stalls `turn` metres clear of both
+  // ends of every aisle span, in both rows — that pocket costs real stalls and
+  // until now showed nothing at all. Emit the hammerhead that lives in it.
+  //
+  // One is emitted at EVERY span end, not only at true dead ends: the solver
+  // has no network, roads reach it only as blockers. That is harmless — extra
+  // tarmac at a connected end is corner widening, which helps a vehicle turn —
+  // and drive.js decides which of them is load-bearing.
+  const addTurnarounds = (spans, ry0, ry1) => {
+    if (!spans) return;
+    const arm = Math.min(turn, 12);
+    for (const [s0, s1] of spans) {
+      if (s1 - s0 < 2 * arm) continue;   // no room for two, and no dead end worth the name
+      for (const [x0, x1] of [[s0, s0 + arm], [s1 - arm, s1]]) {
+        const quad = [{ x: x0, y: ry0 }, { x: x1, y: ry0 }, { x: x1, y: ry1 }, { x: x0, y: ry1 }];
+        if (!quadInsidePolygon(quad, local)) continue;
+        if (localBlockers.some((b) => quadIntersectsPolygon(quad, b))) continue;
+        turnarounds.push(quad.map((p) => rotatePoint(p, theta, pivot)));
+      }
+    }
+  };
+
   // Double-loaded modules bottom-to-top.
   let yBase = bb.minY;
   for (; yBase + moduleH <= bb.maxY + 1e-6; yBase += moduleH) {
@@ -372,17 +395,22 @@ function packOrientation(buildable, blockers, params, theta) {
     if (p1 + p2 > 0) pushAisle(aisleY0, aisleY1);
     if (p1 > 0) addIslandBand(yBase, yBase + rowDepth);
     if (p2 > 0) addIslandBand(aisleY1, aisleY1 + rowDepth);
+    if (p1 + p2 > 0) addTurnarounds(spans, yBase, aisleY1 + rowDepth);
   }
 
   // Single-loaded module (aisle + one row) in a shallow leftover band.
   if (singleLoaded && bb.maxY - yBase >= aisle + rowDepth - 1e-6) {
     const aisleY0 = yBase, aisleY1 = yBase + aisle;
     const spans = deadEnd ? insideSpans(local, (aisleY0 + aisleY1) / 2, bb.minX, bb.maxX, Math.min(pitch, aisle)) : null;
-    if (placeRow(aisleY1, aisleY1 + rowDepth, -1, spans) > 0) { pushAisle(aisleY0, aisleY1); addIslandBand(aisleY1, aisleY1 + rowDepth); }
+    if (placeRow(aisleY1, aisleY1 + rowDepth, -1, spans) > 0) {
+      pushAisle(aisleY0, aisleY1);
+      addIslandBand(aisleY1, aisleY1 + rowDepth);
+      addTurnarounds(spans, aisleY0, aisleY1 + rowDepth);
+    }
   }
 
   assignStallTypes(stalls, params);
-  return { stalls, aisles, islands, angleUsed: theta };
+  return { stalls, aisles, islands, turnarounds, angleUsed: theta };
 }
 
 /**
@@ -482,6 +510,10 @@ export function computeMetrics(site, obstacles, result, params, annotations) {
   let paved = buildingArea;
   for (const st of result.stalls) paved += polygonArea(st.poly);
   for (const a of result.aisles || []) paved += polygonArea(a.poly || a);
+  // Turnarounds are new paved surface that is NOT an annotation, so the
+  // NON_PAVED exclusion list never sees them — they have to be added by hand or
+  // the impervious percentage is quietly wrong forever.
+  for (const t of result.turnarounds || []) paved += polygonArea(t.poly || t);
   for (const an of annotations || []) {
     if (!an.points || NON_PAVED.has(an.kind)) continue;
     if (an.points.length >= 3 && (an.closed || an.kind === 'bikeparking')) paved += polygonArea(an.points);
