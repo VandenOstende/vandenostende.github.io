@@ -4,18 +4,18 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=4e14b294';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=1f937a2e';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=4e14b294';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=4e14b294';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=4e14b294';
-import { parseParcel, simplifyRing } from './importers.js?v=4e14b294';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=4e14b294';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=4e14b294';
-import { BUILD_ID } from './build.js?v=4e14b294';
+} from './geometry.js?v=1f937a2e';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=1f937a2e';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=1f937a2e';
+import { parseParcel, simplifyRing } from './importers.js?v=1f937a2e';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=1f937a2e';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=1f937a2e';
+import { BUILD_ID } from './build.js?v=1f937a2e';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -393,6 +393,10 @@ function draw(ctx, opts) {
       roots.forEach((r, i) => { if (r === roots[selection.index]) selAnnIdx.add(i); });
     } else selAnnIdx.add(selection.index);
   }
+  const multi = opts.multiSel || { anns: [], obs: [] };
+  for (const i of multi.anns) selAnnIdx.add(i);
+  const selObs = new Set(multi.obs);
+  if (selection && selection.type === 'obs') selObs.add(selection.index);
 
   // Grid
   if (layers.grid) drawGrid(ctx, view, size);
@@ -489,7 +493,7 @@ function draw(ctx, opts) {
     const siteC = sitePoly && sitePoly.length >= 3 ? polygonCentroid(sitePoly) : null;
     doc.obstacles.forEach((o, i) => {
       const op = polyOf(o);
-      const sel = selection && selection.type === 'obs' && selection.index === i;
+      const sel = selObs.has(i);
       const floors = (o && o.floors) || 1;
       const design = buildingDesign(op, (o && o.use) || DEFAULT_USE, floors, siteC);
       // The generated exterior, back to front. It lives entirely inside the
@@ -1628,6 +1632,7 @@ function App() {
   const [carryRiders, setCarryRiders] = useState(false);
   const [staleBuild, setStaleBuild] = useState('');
   const [askJunction, setAskJunction] = useState(null); // the crossing whose popover is open
+  const [placing, setPlacing] = useState(0); // >0 while a duplicated group follows the cursor
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
   // Imported symbols. The library is per-browser; a document carries its own
@@ -1661,6 +1666,13 @@ function App() {
   const [hover, setHover] = useState(null);
   const [selection, setSelection] = useState(null);       // obstacle selection
   const [stallSel, setStallSel] = useState([]);           // selected stall keys
+  // A second selection channel, for picking several things of different kinds at
+  // once. Stalls keep using stallSel — one channel per kind of thing, so there
+  // is never a question of which one a button means. Everything that reads
+  // `selection` also has to say what it does with this; where it doesn't, the
+  // panel would show five objects and the button would act on one.
+  const [multiSel, setMultiSel] = useState({ anns: [], obs: [] });
+  const multiCount = multiSel.anns.length + multiSel.obs.length + stallSel.length;
   const [aisleSel, setAisleSel] = useState(null);         // selected aisle key
   const [result, setResult] = useState({ stalls: [], aisles: [], orientationCount: 0 });
   const [solving, setSolving] = useState(false);
@@ -1712,6 +1724,7 @@ function App() {
   const drewRef = useRef(false); // set once the first frame draws (breadcrumb)
   const marqueeRef = useRef(null); // {x0,y0,x1,y1} in world coords while dragging
   const netRootRef = useRef([]); // per-annotation junction-network root, for the pointer handlers
+  const placingRef = useRef(null); // the group hanging off the cursor, waiting to be dropped
   const leftPanelRef = useRef(null);
   const carryRidersRef = useRef(false); // read inside the drag handler
   const wheelRef = useRef({ at: -1e9, zoom: true }); // latched wheel gesture mode
@@ -1769,7 +1782,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=4e14b294', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=1f937a2e', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1916,11 +1929,11 @@ function App() {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
         showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
-        stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot,
+        stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel,
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -1995,7 +2008,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=4e14b294').then(async (m) => {
+    import('./map3d.js?v=1f937a2e').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -2192,7 +2205,7 @@ function App() {
     ov.aislesRemoved = {};
     return { ...d, overrides: ov };
   } });
-  const clearSel = () => { setStallSel([]); setAisleSel(null); setSelection(null); };
+  const clearSel = () => { setStallSel([]); setAisleSel(null); setSelection(null); setMultiSel({ anns: [], obs: [] }); };
 
   // ---------- Manual stall placement + delete ----------
   const stallAt = (center, theta) => {
@@ -2496,8 +2509,43 @@ function App() {
     return null;
   };
 
+  // What a Shift+click means, in the same priority order a plain click uses:
+  // small point markings first, then stalls, then ways, then buildings.
+  const toggleUnderCursor = (sp, wp) => {
+    const toggleAnn = (i) => {
+      setMultiSel((cur) => ({ ...cur, anns: cur.anns.includes(i) ? cur.anns.filter((x) => x !== i) : [...cur.anns, i] }));
+      setSelection(null); setAisleSel(null);
+    };
+    const pi = hitPointAnnotation(sp);
+    if (pi >= 0) return toggleAnn(pi);
+    for (let i = deco.stalls.length - 1; i >= 0; i--) {
+      if (pointInPolygon(wp, deco.stalls[i].poly)) {
+        const key = deco.stalls[i].key;
+        setSelection(null); setAisleSel(null);
+        setStallSel((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
+        return;
+      }
+    }
+    const ai = hitAnnotation(sp);
+    if (ai >= 0) return toggleAnn(ai);
+    for (let i = doc.obstacles.length - 1; i >= 0; i--) {
+      if (pointInPolygon(wp, polyOf(doc.obstacles[i]))) {
+        setMultiSel((cur) => ({ ...cur, obs: cur.obs.includes(i) ? cur.obs.filter((x) => x !== i) : [...cur.obs, i] }));
+        setSelection(null); setAisleSel(null);
+        return;
+      }
+    }
+  };
+
   const onPointerDown = (e) => {
     if (viewMode !== '2d') return; // 3D is handled by the Mapbox map (canvas is pass-through)
+    // While a group hangs off the cursor a click only ever drops it. The right
+    // button puts it back — the same escape hatch as Escape, within reach of
+    // the hand that is already on the mouse.
+    if (placingRef.current && !placingRef.current.drag) {
+      if (e.button === 2) cancelPlacing(); else dropPlacing();
+      return;
+    }
     // A throw here used to abort the whole handler before dragRef was set, so
     // the drag silently did nothing — including the grid.
     try { e.target.setPointerCapture?.(e.pointerId); } catch (err) {}
@@ -2531,6 +2579,38 @@ function App() {
     }
 
     if (tool === 'select') {
+      // Shift+drag always draws a selection box, wherever it starts. Without
+      // this the box could only begin on bare ground, which on a full site is
+      // nowhere — and a box you cannot start is a box you do not have. A
+      // Shift+click that never travels still toggles whatever is under it, so
+      // the old additive click keeps working; that is decided on release.
+      if (e.button === 0 && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+        marqueeRef.current = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
+        dragRef.current = { mode: 'marquee', add: true, at: sp, atWorld: wp };
+        return;
+      }
+      // A whole group picked → dragging any member moves all of it. Without
+      // this the panel would say five objects while the drag moved one.
+      if (multiCount > 1 && e.button === 0 && !(e.shiftKey || e.metaKey || e.ctrlKey)) {
+        const onAnn = multiSel.anns.some((i) => {
+          const a = (doc.annotations || [])[i];
+          return a && a.points && (pointInPolygon(wp, a.closed ? a.points : (annotationBlocker(a) || [])) || a.points.some((q) => dist(makeTransform(view).w2s(q), sp) < 10));
+        });
+        const onObs = multiSel.obs.some((i) => doc.obstacles[i] && pointInPolygon(wp, polyOf(doc.obstacles[i])));
+        const onStall = stallSel.some((k) => { const st = deco.stalls.find((x) => x.key === k); return st && pointInPolygon(wp, st.poly); });
+        if (onAnn || onObs || onStall) {
+          dispatch({ type: 'CHECKPOINT' });
+          placingRef.current = {
+            drag: true,
+            anns: multiSel.anns.filter((i) => (doc.annotations || [])[i]).map((i) => ({ i, pts: doc.annotations[i].points, anchor: doc.annotations[i].anchor })),
+            obs: multiSel.obs.filter((i) => doc.obstacles[i]).map((i) => ({ i, pts: polyOf(doc.obstacles[i]) })),
+            stalls: [],
+            start: wp,
+          };
+          dragRef.current = { mode: 'group' };
+          return;
+        }
+      }
       // A red crossing is a question, so clicking it asks again. Tested first:
       // it sits on top of the tarmac it is marking.
       const { w2s: w2sJ } = makeTransform(view);
@@ -2552,7 +2632,12 @@ function App() {
       // them unselectable.
       const pi = hitPointAnnotation(sp);
       if (pi >= 0) {
-        setSelection({ type: 'annot', index: pi }); setStallSel([]); setAisleSel(null);
+        if (e.shiftKey || e.metaKey || e.ctrlKey) {
+          setMultiSel((cur) => ({ ...cur, anns: cur.anns.includes(pi) ? cur.anns.filter((x) => x !== pi) : [...cur.anns, pi] }));
+          setSelection(null); setAisleSel(null);
+          return;
+        }
+        setSelection({ type: 'annot', index: pi }); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
         const pa = (doc.annotations || [])[pi];
         dispatch({ type: 'CHECKPOINT' });
         dragRef.current = { mode: 'annotMove', start: wp, index: pi, orig: pa.points, origAnchor: pa.anchor };
@@ -2600,7 +2685,12 @@ function App() {
       // a drive aisle is still selectable)?
       const ai = hitAnnotation(sp);
       if (ai >= 0) {
-        setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null);
+        if (e.shiftKey || e.metaKey || e.ctrlKey) {
+          setMultiSel((cur) => ({ ...cur, anns: cur.anns.includes(ai) ? cur.anns.filter((x) => x !== ai) : [...cur.anns, ai] }));
+          setSelection(null); setAisleSel(null);
+          return;
+        }
+        setSelection({ type: 'annot', index: ai }); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
         const a = (doc.annotations || [])[ai];
         if (a && a.points) {
           dispatch({ type: 'CHECKPOINT' });
@@ -2636,7 +2726,12 @@ function App() {
       // Obstacle interior? — click selects, drag moves.
       for (let i = doc.obstacles.length - 1; i >= 0; i--) {
         if (pointInPolygon(wp, polyOf(doc.obstacles[i]))) {
-          setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null);
+          if (e.shiftKey || e.metaKey || e.ctrlKey) {
+            setMultiSel((cur) => ({ ...cur, obs: cur.obs.includes(i) ? cur.obs.filter((x) => x !== i) : [...cur.obs, i] }));
+            setSelection(null); setAisleSel(null);
+            return;
+          }
+          setSelection({ type: 'obs', index: i }); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
           dispatch({ type: 'CHECKPOINT' });
           dragRef.current = { mode: 'obsMove', start: wp, index: i, orig: polyOf(doc.obstacles[i]) };
           return;
@@ -2644,7 +2739,7 @@ function App() {
       }
       // Empty space → marquee-select stalls (drag a box).
       const addSel = e.shiftKey || e.metaKey || e.ctrlKey;
-      if (!addSel) { setSelection(null); setStallSel([]); setAisleSel(null); }
+      if (!addSel) { setSelection(null); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] }); }
       marqueeRef.current = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
       dragRef.current = { mode: 'marquee', add: addSel };
       return;
@@ -2728,6 +2823,8 @@ function App() {
     const sp = getScreen(e);
     const wp = getWorld(e);
     mouseRef.current = wp;
+    // A group hanging off the cursor owns every move until it is dropped.
+    if (placingRef.current) { movePlacing(wp); return; }
     const drag = dragRef.current;
 
     if (!drag) {
@@ -2908,6 +3005,9 @@ function App() {
     dragRef.current = null;
     guidesRef.current = null;
     if (!drag) return;
+    // A group drag ends on release; the CHECKPOINT at pointer-down already made
+    // it one undo step, so there is nothing left to commit.
+    if (drag.mode === 'group') { placingRef.current = null; renderRef.current(); return; }
     // A right-click that never travelled is still a click: run the edge action.
     if (drag.right) { if (!drag.moved) insertVertexAt(getScreen(e), getWorld(e)); return; }
     if (drag.mode === 'vertex') {
@@ -2943,14 +3043,28 @@ function App() {
       if (m) {
         const minX = Math.min(m.x0, m.x1), maxX = Math.max(m.x0, m.x1);
         const minY = Math.min(m.y0, m.y1), maxY = Math.max(m.y0, m.y1);
-        if (maxX - minX > 0.5 || maxY - minY > 0.5) {
-          const hitKeys = deco.stalls.filter((st) => {
-            const c = polygonCentroid(st.poly);
-            return c.x >= minX && c.x <= maxX && c.y >= minY && c.y <= maxY;
-          }).map((st) => st.key);
-          if (hitKeys.length) {
+        if (!(maxX - minX > 0.5 || maxY - minY > 0.5) && drag.at) {
+          // A Shift+click, not a box: toggle whatever is under the cursor.
+          toggleUnderCursor(drag.at, drag.atWorld);
+        } else if (maxX - minX > 0.5 || maxY - minY > 0.5) {
+          const inBox = (p) => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY;
+          const hitKeys = deco.stalls.filter((st) => inBox(polygonCentroid(st.poly))).map((st) => st.key);
+          // Annotations and buildings are caught by the same box: it is one
+          // gesture, so it should not matter what kind of thing is under it.
+          // A way counts when all of it is inside, so half-covering a long road
+          // never drags it off with the rest.
+          const hitAnns = [];
+          (doc.annotations || []).forEach((a, i) => {
+            if (a && a.points && a.points.length && a.points.every(inBox)) hitAnns.push(i);
+          });
+          const hitObs = [];
+          (doc.obstacles || []).forEach((o, i) => { if (inBox(polygonCentroid(polyOf(o)))) hitObs.push(i); });
+          if (hitKeys.length || hitAnns.length || hitObs.length) {
             setSelection(null); setAisleSel(null);
             setStallSel((cur) => drag.add ? Array.from(new Set([...cur, ...hitKeys])) : hitKeys);
+            setMultiSel((cur) => drag.add
+              ? { anns: Array.from(new Set([...cur.anns, ...hitAnns])), obs: Array.from(new Set([...cur.obs, ...hitObs])) }
+              : { anns: hitAnns, obs: hitObs });
           }
         }
         renderRef.current();
@@ -3180,7 +3294,12 @@ function App() {
   const copySelection = () => {
     const d = docRef.current || doc;
     let items = null;
-    if (selection && selection.type === 'annot' && (d.annotations || [])[selection.index]) {
+    if (multiCount > 1) {
+      const g = groupCopies();
+      items = [...g.anns.map((a) => ({ what: 'annot', data: a })),
+        ...g.obs.map((o) => ({ what: 'obs', data: o })),
+        ...g.stalls.map((m) => ({ what: 'stall', data: m }))];
+    } else if (selection && selection.type === 'annot' && (d.annotations || [])[selection.index]) {
       // A junction network is one object everywhere else, so it copies as one.
       items = netIndices(selection.index).map((i) => ({ what: 'annot', data: d.annotations[i] }));
     } else if (selection && selection.type === 'obs' && d.obstacles[selection.index]) {
@@ -3197,6 +3316,7 @@ function App() {
   };
   const cutSelection = () => {
     if (!copySelection()) return;
+    if (multiCount > 1) { deleteGroup(); return; }
     // Reuse the delete paths so override cleanup and reindexing are not bypassed.
     if (selection && selection.type === 'annot') {
       const grp = netIndices(selection.index);
@@ -3221,6 +3341,9 @@ function App() {
       } else if (it.what === 'obs') obs.push({ ...it.data, poly: shift(it.data.poly) });
       else if (it.what === 'stall') stalls.push({ ...it.data, poly: shift(it.data.poly) });
     }
+    // More than one thing: let it follow the cursor so it can be snapped into
+    // place, rather than landing wherever the copy happened to be taken from.
+    if (anns.length + obs.length + stalls.length > 1) { startPlacing({ anns, obs, stalls }); return; }
     dispatch({ type: 'COMMIT', updater: (d) => embedAssets({
       ...d,
       annotations: anns.length ? [...(d.annotations || []), ...anns] : d.annotations,
@@ -3233,7 +3356,108 @@ function App() {
     else if (stalls.length) { setSelection(null); setStallSel(stalls.map((c) => stallKey(c.poly))); }
   };
 
+  // ---------- Placing a duplicated group ----------
+  // The copies go into the document straight away and then follow the cursor
+  // until you click. A CHECKPOINT is taken first, so Escape is simply an undo
+  // and the plan is left exactly as it was — there is no half-placed state to
+  // clean up, and no second code path that could forget to.
+  const startPlacing = ({ anns = [], obs = [], stalls = [] }) => {
+    if (!anns.length && !obs.length && !stalls.length) return;
+    const nA = (doc.annotations || []).length, nO = (doc.obstacles || []).length, nS = (doc.manualStalls || []).length;
+    dispatch({ type: 'CHECKPOINT' });
+    dispatch({ type: 'LIVE', updater: (d) => embedAssets({
+      ...d,
+      annotations: [...(d.annotations || []), ...anns],
+      obstacles: [...(d.obstacles || []), ...obs],
+      manualStalls: [...(d.manualStalls || []), ...stalls],
+    }, anns) });
+    const all = [...anns.map((a) => a.points), ...obs.map((o) => polyOf(o)), ...stalls.map((m) => m.poly)];
+    let n = 0, sx = 0, sy = 0;
+    for (const pts of all) for (const p of pts) { sx += p.x; sy += p.y; n++; }
+    placingRef.current = {
+      anns: anns.map((a, k) => ({ i: nA + k, pts: a.points, anchor: a.anchor })),
+      obs: obs.map((o, k) => ({ i: nO + k, pts: polyOf(o) })),
+      stalls: stalls.map((m, k) => ({ i: nS + k, pts: m.poly })),
+      // Anchored on the cursor if it is over the canvas, else on the group's
+      // own centre, so the group does not jump when the mouse first moves.
+      start: mouseRef.current || { x: sx / (n || 1), y: sy / (n || 1) },
+    };
+    clearSel();
+    setPlacing((v) => v + 1);
+  };
+  const movePlacing = (wp) => {
+    const P = placingRef.current;
+    if (!P) return;
+    const parts = [...P.anns, ...P.obs, ...P.stalls];
+    if (!parts.length) return;
+    const a0 = alignSnap(parts[0].pts, wp.x - P.start.x, wp.y - P.start.y);
+    let dx = a0.dx, dy = a0.dy, guides = a0.guides;
+    const v = groupVertexSnap(parts.flatMap((q) => q.pts), dx, dy);
+    if (v) { dx = v.dx; dy = v.dy; guides = [{ x: v.at.x }, { y: v.at.y }]; }
+    guidesRef.current = guides;
+    const shift = (pts) => pts.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+    const byI = (list) => new Map(list.map((q) => [q.i, q]));
+    const mA = byI(P.anns), mO = byI(P.obs), mS = byI(P.stalls);
+    dispatch({ type: 'LIVE', updater: (d) => ({
+      ...d,
+      annotations: (d.annotations || []).map((a, i) => {
+        const q = mA.get(i);
+        if (!q) return a;
+        return { ...a, points: shift(q.pts), ...(q.anchor ? { anchor: { x: q.anchor.x + dx, y: q.anchor.y + dy } } : {}) };
+      }),
+      obstacles: (d.obstacles || []).map((o, i) => {
+        const q = mO.get(i);
+        if (!q) return o;
+        return { ...(o && o.poly ? o : {}), poly: shift(q.pts), floors: (o && o.floors) || 1, use: (o && o.use) || DEFAULT_USE };
+      }),
+      manualStalls: (d.manualStalls || []).map((m, i) => {
+        const q = mS.get(i);
+        return q ? { ...m, poly: shift(q.pts) } : m;
+      }),
+    }) });
+  };
+  const dropPlacing = () => {
+    if (!placingRef.current) return;
+    placingRef.current = null;
+    guidesRef.current = [];
+    setPlacing(0);
+  };
+  const cancelPlacing = () => {
+    if (!placingRef.current) return;
+    placingRef.current = null;
+    guidesRef.current = [];
+    setPlacing(0);
+    dispatch({ type: 'UNDO' });
+  };
+
+  // Everything currently picked, as plain copies ready to be placed.
+  const groupCopies = () => {
+    const d = docRef.current || doc;
+    const anns = multiSel.anns.map((i) => (d.annotations || [])[i]).filter(Boolean).map((a) => ({ ...a, points: a.points.map((p) => ({ ...p })) }));
+    const obs = multiSel.obs.map((i) => (d.obstacles || [])[i]).filter(Boolean)
+      .map((o) => ({ ...(o && o.poly ? o : {}), poly: polyOf(o).map((p) => ({ ...p })), floors: (o && o.floors) || 1, use: (o && o.use) || DEFAULT_USE }));
+    const stalls = stallSel.map((k) => deco.stalls.find((x) => x.key === k)).filter(Boolean)
+      .map((x) => ({ poly: x.poly.map((p) => ({ ...p })), type: x.type }));
+    return { anns, obs, stalls };
+  };
+  const deleteGroup = () => {
+    const kA = new Set(multiSel.anns), kO = new Set(multiSel.obs);
+    if (stallSel.length) { deleteStalls(stallSel); setStallSel([]); }
+    if (kA.size || kO.size) {
+      dispatch({ type: 'COMMIT', updater: (d) => ({
+        ...d,
+        annotations: (d.annotations || []).filter((_, i) => !kA.has(i)),
+        obstacles: (d.obstacles || []).filter((_, i) => !kO.has(i)),
+      }) });
+    }
+    setMultiSel({ anns: [], obs: [] });
+    setSelection(null);
+  };
+
   const duplicateSelection = () => {
+    // More than one thing picked → copy them all and hang the group off the
+    // cursor. The single-object paths below stay exactly as they were.
+    if (multiCount > 1) { startPlacing(groupCopies()); return; }
     const D = 4;
     if (selection && selection.type === 'obs' && doc.obstacles[selection.index]) {
       const o = doc.obstacles[selection.index];
@@ -3368,9 +3592,14 @@ function App() {
         }
         case '+': case '=': zoomBy(1.2); break;
         case '-': case '_': zoomBy(1 / 1.2); break;
-        case 'escape': setDrawing(null); setMeasure(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); break;
+        case 'escape':
+          if (placingRef.current) { cancelPlacing(); break; }
+          setDrawing(null); setMeasure(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
+          break;
         case 'delete': case 'backspace':
-          if (stallSel.length) {
+          if (multiSel.anns.length || multiSel.obs.length) {
+            deleteGroup();
+          } else if (stallSel.length) {
             deleteStalls(stallSel); setStallSel([]);
           } else if (aisleSel) {
             deleteAisle(aisleSel);
@@ -3398,7 +3627,7 @@ function App() {
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
-  }, [selection, stallSel, aisleSel, tool]);
+  }, [selection, stallSel, aisleSel, tool, multiSel, placing]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -3732,6 +3961,28 @@ function App() {
     return { xs, ys };
   }, [sitePoly, doc.obstacles, doc.annotations]);
 
+  // Vertex snap for a whole group: if any point of the moving group lands close
+  // to a point already in the plan, pull the group so the two coincide exactly.
+  // The offset is applied on top of alignSnap's, and wins, because landing on a
+  // corner is a stronger statement than lining up with an edge.
+  const groupVertexSnap = (pts, dx, dy) => {
+    const tol = 12 / view.scale;
+    const targets = [];
+    (doc.site || []).forEach((p) => targets.push(p));
+    (doc.obstacles || []).forEach((o) => polyOf(o).forEach((p) => targets.push(p)));
+    const moving = new Set(pts);
+    (doc.annotations || []).forEach((a) => (a.points || []).forEach((p) => { if (!moving.has(p)) targets.push(p); }));
+    let best = null;
+    for (const p of pts) {
+      const q = { x: p.x + dx, y: p.y + dy };
+      for (const t of targets) {
+        const d = Math.hypot(t.x - q.x, t.y - q.y);
+        if (d < tol && (!best || d < best.d)) best = { d, ddx: t.x - q.x, ddy: t.y - q.y, at: t };
+      }
+    }
+    return best ? { dx: dx + best.ddx, dy: dy + best.ddy, at: best.at } : null;
+  };
+
   const alignSnap = (origPts, dx, dy) => {
     const tol = 7 / view.scale; // 7 screen px
     if (!origPts || origPts.length < 1) return { dx, dy, guides: [] };
@@ -3902,8 +4153,13 @@ function App() {
     select: (stallSel.length || aisleSel || (selection && selection.type)) ? null
       : (doc.site.length < 3
         ? 'Geen site — kies "Site" (P) om er een te tekenen'
-        : 'Klik de site-rand om te verplaatsen/verwijderen · rechtermuisklik op een rand voegt een punt toe · klik een vak of rijbaan om te markeren · sleep een kader voor meerdere vakken'),
+        : 'Klik de site-rand om te verplaatsen/verwijderen · rechtermuisklik op een rand voegt een punt toe · klik een vak of rijbaan om te markeren · sleep een kader voor meerdere objecten · Shift+klik voegt toe'),
   }[tool];
+  // The placing mode swallows clicks, so it has to announce itself; a mode you
+  // cannot see is a mode you get stuck in.
+  const modeHint = placing
+    ? 'Klik om de kopie neer te zetten · snapt op bestaande punten en lijnt uit · Esc of rechtsklik annuleert'
+    : hintText;
 
   return html`
     <div className="app" style=${{
@@ -4248,7 +4504,7 @@ function App() {
           onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp}
           onDoubleClick=${onDoubleClick} onContextMenu=${onContextMenu}
           style=${{ pointerEvents: viewMode === '3d' ? 'none' : 'auto', cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
-        ${vis('ovHint') && viewMode === '2d' && hintText && html`<div className="hint">${hintText}</div>`}
+        ${vis('ovHint') && viewMode === '2d' && modeHint && html`<div className="hint">${modeHint}</div>`}
         ${vis('ovHint') && viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien/kantelen · scroll om te zoomen · alleen-lezen</div>`}
         ${vis('ovHud') && html`<div className="hud" style=${{ bottom: (dealbarOpen ? 96 : 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
@@ -4327,6 +4583,20 @@ function App() {
       ${vis('panelRight') && html`
       <div className="panel right">
         ${resizer('right')}
+        ${multiCount > 1 && html`
+        <div className="section sel-section">
+          <h3>${multiCount} objecten geselecteerd</h3>
+          <p className="multi-sub">
+            ${[multiSel.anns.length && multiSel.anns.length + ' getekend', multiSel.obs.length && multiSel.obs.length + ' gebouw' + (multiSel.obs.length > 1 ? 'en' : ''), stallSel.length && stallSel.length + ' vak' + (stallSel.length > 1 ? 'ken' : '')].filter(Boolean).join(' · ')}
+          </p>
+          <div className="sel-actions">
+            <button className="btn" onClick=${() => startPlacing(groupCopies())}>⧉ Dupliceren</button>
+            <button className="btn ghost" onClick=${copySelection}>Kopiëren</button>
+            <button className="btn ghost" onClick=${deleteGroup}>🗑 Verwijderen</button>
+            <button className="btn ghost" onClick=${() => { setMultiSel({ anns: [], obs: [] }); setStallSel([]); }}>Deselecteer</button>
+          </div>
+          <div className="mix-note" style=${{ marginTop: 8 }}>Na dupliceren hangt de groep aan de cursor: klik om neer te zetten, Esc of rechtsklik om te annuleren.</div>
+        </div>`}
         ${selection && selection.type === 'site' && html`
         <div className="section sel-section">
           <h3>Site geselecteerd</h3>

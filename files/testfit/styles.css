@@ -944,3 +944,7 @@ body.resizing .panel-resize { pointer-events: auto; }
   font-size: 12.5px;
   cursor: pointer;
 }
+
+/* Several objects picked at once: the panel says how many and of what, because
+   the buttons below act on all of them. */
+.multi-sub { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
