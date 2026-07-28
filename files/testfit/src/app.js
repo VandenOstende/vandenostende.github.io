@@ -4,17 +4,18 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=9b7c7dbb';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=b4d3aaba';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=9b7c7dbb';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=9b7c7dbb';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=9b7c7dbb';
-import { parseParcel, simplifyRing } from './importers.js?v=9b7c7dbb';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=9b7c7dbb';
-import { BUILD_ID } from './build.js?v=9b7c7dbb';
+} from './geometry.js?v=b4d3aaba';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=b4d3aaba';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=b4d3aaba';
+import { parseParcel, simplifyRing } from './importers.js?v=b4d3aaba';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=b4d3aaba';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS } from './buildings.js?v=b4d3aaba';
+import { BUILD_ID } from './build.js?v=b4d3aaba';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -401,44 +402,132 @@ function draw(ctx, opts) {
 
   // Buildings / exclusion zones
   if (layers.building) {
+    const siteC = sitePoly && sitePoly.length >= 3 ? polygonCentroid(sitePoly) : null;
     doc.obstacles.forEach((o, i) => {
       const op = polyOf(o);
+      const sel = selection && selection.type === 'obs' && selection.index === i;
+      const floors = (o && o.floors) || 1;
+      const design = buildingDesign(op, (o && o.use) || DEFAULT_USE, floors, siteC);
+      // The generated exterior, back to front. It lives entirely inside the
+      // footprint, which is still the only thing the solver sees as blocked.
       pathPoly(ctx, op, w2s, true);
-      ctx.fillStyle = selection && selection.type === 'obs' && selection.index === i
-        ? 'rgba(239,68,68,0.28)' : TH.building;
+      ctx.fillStyle = sel ? 'rgba(239,68,68,0.28)' : TH.building;
       ctx.fill();
-      ctx.strokeStyle = selection && selection.type === 'obs' && selection.index === i ? '#ef4444' : TH.buildingLine;
+      for (const part of design.areas) {
+        if (part.h1 <= 0.5 && part.role !== 'garden' && part.role !== 'forecourt' && part.role !== 'dock') continue;
+        pathPoly(ctx, part.poly, w2s, true);
+        ctx.fillStyle = hexA(PART_COLORS[part.role] || '#c3c8d0', part.role === 'plant' ? 0.55 : 0.92);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(15,23,42,0.28)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+      // Ridges, party walls, doors and mullions: the detail that makes a shape
+      // read as a house or a shopfront rather than a filled rectangle.
+      if (design.lines.length && view.scale >= 2.5) {
+        ctx.lineCap = 'butt';
+        for (const ln of design.lines) {
+          const a = w2s(ln.a), b = w2s(ln.b);
+          const heavy = ln.role === 'party' || ln.role === 'ridge';
+          ctx.strokeStyle = ln.role === 'door' ? '#5b4636'
+            : ln.role === 'path' ? 'rgba(200,204,210,0.9)'
+            : heavy ? 'rgba(15,23,42,0.45)' : 'rgba(15,23,42,0.22)';
+          ctx.lineWidth = ln.role === 'door' ? 2.2 : heavy ? 1.1 : 0.7;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+      pathPoly(ctx, op, w2s, true);
+      ctx.strokeStyle = sel ? '#ef4444' : TH.buildingLine;
       ctx.lineWidth = 1.5;
       ctx.stroke();
-      // Floor count badge when zoomed in.
-      const floors = (o && o.floors) || 1;
+      // Type + floor badge when zoomed in.
       if (view.scale >= 4 && op.length >= 3) {
         const c = w2s(polygonCentroid(op));
-        ctx.fillStyle = TH.badge;
+        const use = BUILDING_USES[(o && o.use) || DEFAULT_USE];
+        const label = use.label + ' · ' + floors + ' verd.' + (design.units > 1 ? ' · ' + design.units + '×' : '');
         ctx.font = '11px system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(floors + (floors > 1 ? ' verd.' : ' verd.'), c.x, c.y);
+        const tw = ctx.measureText(label).width + 10;
+        ctx.fillStyle = TH.plate;
+        ctx.fillRect(c.x - tw / 2, c.y - 8, tw, 16);
+        ctx.fillStyle = TH.plateInk;
+        ctx.fillText(label, c.x, c.y);
         ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
       }
     });
   }
 
-  // Stalls (coloured by type, with glyphs when zoomed in + selection)
+  // Stalls: asphalt with real bay markings, tinted by type.
   if (layers.parking) {
     const selSet = new Set(stallSel || []);
     const showGlyph = view.scale >= 5.5;
+    // Below this the whole bay is a few pixels wide and a 0.12 m line is a
+    // smudge, so the markings are skipped — a limit of the screen, not a
+    // decision to show less.
+    const showMarks = view.scale >= 2.2;
+    const aislePolys = (result.aisles || []).map((a) => a.poly);
+    const lineW = Math.max(1, 0.12 * view.scale);
     for (const st of result.stalls) {
-      pathPoly(ctx, st.poly, w2s, true);
       const info = STALL_TYPES[st.type] || STALL_TYPES.standard;
-      ctx.fillStyle = info.color;
-      ctx.globalAlpha = 0.85;
-      ctx.fill();
-      ctx.globalAlpha = 1;
       const selected = selSet.has(st.key);
-      ctx.strokeStyle = selected ? TH.sel : TH.outline;
-      ctx.lineWidth = selected ? 2 : 0.6;
-      ctx.stroke();
+      const p = st.poly;
+      // Asphalt first, so bays and drive aisles read as one surface instead of
+      // coloured tiles floating on the site.
+      pathPoly(ctx, p, w2s, true);
+      ctx.fillStyle = TH.aisle;
+      ctx.fill();
+      // Only the special types are tinted. A standard bay is plain tarmac with
+      // white lines, which is what one looks like — and it makes the bays that
+      // DO mean something (accessible, EV, reserved) stand out instead of
+      // competing with 96 blue rectangles.
+      if (st.type !== 'standard') {
+        pathPoly(ctx, p, w2s, true);
+        ctx.fillStyle = info.color;
+        ctx.globalAlpha = st.type === 'ada' ? 0.42 : 0.3;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      if (showMarks && p.length === 4) {
+        // A real bay is marked on three sides; the mouth faces the aisle.
+        const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+        const edges = [[0, 1], [1, 2], [2, 3], [3, 0]].map(([i, j]) => ({
+          a: p[i], b: p[j], len: dist(p[i], p[j]), m: mid(p[i], p[j]),
+        }));
+        // The two short edges are the head and the mouth.
+        const order = edges.map((e, i) => i).sort((i, j) => edges[i].len - edges[j].len);
+        let mouth = -1;
+        if (aislePolys.length) {
+          // Distance to the aisle SHAPE, not to its centroid: an aisle is long,
+          // so its centre point is nowhere near most of the bays it serves and
+          // picking by centroid opened the wrong end half the time.
+          let bestD = Infinity;
+          for (const ei of [order[0], order[1]]) {
+            for (const ap of aislePolys) {
+              for (let k = 0; k < ap.length; k++) {
+                const d = distPointSegment(edges[ei].m, ap[k], ap[(k + 1) % ap.length]);
+                if (d < bestD) { bestD = d; mouth = ei; }
+              }
+            }
+          }
+        }
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = lineW;
+        ctx.lineCap = 'butt';
+        ctx.beginPath();
+        edges.forEach((e, i) => {
+          if (i === mouth) return;
+          const a = w2s(e.a), b = w2s(e.b);
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        });
+        ctx.stroke();
+      }
+      if (selected) {
+        pathPoly(ctx, p, w2s, true);
+        ctx.strokeStyle = TH.sel; ctx.lineWidth = 2; ctx.stroke();
+      }
       if (st.locked) { // dashed white outline marks a locked stall
+        pathPoly(ctx, p, w2s, true);
         ctx.setLineDash([3, 2]);
         ctx.strokeStyle = TH.onStall;
         ctx.lineWidth = 1.4;
@@ -446,17 +535,23 @@ function draw(ctx, opts) {
         ctx.setLineDash([]);
       }
       if (st.type === 'motorcycle') { // subdivide into 3 motorcycle bays
-        const p = st.poly;
-        ctx.strokeStyle = TH.onStall;
-        ctx.lineWidth = 0.8;
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = Math.max(1, lineW);
         for (const t of [1 / 3, 2 / 3]) {
           const a = w2s({ x: p[0].x + (p[1].x - p[0].x) * t, y: p[0].y + (p[1].y - p[0].y) * t });
           const b = w2s({ x: p[3].x + (p[2].x - p[3].x) * t, y: p[3].y + (p[2].y - p[3].y) * t });
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
         }
       }
-      if (showGlyph && info.glyph) {
-        const s = w2s(polygonCentroid(st.poly));
+      // The floor symbol for the types that have one in the real world, drawn
+      // by the same painters as the road pictograms.
+      const picto = STALL_PICTOS[st.type];
+      if (picto && showGlyph) {
+        const ax = Math.atan2(p[1].y - p[0].y, p[1].x - p[0].x);
+        drawPicto(ctx, { angle: (ax * 180) / Math.PI + 90, width: dist(p[0], p[1]) * 0.62 },
+          { picto, width: 2 }, w2s(polygonCentroid(p)), view.scale, false);
+      } else if (showGlyph && info.glyph) {
+        const s = w2s(polygonCentroid(p));
         ctx.fillStyle = TH.onStall;
         ctx.font = Math.max(8, view.scale * 1.15) + 'px system-ui, sans-serif';
         ctx.textAlign = 'center';
@@ -892,6 +987,10 @@ async function normalizeAsset(file) {
     mWidth: 2, height: ASSET_DEF_H,
   };
 }
+
+// Floor symbols painted in a bay, by stall type. Reuses the road pictograms —
+// they already draw in a unit box and rotate onto any angle.
+const STALL_PICTOS = { ada: 'ada', ev: 'ev' };
 
 // Haaientanden: triangles along one side of the line, points facing the
 // traffic that must give way — the Belgian "voorrang verlenen" marking.
@@ -1388,6 +1487,7 @@ function App() {
   // What the line you draw means for a carriageway: its centre, or one of its
   // kerbs (seen in the direction you draw).
   const [annotAlign, setAnnotAlign] = useState('center');
+  const [buildUse, setBuildUse] = useState(DEFAULT_USE);
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
   // Imported symbols. The library is per-browser; a document carries its own
@@ -1526,7 +1626,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=9b7c7dbb', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=b4d3aaba', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1677,7 +1777,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=9b7c7dbb').then(async (m) => {
+    import('./map3d.js?v=b4d3aaba').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -2391,7 +2491,7 @@ function App() {
       dispatch({ type: 'LIVE', updater: (d) => ({
         ...d,
         obstacles: d.obstacles.map((o, i) => (i !== drag.index ? o
-          : { ...(o && o.poly ? o : {}), poly: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })), floors: (o && o.floors) || 1 })),
+          : { ...(o && o.poly ? o : {}), poly: drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy })), floors: (o && o.floors) || 1, use: (o && o.use) || DEFAULT_USE })),
       }) });
     } else if (drag.mode === 'stallMove') {
       const base = drag.idxs.length ? drag.baseManual[drag.idxs[0]].poly : null;
@@ -2505,7 +2605,7 @@ function App() {
       const r = rectFrom(drag.start, drag.cur);
       if (Math.abs(r.w) > 1 && Math.abs(r.h) > 1) {
         const poly = rectPoly(r.x, r.y, r.w, r.h);
-        dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, { poly, floors: 1 }] }) });
+        dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, newBuilding(poly)] }) });
       }
       setHover(null);
       setTool('select');
@@ -2592,11 +2692,22 @@ function App() {
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: points, obstacles: [] }) });
   const commitObstaclePoly = (points) => {
     if (!points || points.length < 3) return;
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, { poly: points.slice(), floors: 1 }] }) });
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, newBuilding(points.slice())] }) });
   };
+  // Every building carries its use; the storey default follows from it.
+  const newBuilding = (poly) => ({ poly, use: buildUse, floors: (BUILDING_USES[buildUse] || {}).floors || 1 });
+  const setObsUse = (index, use) => dispatch({ type: 'COMMIT', updater: (d) => ({
+    ...d,
+    obstacles: d.obstacles.map((o, i) => (i === index
+      ? { ...(o && o.poly ? o : { poly: polyOf(o) }), poly: polyOf(o).slice(), use,
+          floors: (BUILDING_USES[use] || {}).floors || 1 } : o)),
+  }) });
   const setObsFloors = (index, floors) => dispatch({ type: 'COMMIT', updater: (d) => ({
     ...d,
-    obstacles: d.obstacles.map((o, i) => (i === index ? { poly: polyOf(o).slice(), floors: Math.max(1, floors || 1) } : o)),
+    // Spread the original: this used to write { poly, floors } and nothing
+    // else, so changing the storeys silently threw the building type away.
+    obstacles: d.obstacles.map((o, i) => (i === index
+      ? { ...(o && o.poly ? o : {}), poly: polyOf(o).slice(), floors: Math.max(1, floors || 1) } : o)),
   }) });
   const deleteObs = (index) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: d.obstacles.filter((_, i) => i !== index) }) });
 
@@ -2619,8 +2730,10 @@ function App() {
       });
     });
     (doc.obstacles || []).forEach((o, i) => push('Gebouwen', {
-      key: 'o' + i, kind: 'obs', index: i, color: '#64748b',
-      label: 'Gebouw', sub: ((o && o.floors) || 1) + ' verd.',
+      key: 'o' + i, kind: 'obs', index: i,
+      color: PART_COLORS[(o && o.use) === 'residential' ? 'roof' : 'body'],
+      label: (BUILDING_USES[(o && o.use) || DEFAULT_USE] || {}).label || 'Gebouw',
+      sub: ((o && o.floors) || 1) + ' verd.',
     }));
     (doc.manualStalls || []).forEach((ms, i) => push('Handmatige vakken', {
       key: 'm' + i, kind: 'manual', index: i, color: (STALL_TYPES[ms.type] || STALL_TYPES.standard).color,
@@ -2729,7 +2842,7 @@ function App() {
       items = [{ what: 'annot', data: d.annotations[selection.index] }];
     } else if (selection && selection.type === 'obs' && d.obstacles[selection.index]) {
       const o = d.obstacles[selection.index];
-      items = [{ what: 'obs', data: { poly: polyOf(o), floors: (o && o.floors) || 1 } }];
+      items = [{ what: 'obs', data: { ...(o && o.poly ? o : {}), poly: polyOf(o), floors: (o && o.floors) || 1, use: (o && o.use) || DEFAULT_USE } }];
     } else if (stallSel.length) {
       const st = stallSel.map((k) => deco.stalls.find((x) => x.key === k)).filter(Boolean);
       if (st.length) items = st.map((x) => ({ what: 'stall', data: { poly: x.poly, type: x.type } }));
@@ -3646,6 +3759,19 @@ function App() {
             verwijderen laat geplaatste exemplaren staan · hoogte geldt voor 3D.
           </div>`}
         </div>`}
+        ${(tool === 'obstacle' || tool === 'obstaclepoly') && html`
+        <div className="section">
+          <h3>Gebouwtype</h3>
+          <div className="seg">
+            ${Object.values(BUILDING_USES).map((u) => html`
+              <button key=${u.key} className=${buildUse === u.key ? 'active' : ''}
+                title=${u.keywords} onClick=${() => setBuildUse(u.key)}>${u.label}</button>`)}
+          </div>
+          <div className="mix-note">
+            ${BUILDING_USES[buildUse].floors} verdieping${BUILDING_USES[buildUse].floors > 1 ? 'en' : ''} standaard ·
+            het exterieur wordt uit de vorm afgeleid, dus een hoek verslepen hertekent het.
+          </div>
+        </div>`}
         ${vis('secObjects') && html`
         <div className="section">
           <h3>Objecten <span className="obj-count">${objectRows.reduce((n, g) => n + g[1].length, 0)}</span></h3>
@@ -3902,7 +4028,16 @@ function App() {
           const footprint = polygonArea(polyOf(o));
           return html`
         <div className="section sel-section">
-          <h3>Gebouw geselecteerd</h3>
+          <h3>${BUILDING_USES[(o && o.use) || DEFAULT_USE].label} geselecteerd</h3>
+          <div className="field">
+            <label>Type</label>
+            <div className="seg">
+              ${Object.values(BUILDING_USES).map((u) => html`
+                <button key=${u.key} className=${((o && o.use) || DEFAULT_USE) === u.key ? 'active' : ''}
+                  onClick=${() => setObsUse(selection.index, u.key)}>${u.label}</button>`)}
+            </div>
+            <div className="mix-note">Wisselen zet ook de standaard verdiepingen van dat type.</div>
+          </div>
           <div className="field">
             <label>Verdiepingen<span className="val">${floors}</span></label>
             <div className="row">
