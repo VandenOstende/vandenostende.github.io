@@ -4,21 +4,22 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8c2bb381';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=cd80cc29';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
-  tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=8c2bb381';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=8c2bb381';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8c2bb381';
-import { parseParcel, simplifyRing } from './importers.js?v=8c2bb381';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=8c2bb381';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=8c2bb381';
-import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=8c2bb381';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=8c2bb381';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=8c2bb381';
-import { BUILD_ID } from './build.js?v=8c2bb381';
+  tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, STRIPE_SPEC,
+} from './geometry.js?v=cd80cc29';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=cd80cc29';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=cd80cc29';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=cd80cc29';
+import { parseParcel, simplifyRing } from './importers.js?v=cd80cc29';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=cd80cc29';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=cd80cc29';
+import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=cd80cc29';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=cd80cc29';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=cd80cc29';
+import { BUILD_ID } from './build.js?v=cd80cc29';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -907,125 +908,6 @@ if (typeof window !== 'undefined') {
   };
 }
 
-// ---------- Belgian markings, pictograms and signage ----------
-// Each painter draws inside a unit box centred on the origin (-1..1) with the
-// caller handling position, scale and rotation. Keeps them resolution-free and
-// lets any of them be rotated onto a road tangent.
-function pathFrom(ctx, pts, close) {
-  ctx.beginPath();
-  pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-  if (close) ctx.closePath();
-}
-// A road arrow: shaft plus head, optionally with a branch to one side.
-function arrow(ctx, branch) {
-  ctx.fillStyle = '#f8fafc';
-  pathFrom(ctx, [[-0.16, 0.95], [0.16, 0.95], [0.16, -0.3], [-0.16, -0.3]], true);
-  ctx.fill();
-  pathFrom(ctx, [[-0.45, -0.25], [0.45, -0.25], [0, -0.95]], true);
-  ctx.fill();
-  if (branch) {
-    const sx = branch === 'left' ? -1 : 1;
-    pathFrom(ctx, [[0, 0.35], [sx * 0.62, 0.35], [sx * 0.62, 0.12], [0, 0.12]], true);
-    ctx.fill();
-    pathFrom(ctx, [[sx * 0.55, 0.46], [sx * 0.55, 0.01], [sx * 0.95, 0.235]], true);
-    ctx.fill();
-  }
-}
-function glyph(ctx, txt, size, color) {
-  ctx.fillStyle = color || '#f8fafc';
-  ctx.font = `bold ${size}px system-ui, sans-serif`;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(txt, 0, 0);
-}
-// Plate shapes for vertical signage, drawn face-on with a small post shadow.
-function plate(ctx, shape, fill, rim) {
-  ctx.fillStyle = fill;
-  if (shape === 'circle') { ctx.beginPath(); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.fill(); }
-  else if (shape === 'triangle') { pathFrom(ctx, [[0, -1], [1, 0.82], [-1, 0.82]], true); ctx.fill(); }
-  else if (shape === 'octagon') {
-    const p = []; for (let i = 0; i < 8; i++) { const a = (Math.PI / 4) * i + Math.PI / 8; p.push([Math.cos(a), Math.sin(a)]); }
-    pathFrom(ctx, p, true); ctx.fill();
-  } else { pathFrom(ctx, [[-1, -1], [1, -1], [1, 1], [-1, 1]], true); ctx.fill(); }
-  if (rim) {
-    ctx.strokeStyle = rim; ctx.lineWidth = 0.22; ctx.stroke();
-  }
-}
-const PICTOS = {
-  arrowAhead: (ctx) => arrow(ctx),
-  arrowLeft: (ctx) => { ctx.rotate(-Math.PI / 2); arrow(ctx); },
-  arrowRight: (ctx) => { ctx.rotate(Math.PI / 2); arrow(ctx); },
-  arrowAheadL: (ctx) => arrow(ctx, 'left'),
-  arrowAheadR: (ctx) => arrow(ctx, 'right'),
-  speed: (ctx, ann) => {
-    ctx.fillStyle = '#f8fafc';
-    glyph(ctx, String(ann && ann.value != null ? ann.value : 20), 1.5, '#f8fafc');
-  },
-  bike: (ctx) => {
-    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.16; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.arc(-0.55, 0.42, 0.4, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(0.55, 0.42, 0.4, 0, Math.PI * 2); ctx.stroke();
-    pathFrom(ctx, [[-0.55, 0.42], [-0.1, -0.35], [0.35, -0.35], [0.55, 0.42]], false); ctx.stroke();
-    pathFrom(ctx, [[-0.1, -0.35], [0.55, 0.42]], false); ctx.stroke();
-    pathFrom(ctx, [[0.2, -0.62], [0.5, -0.62]], false); ctx.stroke();
-  },
-  ev: (ctx) => {
-    ctx.fillStyle = '#f8fafc';
-    pathFrom(ctx, [[0.18, -0.95], [-0.5, 0.1], [-0.05, 0.1], [-0.22, 0.95], [0.5, -0.15], [0.02, -0.15]], true);
-    ctx.fill();
-  },
-  ada: (ctx) => {
-    ctx.fillStyle = '#f8fafc';
-    ctx.beginPath(); ctx.arc(-0.05, -0.62, 0.24, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.19; ctx.lineCap = 'round';
-    pathFrom(ctx, [[-0.05, -0.3], [-0.05, 0.2], [0.45, 0.2]], false); ctx.stroke();
-    ctx.beginPath(); ctx.arc(-0.08, 0.35, 0.5, -0.5, Math.PI * 0.95); ctx.stroke();
-    pathFrom(ctx, [[0.45, 0.2], [0.62, 0.75]], false); ctx.stroke();
-  },
-  walk: (ctx) => {
-    ctx.fillStyle = '#f8fafc';
-    ctx.beginPath(); ctx.arc(0, -0.68, 0.22, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.18; ctx.lineCap = 'round';
-    pathFrom(ctx, [[0, -0.4], [0, 0.15]], false); ctx.stroke();
-    pathFrom(ctx, [[-0.35, -0.15], [0.35, -0.2]], false); ctx.stroke();
-    pathFrom(ctx, [[0, 0.15], [-0.28, 0.9]], false); ctx.stroke();
-    pathFrom(ctx, [[0, 0.15], [0.3, 0.88]], false); ctx.stroke();
-  },
-  letterP: (ctx) => glyph(ctx, 'P', 1.8, '#f8fafc'),
-  family: (ctx) => {
-    ctx.fillStyle = '#f8fafc';
-    ctx.beginPath(); ctx.arc(-0.4, -0.55, 0.24, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(0.42, -0.28, 0.17, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 0.17; ctx.lineCap = 'round';
-    pathFrom(ctx, [[-0.4, -0.28], [-0.4, 0.35]], false); ctx.stroke();
-    pathFrom(ctx, [[-0.4, 0.35], [-0.62, 0.9]], false); ctx.stroke();
-    pathFrom(ctx, [[-0.4, 0.35], [-0.18, 0.9]], false); ctx.stroke();
-    pathFrom(ctx, [[0.42, -0.08], [0.42, 0.42]], false); ctx.stroke();
-    pathFrom(ctx, [[0.42, 0.42], [0.26, 0.9]], false); ctx.stroke();
-    pathFrom(ctx, [[0.42, 0.42], [0.6, 0.9]], false); ctx.stroke();
-    pathFrom(ctx, [[-0.4, 0.02], [0.42, 0.06]], false); ctx.stroke();
-  },
-  // ---- signage ----
-  signYield: (ctx) => { plate(ctx, 'triangle', '#ffffff', '#d92b2b'); },
-  signStop: (ctx) => { plate(ctx, 'octagon', '#d92b2b'); glyph(ctx, 'STOP', 0.52, '#ffffff'); },
-  signSpeed: (ctx, ann) => {
-    plate(ctx, 'circle', '#ffffff', '#d92b2b');
-    glyph(ctx, String(ann && ann.value != null ? ann.value : 20), 0.95, '#111827');
-  },
-  signNoEntry: (ctx) => {
-    plate(ctx, 'circle', '#d92b2b');
-    ctx.fillStyle = '#ffffff';
-    pathFrom(ctx, [[-0.62, -0.17], [0.62, -0.17], [0.62, 0.17], [-0.62, 0.17]], true); ctx.fill();
-  },
-  signParking: (ctx) => { plate(ctx, 'rect', '#1d4ed8'); glyph(ctx, 'P', 1.3, '#ffffff'); },
-  signOneWay: (ctx) => {
-    plate(ctx, 'rect', '#1d4ed8');
-    ctx.fillStyle = '#ffffff';
-    pathFrom(ctx, [[-0.6, -0.12], [0.25, -0.12], [0.25, -0.38], [0.75, 0], [0.25, 0.38], [0.25, 0.12], [-0.6, 0.12]], true);
-    ctx.fill();
-  },
-  signAda: (ctx) => { plate(ctx, 'rect', '#1d4ed8'); ctx.save(); ctx.scale(0.62, 0.62); PICTOS.ada(ctx); ctx.restore(); },
-  signEV: (ctx) => { plate(ctx, 'rect', '#15803d'); ctx.save(); ctx.scale(0.62, 0.62); PICTOS.ev(ctx); ctx.restore(); },
-};
 
 // ---------- Imported assets ----------
 // An imported symbol becomes an ordinary point annotation with a painter that
@@ -1188,8 +1070,12 @@ function drawHatchOrBays(ctx, ann, w2s, scale, selected) {
   pathFrom(ctx, pts.map((p) => [p.x, p.y]), true);
   ctx.clip();
   ctx.strokeStyle = selected ? TH.sel : '#f8fafc';
-  ctx.lineWidth = Math.max(1, (bays ? 0.12 : 0.15) * scale);
-  const gap = Math.max(8, (bays ? 2.7 : 1.2) * scale);
+  // Spacing and weight come from the shared spec, so plan and drape cannot
+  // drift apart. The screen-space floor stays: zoomed far out the stripes would
+  // otherwise merge into a solid block.
+  const spec = STRIPE_SPEC[bays ? 'bayLines' : 'hatchZone'];
+  ctx.lineWidth = Math.max(1, spec.weight * scale);
+  const gap = Math.max(8, spec.spacing * scale);
   ctx.beginPath();
   if (bays) {
     for (let x = minX; x <= maxX; x += gap) { ctx.moveTo(x, minY); ctx.lineTo(x, maxY); }
@@ -1425,22 +1311,13 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
   if (ann.points.length < 2) return;
 
   if (t.mode === 'cross') {
-    const A = ann.points[0], B = ann.points[1];
-    const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
-    if (len < 0.1) return;
-    const ux = dx / len, uy = dy / len, px = -uy, py = ux, half = (ann.width || 3.5) / 2;
-    const step = 1.2, stripe = 0.6;
+    // The bar geometry comes from geometry.js so the 3D drape lays down exactly
+    // the same zebra; it used to be computed here and nowhere else, which is why
+    // a crossing was a set of bars in plan and a single grey line in 3D.
     ctx.fillStyle = selected ? TH.sel : '#e9edf2';
-    for (let s = 0; s < len; s += step) {
-      const s2 = Math.min(s + stripe, len);
-      const q = [
-        { x: A.x + ux * s + px * half, y: A.y + uy * s + py * half },
-        { x: A.x + ux * s2 + px * half, y: A.y + uy * s2 + py * half },
-        { x: A.x + ux * s2 - px * half, y: A.y + uy * s2 - py * half },
-        { x: A.x + ux * s - px * half, y: A.y + uy * s - py * half },
-      ].map(w2s);
+    for (const bar of zebraQuads(ann.points, ann.width)) {
       ctx.beginPath();
-      q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      bar.map(w2s).forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.closePath();
       ctx.fill();
     }
@@ -1910,7 +1787,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=8c2bb381', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=cd80cc29', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2261,6 +2138,8 @@ function App() {
   // The Mapbox basemap lives for the whole session once a token is set. It sits
   // behind the canvas: flat in 2D (tracking our camera), tilted in 3D (with the
   // plan draped as GeoJSON layers).
+  // Survives a style switch: the camera the previous map instance was left on.
+  const mapCamRef = useRef(null);
   useEffect(() => {
     // No token or style 'Geen' → no map; the plan renders on the dark backdrop.
     if (!mbToken || mapStyle === 'none') { if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } return; }
@@ -2268,13 +2147,17 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=8c2bb381').then(async (m) => {
+    import('./map3d.js?v=cd80cc29').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
-      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
+      const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
       if (cancelled || !ctrl) { if (ctrl) ctrl.destroy(); return; }
       map3dRef.current = ctrl;
       ctrl.setMode(vmRef.current === '3d');
+      // In 2D our canvas owns the camera, so re-aim from the app's own view. In
+      // 3D Mapbox owns it and there is nothing in app state to restore from —
+      // which is why the saved camera above is the only thing that can carry a
+      // style switch across.
       if (vmRef.current !== '3d') { const c = mapCamFromView(viewRef.current, sizeRef.current, geoRef.current); ctrl.follow2D(c.center, c.zoom); }
       setTimeout(() => ctrl.resize(), 100);
       // map3dRef is a ref, so assigning it re-renders nothing and the follow
@@ -2282,7 +2165,15 @@ function App() {
       // waiting for the user to pan.
       setMapReady((n) => n + 1);
     }).catch(() => setMap3dError('Mapbox kon niet laden.'));
-    return () => { cancelled = true; if (map3dRef.current) { map3dRef.current.destroy(); map3dRef.current = null; } };
+    return () => {
+      cancelled = true;
+      if (map3dRef.current) {
+        // Hand the camera to whatever instance comes next, before this one goes.
+        if (map3dRef.current.camera) mapCamRef.current = map3dRef.current.camera();
+        map3dRef.current.destroy();
+        map3dRef.current = null;
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mbToken, mapStyle, mapNonce]);
 
@@ -2324,7 +2215,10 @@ function App() {
   // The Lagen switches drive the 3D drape too. The controller decides what that
   // means for the current mode, so the order of these two effects cannot matter.
   useEffect(() => { if (map3dRef.current && map3dRef.current.setLayers) map3dRef.current.setLayers(layers); }, [layers, viewMode, mapReady]);
-  useEffect(() => { if (map3dRef.current && viewMode === '3d') map3dRef.current.setPlan(buildPlan()); }, [buildPlan, viewMode]);
+  // `mapReady` matters as much as the plan itself: a map that finishes
+  // initialising after the user already switched to 3D would otherwise never be
+  // handed the current plan, because nothing re-runs this effect.
+  useEffect(() => { if (map3dRef.current && viewMode === '3d') map3dRef.current.setPlan(buildPlan()); }, [buildPlan, viewMode, mapReady]);
   // The 3D light follows the same sun the 2D shadows use, so the two views can
   // never disagree about where it is.
   useEffect(() => {
@@ -3294,7 +3188,12 @@ function App() {
       const r = rectFrom(drag.start, drag.cur);
       if (Math.abs(r.w) > 0.5 && Math.abs(r.h) > 0.5) {
         const isRoad = !!drag.roadRect;
-        addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0, closed: isRoad });
+        // An area is a closed ring whichever tool drew it. Rectangles used to be
+        // the exception, and that exception was invisible until you switched to
+        // 3D and found the same shape present when drawn as a polygon and gone
+        // when dragged as a rectangle.
+        const isArea = (ANNOT_TYPES[annotKind] || {}).mode === 'area';
+        addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0, closed: isRoad || isArea });
         if (isRoad) { setSelection({ type: 'annot', index: (doc.annotations || []).length }); setTool('select'); }
       }
       setHover(null);

@@ -7,11 +7,12 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=8c2bb381';
-import { STALL_TYPES } from './solver.js?v=8c2bb381';
-import { polyOf, ribbonPoly } from './geometry.js?v=8c2bb381';
-import { ANNOT_TYPES } from './annots.js?v=8c2bb381';
-import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=8c2bb381';
+import { localToLatLon } from './basemap.js?v=cd80cc29';
+import { STALL_TYPES } from './solver.js?v=cd80cc29';
+import { polyOf, ribbonPoly, zebraQuads, hatchQuads, STRIPE_SPEC } from './geometry.js?v=cd80cc29';
+import { ANNOT_TYPES } from './annots.js?v=cd80cc29';
+import { PICTOS } from './pictos.js?v=cd80cc29';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=cd80cc29';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -113,13 +114,19 @@ function isLineKind(kind) {
 }
 // Drawn carriageways, in the same collection (and so the same colour) as the
 // generated drive aisles.
-function roadPolys(anns) {
+// `only` picks which side of the split: the tarmac ways, or the ones that keep
+// their own colour. A walkway and a cycle path are surfaces like a road, but
+// they are not asphalt, and merging them into the aisle fill made a red cycle
+// path read as grey tarmac in 3D — in plan they repaint themselves on top.
+function roadPolys(anns, only) {
   const out = [];
   for (const an of anns) {
     const t = ANNOT_TYPES[an.kind];
     if (!t || !t.body || an.closed || !an.points || an.points.length < 2) continue;
+    if (only === 'tarmac' && !t.aisleColor) continue;
+    if (only === 'own' && t.aisleColor) continue;
     const poly = ribbonPoly(an.points, an.width || t.width || 6, an.align, an.curved);
-    if (poly && poly.length >= 3) out.push(poly);
+    if (poly && poly.length >= 3) out.push({ poly, kind: an.kind });
   }
   return out;
 }
@@ -189,7 +196,53 @@ export function planToGeoJSON(plan, geo) {
   // same trick with a much thinner rectangle.
   const canopies = anns.filter((an) => an.kind === 'carport' && an.points && an.points.length >= 3);
   const lamps = anns.filter((an) => an.kind === 'lightPole' && an.points && an.points[0]);
+  // Ground markings: one point per symbol, carrying its own icon, heading and
+  // real-world width. Signs are the same symbol but they belong upright, so
+  // they go to their own collection and get a post underneath.
+  const marks = [], signs = [], posts = [];
+  const SIGN_H = 2.2;                 // m to the middle of the plate
+  for (const an of anns) {
+    const t = ANNOT_TYPES[an.kind];
+    if (!t || !t.picto || t.asset || !an.points || !an.points[0]) continue;
+    const at = an.points[0];
+    const ll = localToLatLon(at, geo);
+    const f = {
+      type: 'Feature',
+      properties: {
+        icon: 'pp-mk-' + t.picto,
+        angle: an.angle || 0,
+        // Real width divided by cos(lat): the Mercator stretch is folded in here
+        // so the layer's size expression can stay latitude-free.
+        size: (an.width || t.width || 3) / Math.max(0.05, Math.cos((geo.lat || 0) * Math.PI / 180)),
+      },
+      geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] },
+    };
+    if (!t.sign) { marks.push(f); continue; }
+    signs.push(f);
+    const r = 0.05;
+    posts.push(polyFeature([
+      { x: at.x - r, y: at.y - r }, { x: at.x + r, y: at.y - r },
+      { x: at.x + r, y: at.y + r }, { x: at.x - r, y: at.y + r },
+    ], geo, { base: 0, height: SIGN_H }));
+  }
+  // Painted stripes: zebra bars, and the hatching that a flat fill was standing
+  // in for. Same geometry the canvas paints — see geometry.js.
+  const stripes = [];
+  for (const an of anns) {
+    const t = ANNOT_TYPES[an.kind];
+    if (!t || !an.points) continue;
+    if (t.mode === 'cross') {
+      for (const q of zebraQuads(an.points, an.width)) stripes.push(polyFeature(q, geo, { color: '#e9edf2' }));
+    } else if (STRIPE_SPEC[an.kind] && an.points.length >= 3) {
+      for (const q of hatchQuads(an.points, STRIPE_SPEC[an.kind])) stripes.push(polyFeature(q, geo, { color: '#f8fafc' }));
+    }
+  }
+
   return {
+    marks: fc(marks),
+    signs: fc(signs),
+    stripes: fc(stripes),
+    posts: fc(posts),
     canopies: fc([
       ...canopies.map((an) => polyFeature(an.points, geo, {
         base: (plan.params && plan.params.pvHeight) || 3,
@@ -218,14 +271,27 @@ export function planToGeoJSON(plan, geo) {
     aisles: fc([
       ...(plan.aisles || []).map((a) => a.poly),
       ...(plan.turnarounds || []).map((t) => t.poly || t),
-      ...roadPolys(anns),
+      ...roadPolys(anns, 'tarmac').map((r) => r.poly),
     ].map((q) => polyFeature(q, geo, {}))),
+    // Paths and cycle tracks, in their own colour rather than dissolved into the
+    // asphalt they are drawn beside.
+    paths: fc(roadPolys(anns, 'own').map((r) => polyFeature(r.poly, geo, { color: annColor(r.kind) }))),
     buildings: fc(buildingParts(plan, geo)),
     bays: fc((plan.stalls || []).flatMap((s) => bayMarks(s.poly)).map((seg) => lineFeature(seg, geo, {}))),
     site: fc(plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : []),
     areas: fc(anns.filter((an) => an.points && an.points.length >= 3 && (an.kind === 'grass' || an.kind === 'bikeparking' || an.closed)).map((an) => polyFeature(an.points, geo, { color: annColor(an.kind) }))),
     lines: fc(anns.filter((an) => an.points && an.points.length >= 2 && !an.closed && isLineKind(an.kind)).map((an) => lineFeature(an.points, geo, { color: annColor(an.kind), width: an.width || 1 }))),
-    trees: fc(anns.filter((an) => an.kind === 'tree' && an.points && an.points[0]).map((an) => { const ll = localToLatLon(an.points[0], geo); return { type: 'Feature', properties: { r: (an.width || 5) / 2 }, geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] } }; })),
+    // Trees and access points: both a plain disc on the ground, so they share a
+    // layer and carry their own colour rather than earning one each.
+    trees: fc(anns.filter((an) => (an.kind === 'tree' || an.kind === 'access') && an.points && an.points[0]).map((an) => {
+      const ll = localToLatLon(an.points[0], geo);
+      const t = ANNOT_TYPES[an.kind] || {};
+      return {
+        type: 'Feature',
+        properties: { r: (an.width || t.width || 5) / 2, color: annColor(an.kind) },
+        geometry: { type: 'Point', coordinates: [ll.lon, ll.lat] },
+      };
+    })),
   };
 }
 
@@ -280,6 +346,36 @@ const TEX_PAINT = {
     for (let c = 0; c < 4; c++) x.fillRect(c * (w / 4), 0, 1.5, h);
   },
 };
+// Ground markings as map images.
+//
+// The 2D painters draw in a unit box, so the whole conversion is one translate
+// and one scale — the same idiom drawPicto uses on the canvas. That is why the
+// markings could join the drape without a second set of artwork: there is only
+// ever one definition of what an arrow looks like.
+const MARK_PX = 128;
+// Metres per screen pixel at zoom 0 on the equator, for 512-px tiles. The whole
+// true-size calculation hangs off this one number.
+export const MARK_M_PER_PX = 78271.516964;
+function addMarkImages(map) {
+  for (const t of Object.values(ANNOT_TYPES)) {
+    if (!t || !t.picto || t.asset) continue;          // assets have their own path
+    const id = 'pp-mk-' + t.picto;
+    try {
+      if (map.hasImage && map.hasImage(id)) continue;
+      const c = document.createElement('canvas');
+      c.width = c.height = MARK_PX;
+      const x = c.getContext('2d');
+      x.translate(MARK_PX / 2, MARK_PX / 2);
+      x.scale(MARK_PX / 2, MARK_PX / 2);
+      // drawPicto sets the halo on the canvas; here the image carries its own,
+      // otherwise a white arrow vanishes on light tarmac.
+      x.shadowColor = 'rgba(15,23,42,0.75)'; x.shadowBlur = 0.22;
+      PICTOS[t.picto](x, { value: t.value });
+      map.addImage(id, x.getImageData(0, 0, MARK_PX, MARK_PX), { pixelRatio: 2 });
+    } catch (e) { /* a style without image support simply shows no markings */ }
+  }
+}
+
 function addFacadeTextures(map) {
   const S = 64;
   for (const [name, paint] of Object.entries(TEX_PAINT)) {
@@ -295,7 +391,7 @@ function addFacadeTextures(map) {
   }
 }
 
-const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-bays-line', 'pp-buildings-3d', 'pp-walls-3d', 'pp-trees-3d', 'pp-assets-3d', 'pp-canopies-3d'];
+const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-bays-line', 'pp-buildings-3d', 'pp-walls-3d', 'pp-trees-3d', 'pp-assets-3d', 'pp-canopies-3d', 'pp-paths-fill', 'pp-stripes-fill', 'pp-marks-sym', 'pp-posts-3d', 'pp-signs-sym'];
 
 function addPlanLayers(map, plan, geo) {
   // Real 3D buildings of the surroundings from the style's vector source.
@@ -309,12 +405,14 @@ function addPlanLayers(map, plan, geo) {
     }
   } catch (e) {}
   addFacadeTextures(map);
+  addMarkImages(map);
   const g = planToGeoJSON(plan, geo);
   const src = (id, data) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data }); };
   src('pp-site', g.site); src('pp-aisles', g.aisles); src('pp-stalls', g.stalls);
   src('pp-buildings', g.buildings); src('pp-lines', g.lines); src('pp-areas', g.areas); src('pp-trees', g.trees);
   src('pp-assets', g.assets); src('pp-bays', g.bays);
-  src('pp-canopies', g.canopies);
+  src('pp-paths', g.paths); src('pp-canopies', g.canopies); src('pp-marks', g.marks); src('pp-signs', g.signs);
+  src('pp-stripes', g.stripes); src('pp-posts', g.posts);
   const L = (layer) => { if (!map.getLayer(layer.id)) map.addLayer(layer); };
   L({ id: 'pp-areas-fill', type: 'fill', source: 'pp-areas', layout: { visibility: 'none' }, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 } });
   L({ id: 'pp-site-line', type: 'line', source: 'pp-site', layout: { visibility: 'none' }, paint: { 'line-color': '#f8b500', 'line-width': 2.5 } });
@@ -345,8 +443,58 @@ function addPlanLayers(map, plan, geo) {
     filter: ['==', ['get', 'wall'], 1],
     paint: { ...EXTRUDE, 'fill-extrusion-color': ['coalesce', ['get', 'color'], '#c3c8d0'], 'fill-extrusion-pattern': ['get', 'pattern'] } });
   L({ id: 'pp-assets-3d', type: 'fill-extrusion', source: 'pp-assets', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#cbd5e1', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.95 } });
+  L({ id: 'pp-paths-fill', type: 'fill', source: 'pp-paths', layout: { visibility: 'none' },
+    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.9 } });
+  // Painted stripes sit on the tarmac, above the aisle fill and below anything
+  // that stands up.
+  L({ id: 'pp-stripes-fill', type: 'fill', source: 'pp-stripes', layout: { visibility: 'none' },
+    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.95 } });
+  // Ground markings at true size.
+  //
+  // `icon-size` has to be a zoom expression, because a Mapbox icon is measured
+  // in screen pixels: a constant is right at exactly one zoom level and wrong
+  // at every other. At zoom z a screen pixel covers
+  //     mpp = 78271.517 · cos(lat) / 2^z      metres (512-px tiles)
+  // and the image is MARK_PX at pixelRatio 2, so it draws MARK_PX/2 px wide at
+  // size 1. A marking `w` metres across therefore wants
+  //     icon-size = w · 2^z / (78271.517 · cos(lat) · MARK_PX/2)
+  // The latitude is folded into the feature's `size` when it is built, so the
+  // expression itself stays a constant times 2^z — which is exactly what an
+  // exponential-base-2 interpolation between two stops produces.
+  const K = MARK_M_PER_PX * (MARK_PX / 2);
+  const groundIcon = (extra) => ({
+    'icon-image': ['get', 'icon'],
+    'icon-rotate': ['get', 'angle'],
+    'icon-allow-overlap': true,
+    'icon-ignore-placement': true,
+    'icon-size': ['interpolate', ['exponential', 2], ['zoom'],
+      14, ['*', ['get', 'size'], Math.pow(2, 14) / K],
+      22, ['*', ['get', 'size'], Math.pow(2, 22) / K],
+    ],
+    ...extra,
+  });
+  L({ id: 'pp-marks-sym', type: 'symbol', source: 'pp-marks', layout: {
+    visibility: 'none',
+    // Flat on the tarmac and turning with the map, rather than a billboard
+    // hovering above it: these are paint on the ground, not labels.
+    'icon-rotation-alignment': 'map',
+    'icon-pitch-alignment': 'map',
+    ...groundIcon(),
+  } });
+  L({ id: 'pp-posts-3d', type: 'fill-extrusion', source: 'pp-posts', layout: { visibility: 'none' },
+    paint: { 'fill-extrusion-color': '#9aa4b2', 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 1 } });
+  // A sign plate stands up, so it stays a billboard and is lifted to the top of
+  // its post. Mapbox anchors symbols on the ground, so the height is a pixel
+  // offset that tracks zoom the same way the icon does.
+  L({ id: 'pp-signs-sym', type: 'symbol', source: 'pp-signs', layout: {
+    visibility: 'none',
+    'icon-rotation-alignment': 'viewport',
+    'icon-pitch-alignment': 'viewport',
+    'icon-anchor': 'bottom',
+    ...groundIcon(),
+  } });
   L({ id: 'pp-canopies-3d', type: 'fill-extrusion', source: 'pp-canopies', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#0ea5e9', 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.9 } });
-  L({ id: 'pp-trees-3d', type: 'circle', source: 'pp-trees', layout: { visibility: 'none' }, paint: { 'circle-color': '#2f9e44', 'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 3, 20, ['*', ['get', 'r'], 6]], 'circle-stroke-color': '#14532d', 'circle-stroke-width': 1, 'circle-opacity': 0.9 } });
+  L({ id: 'pp-trees-3d', type: 'circle', source: 'pp-trees', layout: { visibility: 'none' }, paint: { 'circle-color': ['get', 'color'], 'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 3, 20, ['*', ['get', 'r'], 6]], 'circle-stroke-color': '#14532d', 'circle-stroke-width': 1, 'circle-opacity': 0.9 } });
 }
 // Which Lagen switch owns which drape layer. The 2D canvas already honours
 // these; in 3D nothing did, so "Gebouwen uit" was a switch that stopped
@@ -364,6 +512,11 @@ const LAYER_OWNER = {
   'pp-areas-fill': 'infra',
   'pp-assets-3d': 'infra',
   'pp-canopies-3d': 'infra',
+  'pp-paths-fill': 'infra',
+  'pp-stripes-fill': 'infra',
+  'pp-marks-sym': 'infra',
+  'pp-posts-3d': 'infra',
+  'pp-signs-sym': 'infra',
   'pp-trees-3d': 'infra',
 };
 // Visible = we are in 3D AND the layer is switched on. The mode leads: in 2D
@@ -377,14 +530,28 @@ function applyVisibility(map, is3d, layers) {
     map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
   }
 }
+/**
+ * Push the plan into the map's sources. Returns false when the map was not in a
+ * state to take it — the caller is expected to try again rather than assume the
+ * data landed.
+ *
+ * This used to `return` on a half-loaded style and say nothing, which quietly
+ * threw the update away: `lastPlan` was updated but the only other reader is
+ * `addPlanLayers`, and that seeds a source only when it creates it. Tilting into
+ * 3D dirties the tile caches, so `isStyleLoaded()` is false for a moment right
+ * when the 2D→3D switch pushes the new plan — which is exactly why edits showed
+ * up in 3D most of the time but not always.
+ */
 function setData(map, plan, geo) {
-  if (!map || !map.isStyleLoaded()) return;
+  if (!map || !map.isStyleLoaded()) return false;
   const g = planToGeoJSON(plan, geo);
   const set = (id, data) => { const s = map.getSource(id); if (s) s.setData(data); };
   set('pp-site', g.site); set('pp-aisles', g.aisles); set('pp-stalls', g.stalls);
   set('pp-buildings', g.buildings); set('pp-lines', g.lines); set('pp-areas', g.areas); set('pp-trees', g.trees);
   set('pp-assets', g.assets); set('pp-bays', g.bays);
-  set('pp-canopies', g.canopies);
+  set('pp-paths', g.paths); set('pp-canopies', g.canopies); set('pp-marks', g.marks); set('pp-signs', g.signs);
+  set('pp-stripes', g.stripes); set('pp-posts', g.posts);
+  return true;
 }
 
 /**
@@ -393,7 +560,14 @@ function setData(map, plan, geo) {
  *   setMode(is3d)         — tilt + show/hide the draped plan layers
  *   setPlan(plan)         — refresh the plan GeoJSON
  */
-export async function initMap(container, token, geo, plan, onError, styleUrl, onDiag) {
+/**
+ * `cam` is the camera a previous map instance was left on. A style switch tears
+ * the map down and builds a new one, and the new one used to be constructed at
+ * the geo anchor on zoom 17 — so picking a different basemap threw you back to
+ * the origin. Only the 2D path re-aimed it afterwards, and even there you saw
+ * the hop. Constructing on the saved camera means there is nothing to re-aim.
+ */
+export async function initMap(container, token, geo, plan, onError, styleUrl, onDiag, cam) {
   const diag = (d) => { try { if (onDiag) onDiag(d); } catch (e) {} };
   diag({ lib: '…', webgl: '…', style: '…', tiles: 0, detail: '' });
 
@@ -416,14 +590,24 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
   const style = styleUrl || 'mapbox://styles/mapbox/satellite-streets-v12';
   let map;
   try {
+    // A camera with a NaN in it is a map that never loads at all, so anything
+    // that does not survive isFinite falls back to the anchor.
+    const ok = cam && [cam.lon, cam.lat, cam.zoom, cam.bearing, cam.pitch].every((v) => isFinite(v));
     map = new mapboxgl.Map({
       container, style,
-      center: [geo.lon, geo.lat], zoom: 17, pitch: 0, bearing: 0,
+      center: ok ? [cam.lon, cam.lat] : [geo.lon, geo.lat],
+      zoom: ok ? cam.zoom : 17,
+      pitch: ok ? cam.pitch : 0,
+      bearing: ok ? cam.bearing : 0,
       interactive: false, antialias: true, attributionControl: false,
     });
   } catch (e) { diag({ style: 'FOUT', detail: e.message }); onError('Kaart kon niet starten: ' + e.message); return null; }
 
   let ready = false, pending3d = false, lastPlan = plan, tiles = 0, layerState = null;
+  // Set whenever a push could not land. Every event that means "the map settled"
+  // tries again, so an update is deferred rather than lost.
+  let dirty = false;
+  const flush = () => { if (dirty && setData(map, lastPlan, geo)) dirty = false; };
   diag({ style: 'laden…' });
   const loadTimer = setTimeout(() => {
     if (ready) return;
@@ -510,10 +694,16 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
     onError('');
     try { addPlanLayers(map, lastPlan, geo); } catch (e) {}
     try { applyVisibility(map, pending3d, layerState); } catch (e) {}
+    // addPlanLayers seeds the sources it creates; after a style switch they may
+    // already exist, so ask for a flush either way.
+    dirty = true; try { flush(); } catch (e) {}
     setTimeout(() => { try { map.resize(); } catch (e) {} }, 60);
   });
   map.on('data', (e) => { if (e && e.tile) tiles++; });
-  map.on('idle', () => { diag({ tiles }); reportCanvas(); });
+  map.on('idle', () => { diag({ tiles }); reportCanvas(); try { flush(); } catch (e) {} });
+  // `idle` never fires while the map keeps animating, so `styledata` is the
+  // second net: between them there is no settled state that leaves data behind.
+  map.on('styledata', () => { try { flush(); } catch (e) {} });
 
   return {
     map,
@@ -538,7 +728,7 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
         }
       } catch (e) {}
     },
-    setPlan(p) { lastPlan = p; try { setData(map, p, geo); } catch (e) {} },
+    setPlan(p) { lastPlan = p; try { if (!setData(map, p, geo)) dirty = true; } catch (e) { dirty = true; } },
     // The mode is read from the controller, not passed in: two React effects
     // write the same visibility, and whichever ran last would otherwise win.
     setLayers(l) { layerState = l; if (ready) { try { applyVisibility(map, pending3d, layerState); } catch (e) {} } },
@@ -550,7 +740,14 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
     setGeo(g) {
       if (!g || (g.lat === geo.lat && g.lon === geo.lon)) return;
       geo = g;
-      try { setData(map, lastPlan, geo); } catch (e) {}
+      try { if (!setData(map, lastPlan, geo)) dirty = true; } catch (e) { dirty = true; }
+    },
+    // Read back so the next map instance can be born where this one stood.
+    camera() {
+      try {
+        const c = map.getCenter();
+        return { lon: c.lng, lat: c.lat, zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch() };
+      } catch (e) { return null; }
     },
     resize() { try { map.resize(); } catch (e) {} },
     recenter(g) { try { map.jumpTo({ center: [g.lon, g.lat] }); } catch (e) {} },

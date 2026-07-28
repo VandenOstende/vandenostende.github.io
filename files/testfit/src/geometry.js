@@ -412,3 +412,104 @@ export function segmentCross(a, b, c, d) {
   if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return null;
   return { x: a.x + rx * t, y: a.y + ry * t };
 }
+
+// ---------- Painted stripes ----------
+// The stripe geometry lives here because two renderers need the same answer:
+// the 2D canvas paints it and the 3D drape extrudes it, and until now each had
+// its own copy of the numbers — which is why a zebra crossing was a proper set
+// of bars in plan and a single grey hairline in 3D.
+
+/** Zebra bars for a crossing centreline, in world metres. */
+export function zebraQuads(points, width, step = 1.2, stripe = 0.6) {
+  const A = points && points[0], B = points && points[1];
+  if (!A || !B) return [];
+  const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
+  if (len < 0.1) return [];
+  const ux = dx / len, uy = dy / len, px = -uy, py = ux, half = (width || 3.5) / 2;
+  const out = [];
+  for (let s = 0; s < len; s += step) {
+    if (len - s < 1e-6) break;      // a float remainder is not a stripe
+    const s2 = Math.min(s + stripe, len);
+    out.push([
+      { x: A.x + ux * s + px * half, y: A.y + uy * s + py * half },
+      { x: A.x + ux * s2 + px * half, y: A.y + uy * s2 + py * half },
+      { x: A.x + ux * s2 - px * half, y: A.y + uy * s2 - py * half },
+      { x: A.x + ux * s - px * half, y: A.y + uy * s - py * half },
+    ]);
+  }
+  return out;
+}
+
+// Spacing and line weight per hatched kind, in metres. The 2D canvas reads the
+// same constants but keeps its own legibility floor, so zoomed far out its
+// stripes stay readable instead of merging — the two are deliberately not
+// identical at every zoom, and sharing the constants is what stops them drifting.
+export const STRIPE_SPEC = {
+  bayLines: { spacing: 2.7, diagonal: false, weight: 0.12 },
+  hatchZone: { spacing: 1.2, diagonal: true, weight: 0.15 },
+};
+
+/** Where a segment runs inside a polygon, as a list of [t0, t1] parameter pairs. */
+function insideRuns(a, b, poly) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const ts = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    const ex = q.x - p.x, ey = q.y - p.y;
+    const den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((p.x - a.x) * ey - (p.y - a.y) * ex) / den;
+    const u = ((p.x - a.x) * dy - (p.y - a.y) * dx) / den;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) ts.push(t);
+  }
+  ts.sort((m, n) => m - n);
+  const runs = [];
+  let inside = pointInPolygon(a, poly), enter = inside ? 0 : -1;
+  for (const t of ts) {
+    if (inside) { if (t - enter > 1e-9) runs.push([enter, t]); inside = false; }
+    else { enter = t; inside = true; }
+  }
+  if (inside && enter >= 0 && 1 - enter > 1e-9) runs.push([enter, 1]);
+  return runs;
+}
+
+/**
+ * Hatch or bay stripes clipped to a polygon, as thin quads in world metres.
+ *
+ * The 2D canvas gets its clipping from `ctx.clip()`; there is no such thing in a
+ * GeoJSON source, so the clipping happens here — the same interval walk that
+ * decides where a ray is inside a footprint.
+ */
+export function hatchQuads(poly, spec) {
+  if (!poly || poly.length < 3 || !spec) return [];
+  const bb = boundingBox(poly);
+  const hw = spec.weight / 2;
+  const out = [];
+  const emit = (a, b) => {
+    for (const [t0, t1] of insideRuns(a, b, poly)) {
+      const p = { x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 };
+      const q = { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 };
+      const dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy) || 1;
+      const nx = (-dy / len) * hw, ny = (dx / len) * hw;
+      out.push([
+        { x: p.x + nx, y: p.y + ny }, { x: q.x + nx, y: q.y + ny },
+        { x: q.x - nx, y: q.y - ny }, { x: p.x - nx, y: p.y - ny },
+      ]);
+    }
+  };
+  // Run the scan lines a metre past the box on both ends. Starting exactly on
+  // the boundary makes the first crossing land at t = 0, which the interval walk
+  // reads as leaving rather than entering — and a rectangle came out with no
+  // stripes at all.
+  const y0 = bb.minY - 1, y1 = bb.maxY + 1, span = y1 - y0;
+  if (spec.diagonal) {
+    for (let x = bb.minX - span; x <= bb.maxX + 1; x += spec.spacing) {
+      emit({ x, y: y0 }, { x: x + span, y: y1 });
+    }
+  } else {
+    for (let x = bb.minX; x <= bb.maxX; x += spec.spacing) {
+      emit({ x, y: y0 }, { x, y: y1 });
+    }
+  }
+  return out;
+}
