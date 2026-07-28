@@ -4,19 +4,19 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=6ed44f65';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=0aa617d1';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=6ed44f65';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=6ed44f65';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=6ed44f65';
-import { parseParcel, simplifyRing } from './importers.js?v=6ed44f65';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=6ed44f65';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=6ed44f65';
-import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=6ed44f65';
-import { BUILD_ID } from './build.js?v=6ed44f65';
+} from './geometry.js?v=0aa617d1';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=0aa617d1';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=0aa617d1';
+import { parseParcel, simplifyRing } from './importers.js?v=0aa617d1';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=0aa617d1';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=0aa617d1';
+import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=0aa617d1';
+import { BUILD_ID } from './build.js?v=0aa617d1';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -43,6 +43,10 @@ const DEFAULT_PARAMS = {
   singleLoaded: false, deadEndTurnaround: false, turnaround: 7,
   buildingGLA: 0, parkingRatio: 0, // GLA (m²) + stalls per 100 m² (zoning)
   layout: 'strip', // 'strip' (straight rows) | 'perimeter' (follows the curve)
+  // The solver lays its own cross-aisle at one end of the rows. Without it the
+  // rows are parallel islands you cannot drive between — which is what the
+  // drivability check reported the day it was built.
+  endAisles: 'one',     // 'none' | 'one' | 'both'
   designVehicle: 'car', // what the drivability check has to fit
   fireMaxDist: 60,      // m from a facade to where a fire appliance can stand
   alignLongestEdge: false, // align rows to the site's longest edge
@@ -1813,7 +1817,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=6ed44f65', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=0aa617d1', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2079,7 +2083,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=6ed44f65').then(async (m) => {
+    import('./map3d.js?v=0aa617d1').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -5027,6 +5031,19 @@ function App() {
             <input type="checkbox" checked=${!!doc.params.deadEndTurnaround} onChange=${(e) => setParam('deadEndTurnaround', e.target.checked)} />
           </div>
           ${doc.params.deadEndTurnaround && slider('Turnaround-ruimte', 'turnaround', doc.params.turnaround, 4, 12, 0.5, 'm', setParam)}
+          <div className="field">
+            <label>Kopse rijbaan</label>
+            <div className="seg">
+              ${[['none', 'Geen'], ['one', 'Eén kant'], ['both', 'Beide']].map(([v, lab]) => html`
+                <button key=${v}
+                  className=${(doc.params.endAisles || 'one') === v ? 'active' : ''}
+                  title=${v === 'none' ? 'Geen verbinding tussen de rijen — teken die zelf'
+                    : v === 'one' ? 'Eén dwarsrijbaan verbindt alle rijen'
+                    : 'Aan beide uiteinden, dus een lus zonder doodlopende rijen'}
+                  onClick=${() => setParam('endAisles', v)}>${lab}</button>`)}
+            </div>
+            <div className="mix-note">Verbindt de rijen met elkaar en met je in/uitrit. Kost vakken — zonder is het terrein niet berijdbaar.</div>
+          </div>
         </div>`}
 
         ${vis('secMix') && html`

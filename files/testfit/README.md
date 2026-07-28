@@ -25,6 +25,11 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   site's curves.
 - **Parameters** — stall width and depth, aisle width, angle (45/60/90°),
   setback, padding buffer, and a maximum row length that inserts planter gaps.
+- **The solver connects its own rows.** A cross-aisle at one end (or both, for a
+  full loop) joins every row and runs a spur out to your entrance — without it
+  the rows are parallel islands you cannot drive between, which is exactly what
+  the drivability check reported the day it was built. It costs stalls, and that
+  is the point: the old higher number was for a site you could not drive into.
 - **Options** — single-loaded rows, dead-end turnarounds (which now draw the
   hammerhead in the space they reserve), and an alignment toggle that squares
   the rows to the longest site edge.
