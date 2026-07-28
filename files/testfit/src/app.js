@@ -4,17 +4,17 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=a28e74e7';
+import { solveParking, computeMetrics, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=9b7c7dbb';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
-  pointInPolygon, rectPoly, tessellateClosed, polyOf,
+  pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=a28e74e7';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=a28e74e7';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=a28e74e7';
-import { parseParcel, simplifyRing } from './importers.js?v=a28e74e7';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=a28e74e7';
-import { BUILD_ID } from './build.js?v=a28e74e7';
+} from './geometry.js?v=9b7c7dbb';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=9b7c7dbb';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=9b7c7dbb';
+import { parseParcel, simplifyRing } from './importers.js?v=9b7c7dbb';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=9b7c7dbb';
+import { BUILD_ID } from './build.js?v=9b7c7dbb';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -130,21 +130,20 @@ function circlePoly(cx, cy, r, n = 40) {
 // Turn a blocking annotation (road / driveway) into a clearance polygon the
 // parking solver must avoid. Closed pleinen block their whole area; open lines
 // become a ribbon of their width.
+// Thin wrapper so callers can pass an annotation instead of loose numbers; the
+// geometry itself is shared with the exporters and the 3D drape.
+function ribbon(ann, t) {
+  const ty = t || ANNOT_TYPES[ann.kind] || {};
+  return ribbonPoly(ann.points, ann.width || ty.width || 3, ann.align, ann.curved);
+}
+
 function annotationBlocker(ann) {
   const t = ANNOT_TYPES[ann.kind];
   if (!t || !ann.points || ann.points.length < 2) return null;
   if (ann.closed && ann.points.length >= 3) return ann.points.slice();
-  const hw = Math.max(0.5, (ann.width || t.width || 3) / 2);
-  const pts = ann.points, left = [], right = [];
-  for (let i = 0; i < pts.length; i++) {
-    let dx = 0, dy = 0;
-    if (i > 0) { dx += pts[i].x - pts[i - 1].x; dy += pts[i].y - pts[i - 1].y; }
-    if (i < pts.length - 1) { dx += pts[i + 1].x - pts[i].x; dy += pts[i + 1].y - pts[i].y; }
-    const len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
-    left.push({ x: pts[i].x + nx * hw, y: pts[i].y + ny * hw });
-    right.push({ x: pts[i].x - nx * hw, y: pts[i].y - ny * hw });
-  }
-  return [...left, ...right.reverse()];
+  // Same polygon the road is drawn as, so the corridor the parking avoids is
+  // exactly the asphalt you see — including the offset when you drew a kerb.
+  return ribbon(ann, t);
 }
 
 // `overrides` are manual, position-keyed marks that persist across
@@ -1215,7 +1214,37 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
     return;
   }
 
-  // Line kinds (road, walkway, bikepath, marking); `closed` = filled area (plein).
+  // A carriageway is filled, not stroked: a fat stroke rounds every join and
+  // cap and cannot be offset off its own centreline.
+  if (t.body && !ann.closed) {
+    const body = ribbon(ann, t);
+    if (body && body.length >= 3) {
+      const bp = body.map(w2s);
+      ctx.save();
+      ctx.lineJoin = 'miter'; ctx.miterLimit = 8; ctx.lineCap = 'butt';
+      ctx.beginPath();
+      bp.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fillStyle = t.aisleColor ? TH.aisle : hexA(t.color, 0.9);
+      ctx.fill();
+      ctx.strokeStyle = selected ? TH.sel : TH.outline;
+      ctx.lineWidth = selected ? 2.5 : 1;
+      ctx.stroke();
+      // When the line you drew is a kerb it no longer runs down the middle, so
+      // show it while the road is selected — otherwise the handles look adrift.
+      if (selected && ann.align) {
+        ctx.setLineDash([5, 4]);
+        ctx.strokeStyle = TH.inkFaint; ctx.lineWidth = 1.2;
+        buildAnnotPath(ctx, ann.points.map(w2s), !!ann.curved);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+    }
+    return;
+  }
+
+  // Line kinds (walkway, bikepath, marking); `closed` = filled area (plein).
   const pts = ann.points.map(w2s);
   const closed = !!ann.closed;
   const wpx = closed ? 2 : Math.max(1.5, (ann.width || 0.3) * scale);
@@ -1356,6 +1385,9 @@ function App() {
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' for roads (draggable object)
   const [annotCurved, setAnnotCurved] = useState(true);
+  // What the line you draw means for a carriageway: its centre, or one of its
+  // kerbs (seen in the direction you draw).
+  const [annotAlign, setAnnotAlign] = useState('center');
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
   // Imported symbols. The library is per-browser; a document carries its own
@@ -1494,7 +1526,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=a28e74e7', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=9b7c7dbb', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -1572,11 +1604,12 @@ function App() {
       const key = stallKey(ms.poly);
       stalls.push({ poly: reangle(ms.poly, key), key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], angle: ovAngles[key], manual: true });
     }
+    const gone = ov.aislesRemoved || {};
     const aisles = result.aisles.map((q) => {
       const key = aisleKey(q);
       const o = ovAisles[key] || {};
       return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
-    });
+    }).filter((a) => !gone[a.key]);
     return { stalls, aisles, islands: result.islands || [], orientationCount: result.orientationCount };
   }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
@@ -1644,7 +1677,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=a28e74e7').then(async (m) => {
+    import('./map3d.js?v=9b7c7dbb').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag);
@@ -1783,6 +1816,7 @@ function App() {
       stalls: { ...o.stalls }, aisles: { ...o.aisles },
       locks: { stalls: { ...l.stalls }, aisles: { ...l.aisles } },
       removed: { ...o.removed }, angles: { ...o.angles },
+      aislesRemoved: { ...o.aislesRemoved },
     };
   };
   const setStallTypes = (keys, type) => dispatch({ type: 'COMMIT', updater: (d) => {
@@ -1818,6 +1852,23 @@ function App() {
     const ov = ovOf(d);
     const cur = ov.aisles[key] || { oneway: true, dir: 1 };
     ov.aisles[key] = { ...cur, oneway: true, dir: (cur.dir || 1) * -1 };
+    return { ...d, overrides: ov };
+  } });
+  // Solver aisles have no stored identity, so removal is a position-keyed mark
+  // like every other override — it survives a re-solve, and undo puts it back.
+  const deleteAisle = (key) => {
+    if (!key) return;
+    dispatch({ type: 'COMMIT', updater: (d) => {
+      const ov = ovOf(d);
+      ov.aislesRemoved[key] = 1;
+      delete ov.locks.aisles[key];
+      return { ...d, overrides: ov };
+    } });
+    setAisleSel(null);
+  };
+  const restoreAisles = () => dispatch({ type: 'COMMIT', updater: (d) => {
+    const ov = ovOf(d);
+    ov.aislesRemoved = {};
     return { ...d, overrides: ov };
   } });
   const clearSel = () => { setStallSel([]); setAisleSel(null); setSelection(null); };
@@ -1994,6 +2045,7 @@ function App() {
         kind: annotKind, points, width: annotWidth,
         curved: t.mode === 'line' && !closed ? annotCurved : false,
         closed: !!closed,
+        ...(t.body && !closed && annotAlign !== 'center' ? { align: annotAlign } : {}),
       });
     }
     setDrawing(null);
@@ -2031,6 +2083,12 @@ function App() {
       if (ann.points.length < 2) continue;
       const pts = ann.points.map(w2s);
       const tol = Math.max(6, ((ann.width || 1) * view.scale) / 2 + 4);
+      // A carriageway can sit entirely to one side of the line it was drawn
+      // from, so hit the asphalt, not the line.
+      if (t.body && !ann.closed) {
+        const body = ribbon(ann, t);
+        if (body && pointInPolygon(makeTransform(view).s2w(sp), body)) return i;
+      }
       if (t.mode === 'area' || ann.closed) {
         if (pointInPolygon(makeTransform(view).s2w(sp), ann.points)) return i;
         if (t.mode === 'area') continue;
@@ -2548,6 +2606,7 @@ function App() {
   // ---------- Object list ----------
   // Everything the user placed, grouped. Solver stalls are summarised per type
   // rather than listed: 105 rows would make the list useless.
+  const aislesRemovedCount = Object.keys(((doc.overrides || {}).aislesRemoved) || {}).length;
   const objectRows = useMemo(() => {
     const q = objQuery.trim().toLowerCase();
     const groups = new Map();
@@ -2567,6 +2626,10 @@ function App() {
       key: 'm' + i, kind: 'manual', index: i, color: (STALL_TYPES[ms.type] || STALL_TYPES.standard).color,
       label: (STALL_TYPES[ms.type] || STALL_TYPES.standard).label, sub: 'vak',
     }));
+    deco.aisles.forEach((a, i) => push('Rijbanen', {
+      key: 'ai' + a.key, kind: 'aisle', aisleKey: a.key, color: '#94a3b8',
+      label: 'Rijbaan ' + (i + 1), sub: (a.oneway ? 'eenrichting' : '') + (a.locked ? ' 🔒' : ''),
+    }));
     const byType = new Map();
     for (const st of deco.stalls) if (!st.manual) byType.set(st.type, (byType.get(st.type) || 0) + 1);
     for (const [type, n] of byType) push('Solver-vakken', {
@@ -2580,12 +2643,15 @@ function App() {
       if (hit.length) out.push([grp, hit]);
     }
     return out;
-  }, [doc.annotations, doc.obstacles, doc.manualStalls, deco.stalls, objQuery]);
+  }, [doc.annotations, doc.obstacles, doc.manualStalls, deco.stalls, deco.aisles, objQuery]);
 
   // An imported symbol shows its own thumbnail where the built-in kinds show a
   // colour dot — otherwise every custom asset is the same grey circle.
   const dotStyle = (t) => (t && t.asset
     ? { backgroundImage: 'url(' + t.asset.src + ')', backgroundSize: 'contain', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', borderRadius: 0 }
+    // A carriageway is painted like the solver's aisles, so the swatch has to
+    // be that colour too — otherwise the palette promises a different road.
+    : t && t.aisleColor ? { background: (THEMES[theme] || THEMES.dark).aisle }
     : { background: (t && t.color) || '#94a3b8' });
 
   // Bring an object into view without changing the zoom more than needed.
@@ -2607,6 +2673,10 @@ function App() {
       setSelection(null); setAisleSel(null); setStallSel(ms ? [stallKey(ms.poly)] : []);
       return;
     }
+    if (r.kind === 'aisle') {
+      setSelection(null); setStallSel([]); setAisleSel(r.aisleKey);
+      return;
+    }
     setStallSel([]); setAisleSel(null);
     setSelection({ type: r.kind === 'obs' ? 'obs' : 'annot', index: r.index });
   };
@@ -2614,6 +2684,7 @@ function App() {
     if (r.kind === 'annot') return (doc.annotations || [])[r.index]?.points;
     if (r.kind === 'obs') return polyOf(doc.obstacles[r.index]);
     if (r.kind === 'manual') return (doc.manualStalls || [])[r.index]?.poly;
+    if (r.kind === 'aisle') return (deco.aisles.find((a) => a.key === r.aisleKey) || {}).poly;
     if (r.kind === 'stallGroup') {
       const all = deco.stalls.filter((s) => !s.manual && s.type === r.stallType);
       return all.length ? all.flatMap((s) => s.poly) : null;
@@ -2626,11 +2697,12 @@ function App() {
     else if (r.kind === 'manual') {
       const ms = (doc.manualStalls || [])[r.index];
       if (ms) { deleteStalls([stallKey(ms.poly)]); setStallSel([]); }
-    }
+    } else if (r.kind === 'aisle') deleteAisle(r.aisleKey);
   };
   const isRowSelected = (r) => {
     if (r.kind === 'annot') return selection && selection.type === 'annot' && selection.index === r.index;
     if (r.kind === 'obs') return selection && selection.type === 'obs' && selection.index === r.index;
+    if (r.kind === 'aisle') return aisleSel === r.aisleKey;
     return false;
   };
 
@@ -2836,6 +2908,8 @@ function App() {
         case 'delete': case 'backspace':
           if (stallSel.length) {
             deleteStalls(stallSel); setStallSel([]);
+          } else if (aisleSel) {
+            deleteAisle(aisleSel);
           } else if (selection && selection.type === 'obs') {
             deleteObstacle(selection.index);
           } else if (selection && selection.type === 'annot') {
@@ -2856,7 +2930,7 @@ function App() {
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
-  }, [selection, stallSel, tool]);
+  }, [selection, stallSel, aisleSel, tool]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -3512,6 +3586,18 @@ function App() {
               </div>
               <div className="mix-note">${roadShape === 'rect' ? 'Sleep een rechthoek; daarna selecteren en aan de hoeken slepen om te vergroten.' : 'Klik punten voor een weglijn.'}</div>
             </div>`}
+          ${tool === 'annot' && ANNOT_TYPES[annotKind].body && !(annotKind === 'road' && roadShape === 'rect') && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>De lijn is</label>
+              <div className="seg">
+                <button className=${annotAlign === 'center' ? 'active' : ''} onClick=${() => setAnnotAlign('center')}>Hartlijn</button>
+                <button className=${annotAlign === 'left' ? 'active' : ''} onClick=${() => setAnnotAlign('left')}>Linkerrand</button>
+                <button className=${annotAlign === 'right' ? 'active' : ''} onClick=${() => setAnnotAlign('right')}>Rechterrand</button>
+              </div>
+              <div className="mix-note">${annotAlign === 'center'
+                ? 'De weg ligt half links en half rechts van je lijn.'
+                : 'De weg ligt volledig aan de ' + (annotAlign === 'left' ? 'rechter' : 'linker') + 'kant van je lijn, gezien in de richting waarin je tekent — teken langs een gevel of perceelgrens.'}</div>
+            </div>`}
           ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && !(annotKind === 'road' && roadShape === 'rect') && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
@@ -3566,6 +3652,11 @@ function App() {
           <input className="tool-search" type="search" placeholder="Zoek object…"
             value=${objQuery} onInput=${(e) => setObjQuery(e.target.value)} />
           ${objectRows.length === 0 && html`<div className="mix-note">Nog niets geplaatst.</div>`}
+          ${aislesRemovedCount > 0 && html`
+            <div className="mix-note" style=${{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>${aislesRemovedCount} rijbaan${aislesRemovedCount > 1 ? 'en' : ''} verwijderd</span>
+              <button className="btn ghost" style=${{ padding: '2px 8px' }} onClick=${restoreAisles}>Herstel</button>
+            </div>`}
           ${objectRows.map(([grp, rows]) => html`
             <div className="tool-group" key=${grp}>
               <div className="tool-group-h" style=${{ cursor: 'default' }}>
@@ -3775,6 +3866,30 @@ function App() {
             ${tight > 0 ? html`<div className="mix-warn">${tight} bocht${tight > 1 ? 'en' : ''} te krap voor R ${R.toFixed(1)} m.</div>` : ''}
             <div className="mix-note" style=${{ marginTop: 0 }}>Sleep de hoeken om de wachtrij te verlengen (~6 m per auto).</div>`;
           })()}
+          ${(ANNOT_TYPES[doc.annotations[selection.index].kind] || {}).body && !doc.annotations[selection.index].closed && (() => {
+            const ai = selection.index, ann = doc.annotations[ai];
+            const al = ann.align || 'center';
+            return html`
+              <div className="field">
+                <label>Breedte <span className="val">${(ann.width || 6).toFixed(1)} m</span></label>
+                <input type="range" min="2" max="20" step="0.1" value=${ann.width || 6}
+                  onInput=${(e) => updateAnnotation(ai, { width: +e.target.value })} />
+              </div>
+              <div className="field">
+                <label>De lijn is</label>
+                <div className="seg">
+                  <button className=${al === 'center' ? 'active' : ''} onClick=${() => updateAnnotation(ai, { align: undefined })}>Hartlijn</button>
+                  <button className=${al === 'left' ? 'active' : ''} onClick=${() => updateAnnotation(ai, { align: 'left' })}>Linkerrand</button>
+                  <button className=${al === 'right' ? 'active' : ''} onClick=${() => updateAnnotation(ai, { align: 'right' })}>Rechterrand</button>
+                </div>
+                <div className="mix-note">Omschakelen verlegt de weg zonder je lijn te verplaatsen.</div>
+              </div>
+              <label className="toggle">
+                <span>Vloeiende bochten</span>
+                <input type="checkbox" checked=${!!ann.curved}
+                  onChange=${(e) => updateAnnotation(ai, { curved: e.target.checked })} />
+              </label>`;
+          })()}
           <div className="sel-actions" style=${{ flexWrap: 'wrap' }}>
             <button className="btn ghost" onClick=${duplicateSelection}>⧉ Dupliceer</button>
             <button className="btn" onClick=${() => { deleteAnnotation(selection.index); setSelection(null); }}>🗑 Verwijder</button>
@@ -3848,11 +3963,13 @@ function App() {
               <span>Eenrichting (met pijlen)</span>
               <input type="checkbox" checked=${!!oneway} onChange=${(e) => setAisleOneway(aisleSel, e.target.checked)} />
             </label>
-            <div className="sel-actions">
+            <div className="sel-actions" style=${{ flexWrap: 'wrap' }}>
               <button className="btn" onClick=${() => flipAisle(aisleSel)} disabled=${!oneway}>⇄ Draai richting om</button>
+              <button className="btn" onClick=${() => deleteAisle(aisleSel)}>🗑 Verwijder rijbaan</button>
               <button className="btn ghost" onClick=${() => toggleLockAisle(aisleSel, !locked)}>${locked ? '🔓 Ontgrendel' : '🔒 Vergrendel'}</button>
               <button className="btn ghost" onClick=${clearSel}>Deselecteer</button>
-            </div>`;
+            </div>
+            <div className="mix-note">De vakken langs deze rijbaan blijven staan — verwijder ze apart als ze ook weg moeten.</div>`;
           })()}
         </div>`}
         ${vis('secMetrics') && html`

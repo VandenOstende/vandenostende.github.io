@@ -5,8 +5,18 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=a28e74e7';
-import { polyOf } from './geometry.js?v=a28e74e7';
+import { localToLatLon } from './basemap.js?v=9b7c7dbb';
+import { polyOf, ribbonPoly } from './geometry.js?v=9b7c7dbb';
+import { ANNOT_TYPES } from './annots.js?v=9b7c7dbb';
+
+// A drawn carriageway is an area, not a centreline: exporting the hairline lost
+// its width, its offset and its corners.
+function bodyPoly(an) {
+  const t = ANNOT_TYPES[an.kind];
+  if (!t || !t.body || an.closed || !an.points || an.points.length < 2) return null;
+  const p = ribbonPoly(an.points, an.width || t.width || 6, an.align, an.curved);
+  return p && p.length >= 3 ? p : null;
+}
 
 const AREA_KINDS = ['bikeparking', 'grass']; // annotation kinds that are filled areas
 // Any single-point annotation exports as a point. Previously only 'tree' did,
@@ -32,6 +42,8 @@ export function toGeoJSON(plan, geo) {
   (plan.stalls || []).forEach((s) => feats.push(poly(s.poly, { kind: 'stall', type: s.type })));
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
+    const body = bodyPoly(an);
+    if (body) { feats.push(poly(body, { kind: an.kind, width: an.width || 6, align: an.align || 'center' })); return; }
     if (isPoint(an)) {
       const props = { kind: an.kind, diameter: an.width || 5 };
       if (an.angle != null) props.angle = an.angle;
@@ -62,6 +74,8 @@ export function toDXF(plan) {
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
     const layer = String(an.kind).toUpperCase();
+    const body = bodyPoly(an);
+    if (body) { addPoly(body, layer, true); return; }
     if (isPoint(an)) addCircle(an.points[0], (an.width || 5) / 2, an.kind === 'tree' ? 'TREES' : layer);
     else if (an.points.length >= 3 && (AREA_KINDS.includes(an.kind) || an.closed)) addPoly(an.points, layer, true);
     else if (an.points.length >= 2) addPoly(an.points, layer, false);

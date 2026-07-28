@@ -318,3 +318,32 @@ export function rectPoly(x, y, w, h) {
     { x, y: y + h },
   ];
 }
+
+/**
+ * The carriageway of a drawn line, as a closed polygon.
+ *
+ * `align` says what the line means: 'center' (default) puts half the width on
+ * each side, 'left' treats the line as the road's left kerb and 'right' as its
+ * right kerb — left and right seen in the direction the points run. The normal
+ * (-dy, dx) points right of travel because y grows downward.
+ *
+ * Shared by the canvas renderer, the solver's blocker corridor, the exporters
+ * and the 3D drape, so all four agree on where the asphalt actually is.
+ */
+export function ribbonPoly(points, width, align, curved) {
+  const pts = tessellateOpen(points || [], !!curved, 10);
+  if (pts.length < 2) return null;
+  const hw = Math.max(0.25, (width || 3) / 2);
+  const shift = align === 'left' ? hw : align === 'right' ? -hw : 0;
+  const left = [], right = [];
+  for (let i = 0; i < pts.length; i++) {
+    let dx = 0, dy = 0;
+    if (i > 0) { dx += pts[i].x - pts[i - 1].x; dy += pts[i].y - pts[i - 1].y; }
+    if (i < pts.length - 1) { dx += pts[i + 1].x - pts[i].x; dy += pts[i + 1].y - pts[i].y; }
+    const len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+    const cx = pts[i].x + nx * shift, cy = pts[i].y + ny * shift;
+    left.push({ x: cx + nx * hw, y: cy + ny * hw });
+    right.push({ x: cx - nx * hw, y: cy - ny * hw });
+  }
+  return [...left, ...right.reverse()];
+}

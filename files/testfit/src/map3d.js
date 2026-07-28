@@ -7,10 +7,10 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=a28e74e7';
-import { STALL_TYPES } from './solver.js?v=a28e74e7';
-import { polyOf } from './geometry.js?v=a28e74e7';
-import { ANNOT_TYPES } from './annots.js?v=a28e74e7';
+import { localToLatLon } from './basemap.js?v=9b7c7dbb';
+import { STALL_TYPES } from './solver.js?v=9b7c7dbb';
+import { polyOf, ribbonPoly } from './geometry.js?v=9b7c7dbb';
+import { ANNOT_TYPES } from './annots.js?v=9b7c7dbb';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -106,7 +106,21 @@ function annColor(kind) {
 // 3D. Point markings and signage are handled separately.
 function isLineKind(kind) {
   const t = ANNOT_TYPES[kind];
-  return !!t && (t.mode === 'line' || t.mode === 'cross');
+  // `body` kinds drape as asphalt polygons alongside the solver's aisles, not
+  // as a hairline down their centre.
+  return !!t && !t.body && (t.mode === 'line' || t.mode === 'cross');
+}
+// Drawn carriageways, in the same collection (and so the same colour) as the
+// generated drive aisles.
+function roadPolys(anns) {
+  const out = [];
+  for (const an of anns) {
+    const t = ANNOT_TYPES[an.kind];
+    if (!t || !t.body || an.closed || !an.points || an.points.length < 2) continue;
+    const poly = ribbonPoly(an.points, an.width || t.width || 6, an.align, an.curved);
+    if (poly && poly.length >= 3) out.push(poly);
+  }
+  return out;
 }
 // Imported symbols stand up in 3D as an extruded footprint sized from the
 // bitmap's aspect and rotated onto the annotation's own angle. The metadata
@@ -138,7 +152,7 @@ export function planToGeoJSON(plan, geo) {
       return polyFeature(assetFootprint(an, t), geo, { height: (t.asset.height != null ? t.asset.height : 2.5) });
     })),
     stalls: fc((plan.stalls || []).map((s) => polyFeature(s.poly, geo, { color: (STALL_TYPES[s.type] || STALL_TYPES.standard).color }))),
-    aisles: fc((plan.aisles || []).map((a) => polyFeature(a.poly, geo, {}))),
+    aisles: fc([...(plan.aisles || []).map((a) => a.poly), ...roadPolys(anns)].map((q) => polyFeature(q, geo, {}))),
     buildings: fc((plan.obstacles || []).map((o) => polyFeature(polyOf(o), geo, { height: (o && o.floors ? o.floors : 4) * 3.2 }))),
     site: fc(plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : []),
     areas: fc(anns.filter((an) => an.points && an.points.length >= 3 && (an.kind === 'grass' || an.kind === 'bikeparking' || an.closed)).map((an) => polyFeature(an.points, geo, { color: annColor(an.kind) }))),
