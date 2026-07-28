@@ -7,10 +7,11 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=9b7c7dbb';
-import { STALL_TYPES } from './solver.js?v=9b7c7dbb';
-import { polyOf, ribbonPoly } from './geometry.js?v=9b7c7dbb';
-import { ANNOT_TYPES } from './annots.js?v=9b7c7dbb';
+import { localToLatLon } from './basemap.js?v=b4d3aaba';
+import { STALL_TYPES } from './solver.js?v=b4d3aaba';
+import { polyOf, ribbonPoly } from './geometry.js?v=b4d3aaba';
+import { ANNOT_TYPES } from './annots.js?v=b4d3aaba';
+import { buildingDesign, DEFAULT_USE, PART_COLORS } from './buildings.js?v=b4d3aaba';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -137,6 +138,39 @@ function assetFootprint(an, t) {
     .map(([x, y]) => ({ x: c.x + x * cs - y * sn, y: c.y + x * sn + y * cs }));
 }
 
+// A building drapes as its generated exterior: walls, roofs, canopy, gardens.
+// One grey extrusion per footprint is what made every building look the same
+// from the air regardless of what it was.
+function buildingParts(plan, geo) {
+  const site = plan.site && plan.site.length >= 3 ? plan.site : null;
+  const toward = site ? site.reduce((a, p) => ({ x: a.x + p.x / site.length, y: a.y + p.y / site.length }), { x: 0, y: 0 }) : null;
+  const out = [];
+  for (const o of plan.obstacles || []) {
+    const poly = polyOf(o);
+    const d = buildingDesign(poly, (o && o.use) || DEFAULT_USE, (o && o.floors) || 1, toward);
+    if (!d.areas.length) { out.push(polyFeature(poly, geo, { base: 0, height: 12, color: PART_COLORS.body })); continue; }
+    for (const part of d.areas) {
+      out.push(polyFeature(part.poly, geo, {
+        base: part.h0, height: Math.max(part.h0 + 0.05, part.h1),
+        color: PART_COLORS[part.role] || PART_COLORS.body,
+      }));
+    }
+  }
+  return out;
+}
+
+// The three marked sides of a bay. The fourth is the mouth the car drives
+// through, so it stays open — the same rule the 2D plan draws by.
+function bayMarks(p) {
+  if (!p || p.length !== 4) return [];
+  const len = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+  const e = [[0, 1], [1, 2], [2, 3], [3, 0]].map(([i, j]) => ({ a: p[i], b: p[j], l: len(p[i], p[j]) }));
+  // Drop one of the two short edges; without an aisle to test against, the
+  // convention "the first short edge" keeps 3-sided bays without guessing.
+  const idx = e.map((x, i) => i).sort((i, j) => e[i].l - e[j].l);
+  return e.filter((_, i) => i !== idx[0]).map((x) => [x.a, x.b]);
+}
+
 // Exported so the drape can be checked without a Mapbox token: it is a pure
 // function of the plan, and everything downstream of it needs the network.
 export function planToGeoJSON(plan, geo) {
@@ -151,9 +185,15 @@ export function planToGeoJSON(plan, geo) {
       const t = ANNOT_TYPES[an.kind];
       return polyFeature(assetFootprint(an, t), geo, { height: (t.asset.height != null ? t.asset.height : 2.5) });
     })),
-    stalls: fc((plan.stalls || []).map((s) => polyFeature(s.poly, geo, { color: (STALL_TYPES[s.type] || STALL_TYPES.standard).color }))),
+    // A standard bay is tarmac, like it is in plan; only the types that mean
+    // something keep their colour. 95 blue rectangles is a diagram, not a
+    // car park.
+    stalls: fc((plan.stalls || []).map((s) => polyFeature(s.poly, geo, {
+      color: s.type && s.type !== 'standard' ? (STALL_TYPES[s.type] || STALL_TYPES.standard).color : '#3f4650',
+    }))),
     aisles: fc([...(plan.aisles || []).map((a) => a.poly), ...roadPolys(anns)].map((q) => polyFeature(q, geo, {}))),
-    buildings: fc((plan.obstacles || []).map((o) => polyFeature(polyOf(o), geo, { height: (o && o.floors ? o.floors : 4) * 3.2 }))),
+    buildings: fc(buildingParts(plan, geo)),
+    bays: fc((plan.stalls || []).flatMap((s) => bayMarks(s.poly)).map((seg) => lineFeature(seg, geo, {}))),
     site: fc(plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : []),
     areas: fc(anns.filter((an) => an.points && an.points.length >= 3 && (an.kind === 'grass' || an.kind === 'bikeparking' || an.closed)).map((an) => polyFeature(an.points, geo, { color: annColor(an.kind) }))),
     lines: fc(anns.filter((an) => an.points && an.points.length >= 2 && !an.closed && isLineKind(an.kind)).map((an) => lineFeature(an.points, geo, { color: annColor(an.kind), width: an.width || 1 }))),
@@ -161,7 +201,7 @@ export function planToGeoJSON(plan, geo) {
   };
 }
 
-const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-buildings-3d', 'pp-trees-3d', 'pp-assets-3d'];
+const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-bays-line', 'pp-buildings-3d', 'pp-trees-3d', 'pp-assets-3d'];
 
 function addPlanLayers(map, plan, geo) {
   // Real 3D buildings of the surroundings from the style's vector source.
@@ -178,14 +218,27 @@ function addPlanLayers(map, plan, geo) {
   const src = (id, data) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data }); };
   src('pp-site', g.site); src('pp-aisles', g.aisles); src('pp-stalls', g.stalls);
   src('pp-buildings', g.buildings); src('pp-lines', g.lines); src('pp-areas', g.areas); src('pp-trees', g.trees);
-  src('pp-assets', g.assets);
+  src('pp-assets', g.assets); src('pp-bays', g.bays);
   const L = (layer) => { if (!map.getLayer(layer.id)) map.addLayer(layer); };
   L({ id: 'pp-areas-fill', type: 'fill', source: 'pp-areas', layout: { visibility: 'none' }, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 } });
   L({ id: 'pp-site-line', type: 'line', source: 'pp-site', layout: { visibility: 'none' }, paint: { 'line-color': '#f8b500', 'line-width': 2.5 } });
   L({ id: 'pp-aisles-fill', type: 'fill', source: 'pp-aisles', layout: { visibility: 'none' }, paint: { 'fill-color': '#2b3340', 'fill-opacity': 0.9 } });
   L({ id: 'pp-lines-line', type: 'line', source: 'pp-lines', layout: { visibility: 'none' }, paint: { 'line-color': ['get', 'color'], 'line-width': ['max', 2, ['*', ['get', 'width'], 3]] } });
-  L({ id: 'pp-stalls-fill', type: 'fill', source: 'pp-stalls', layout: { visibility: 'none' }, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.92, 'fill-outline-color': 'rgba(0,0,0,0.4)' } });
-  L({ id: 'pp-buildings-3d', type: 'fill-extrusion', source: 'pp-buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#8a97a8', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.95 } });
+  L({ id: 'pp-stalls-fill', type: 'fill', source: 'pp-stalls', layout: { visibility: 'none' }, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.95 } });
+  // Bay markings, so the car park has the same white lines in 3D as in plan.
+  L({ id: 'pp-bays-line', type: 'line', source: 'pp-bays', layout: { visibility: 'none' },
+    paint: { 'line-color': '#f8fafc', 'line-width': ['interpolate', ['linear'], ['zoom'], 16, 0.4, 20, 2.2], 'line-opacity': 0.9 } });
+  // Ambient occlusion and a vertical gradient are what stop an extrusion from
+  // reading as a flat coloured slab; both ship with Mapbox GL 3.
+  L({ id: 'pp-buildings-3d', type: 'fill-extrusion', source: 'pp-buildings', layout: { visibility: 'none' }, paint: {
+    'fill-extrusion-color': ['coalesce', ['get', 'color'], '#8a97a8'],
+    'fill-extrusion-base': ['coalesce', ['get', 'base'], 0],
+    'fill-extrusion-height': ['get', 'height'],
+    'fill-extrusion-opacity': 0.97,
+    'fill-extrusion-vertical-gradient': true,
+    'fill-extrusion-ambient-occlusion-intensity': 0.35,
+    'fill-extrusion-ambient-occlusion-radius': 3.5,
+  } });
   L({ id: 'pp-assets-3d', type: 'fill-extrusion', source: 'pp-assets', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#cbd5e1', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.95 } });
   L({ id: 'pp-trees-3d', type: 'circle', source: 'pp-trees', layout: { visibility: 'none' }, paint: { 'circle-color': '#2f9e44', 'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 3, 20, ['*', ['get', 'r'], 6]], 'circle-stroke-color': '#14532d', 'circle-stroke-width': 1, 'circle-opacity': 0.9 } });
 }
@@ -198,7 +251,7 @@ function setData(map, plan, geo) {
   const set = (id, data) => { const s = map.getSource(id); if (s) s.setData(data); };
   set('pp-site', g.site); set('pp-aisles', g.aisles); set('pp-stalls', g.stalls);
   set('pp-buildings', g.buildings); set('pp-lines', g.lines); set('pp-areas', g.areas); set('pp-trees', g.trees);
-  set('pp-assets', g.assets);
+  set('pp-assets', g.assets); set('pp-bays', g.bays);
 }
 
 /**
@@ -294,6 +347,16 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
 
   map.on('style.load', () => {
     ready = true;
+    // Sun and sky. Only Mapbox Standard honours these, and an older style
+    // throws rather than ignoring them, so it stays advisory.
+    try {
+      if (map.setLights) {
+        map.setLights([
+          { id: 'sky', type: 'ambient', properties: { color: '#ffffff', intensity: 0.55 } },
+          { id: 'sun', type: 'directional', properties: { color: '#fff4e0', intensity: 0.75, direction: [200, 42], 'cast-shadows': true, 'shadow-intensity': 0.7 } },
+        ]);
+      }
+    } catch (e) { /* style has no lighting model */ }
     clearTimeout(loadTimer);
     diag({ style: 'ok' });
     setTimeout(reportCanvas, 120);
