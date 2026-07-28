@@ -14,7 +14,7 @@
 // treats as blocked, and a design that grew past it would silently change the
 // parking result the moment you picked a type.
 // ============================================================
-import { polygonCentroid, polygonArea } from './geometry.js?v=b4d3aaba';
+import { polygonCentroid, polygonArea } from './geometry.js?v=6752bd72';
 
 export const BUILDING_USES = {
   retail:      { key: 'retail',      label: 'Retail',   floors: 1, floorH: 4.5, keywords: 'winkel supermarkt shop baanwinkel' },
@@ -22,6 +22,23 @@ export const BUILDING_USES = {
   office:      { key: 'office',      label: 'Kantoor',  floors: 4, floorH: 3.6, keywords: 'kantoren bedrijf werkplek' },
 };
 export const DEFAULT_USE = 'retail';
+
+// Facade materials. `tint` is the wall colour used in plan and as the 3D
+// fallback; `tex` names the procedural texture the drape paints on the walls.
+// One table so a brick house is the same brick in both views.
+export const MATERIALS = {
+  brick:    { key: 'brick',    label: 'Gevelsteen', tint: '#a9694f', line: 'rgba(60,30,20,0.30)', tex: 'brick' },
+  concrete: { key: 'concrete', label: 'Beton',      tint: '#b9bcc0', line: 'rgba(40,45,55,0.25)', tex: 'panel' },
+  wood:     { key: 'wood',     label: 'Hout',       tint: '#b98a52', line: 'rgba(70,45,20,0.32)', tex: 'board' },
+  render:   { key: 'render',   label: 'Pleister',   tint: '#dcd9d2', line: 'rgba(80,80,80,0.16)', tex: 'plain' },
+  metal:    { key: 'metal',    label: 'Metaal',     tint: '#9aa3ad', line: 'rgba(30,40,55,0.30)', tex: 'rib' },
+  glass:    { key: 'glass',    label: 'Glas',       tint: '#8fb0c4', line: 'rgba(20,50,70,0.34)', tex: 'band' },
+};
+// What each type is usually built of, so picking a use already looks right.
+export const DEFAULT_MATERIAL = { retail: 'render', residential: 'brick', office: 'glass' };
+export const materialOf = (o) => MATERIALS[(o && o.material)] || MATERIALS[DEFAULT_MATERIAL[(o && o.use) || DEFAULT_USE]] || MATERIALS.render;
+// The parts that are actually wall — the ones a facade material applies to.
+export const WALL_ROLES = { unit: 1, body: 1, setback: 1 };
 
 // One table, read by the canvas and by the 3D drape, so a roof is never one
 // colour in plan and another in the model.

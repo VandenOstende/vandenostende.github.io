@@ -7,11 +7,11 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=b4d3aaba';
-import { STALL_TYPES } from './solver.js?v=b4d3aaba';
-import { polyOf, ribbonPoly } from './geometry.js?v=b4d3aaba';
-import { ANNOT_TYPES } from './annots.js?v=b4d3aaba';
-import { buildingDesign, DEFAULT_USE, PART_COLORS } from './buildings.js?v=b4d3aaba';
+import { localToLatLon } from './basemap.js?v=6752bd72';
+import { STALL_TYPES } from './solver.js?v=6752bd72';
+import { polyOf, ribbonPoly } from './geometry.js?v=6752bd72';
+import { ANNOT_TYPES } from './annots.js?v=6752bd72';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=6752bd72';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -148,11 +148,15 @@ function buildingParts(plan, geo) {
   for (const o of plan.obstacles || []) {
     const poly = polyOf(o);
     const d = buildingDesign(poly, (o && o.use) || DEFAULT_USE, (o && o.floors) || 1, toward);
-    if (!d.areas.length) { out.push(polyFeature(poly, geo, { base: 0, height: 12, color: PART_COLORS.body })); continue; }
+    const mat = materialOf(o);
+    if (!d.areas.length) { out.push(polyFeature(poly, geo, { base: 0, height: 12, color: PART_COLORS.body, wall: 0 })); continue; }
     for (const part of d.areas) {
+      const isWall = !!WALL_ROLES[part.role];
       out.push(polyFeature(part.poly, geo, {
         base: part.h0, height: Math.max(part.h0 + 0.05, part.h1),
-        color: PART_COLORS[part.role] || PART_COLORS.body,
+        color: isWall ? mat.tint : (PART_COLORS[part.role] || PART_COLORS.body),
+        wall: isWall ? 1 : 0,
+        pattern: 'pp-tex-' + mat.tex,
       }));
     }
   }
@@ -201,7 +205,73 @@ export function planToGeoJSON(plan, geo) {
   };
 }
 
-const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-bays-line', 'pp-buildings-3d', 'pp-trees-3d', 'pp-assets-3d'];
+// Procedural facade textures. Small tiling bitmaps built on a canvas and
+// registered with the map, so a brick wall is brick in the model and not a
+// flat brown slab. No image files and nothing to fetch.
+const TEX_PAINT = {
+  brick: (x, w, h) => {
+    x.fillStyle = '#a9694f'; x.fillRect(0, 0, w, h);
+    x.strokeStyle = 'rgba(255,255,255,0.35)'; x.lineWidth = 1;
+    const bh = h / 4, bw = w / 2;
+    for (let r = 0; r < 4; r++) {
+      const y = r * bh, off = (r % 2) * (bw / 2);
+      x.beginPath(); x.moveTo(0, y); x.lineTo(w, y); x.stroke();
+      for (let c = -1; c < 3; c++) { const bx = off + c * bw; x.beginPath(); x.moveTo(bx, y); x.lineTo(bx, y + bh); x.stroke(); }
+    }
+  },
+  panel: (x, w, h) => {
+    x.fillStyle = '#b9bcc0'; x.fillRect(0, 0, w, h);
+    x.strokeStyle = 'rgba(60,66,74,0.35)'; x.lineWidth = 1.5;
+    x.strokeRect(0.75, 0.75, w - 1.5, h - 1.5);
+    x.strokeStyle = 'rgba(255,255,255,0.18)';
+    x.beginPath(); x.moveTo(0, h / 2); x.lineTo(w, h / 2); x.stroke();
+  },
+  board: (x, w, h) => {
+    x.fillStyle = '#b98a52'; x.fillRect(0, 0, w, h);
+    for (let i = 0; i < 8; i++) {
+      x.fillStyle = i % 2 ? 'rgba(255,240,215,0.12)' : 'rgba(80,50,20,0.14)';
+      x.fillRect((i * w) / 8, 0, w / 8, h);
+      x.strokeStyle = 'rgba(70,45,20,0.35)'; x.lineWidth = 1;
+      x.beginPath(); x.moveTo((i * w) / 8, 0); x.lineTo((i * w) / 8, h); x.stroke();
+    }
+  },
+  plain: (x, w, h) => {
+    x.fillStyle = '#dcd9d2'; x.fillRect(0, 0, w, h);
+    // A touch of grain, or a rendered wall reads as a solid colour swatch.
+    x.fillStyle = 'rgba(120,118,112,0.10)';
+    for (let i = 0; i < 90; i++) x.fillRect((i * 37) % w, (i * 53) % h, 1, 1);
+  },
+  rib: (x, w, h) => {
+    x.fillStyle = '#9aa3ad'; x.fillRect(0, 0, w, h);
+    for (let i = 0; i < 10; i++) {
+      x.fillStyle = i % 2 ? 'rgba(255,255,255,0.16)' : 'rgba(35,45,60,0.16)';
+      x.fillRect((i * w) / 10, 0, w / 20, h);
+    }
+  },
+  band: (x, w, h) => {
+    x.fillStyle = '#8fb0c4'; x.fillRect(0, 0, w, h);
+    x.fillStyle = 'rgba(18,42,60,0.42)';
+    for (let r = 0; r < 4; r++) x.fillRect(0, r * (h / 4) + h / 16, w, h / 8);
+    x.fillStyle = 'rgba(255,255,255,0.20)';
+    for (let c = 0; c < 4; c++) x.fillRect(c * (w / 4), 0, 1.5, h);
+  },
+};
+function addFacadeTextures(map) {
+  const S = 64;
+  for (const [name, paint] of Object.entries(TEX_PAINT)) {
+    const id = 'pp-tex-' + name;
+    try {
+      if (map.hasImage && map.hasImage(id)) continue;
+      const c = document.createElement('canvas');
+      c.width = S; c.height = S;
+      const x = c.getContext('2d');
+      paint(x, S, S);
+      map.addImage(id, x.getImageData(0, 0, S, S), { pixelRatio: 2 });
+    } catch (e) { /* a style without image support just keeps the flat colour */ }
+  }
+}
+
+const PLAN_LAYERS = ['pp-osm-3d', 'pp-areas-fill', 'pp-site-line', 'pp-aisles-fill', 'pp-lines-line', 'pp-stalls-fill', 'pp-bays-line', 'pp-buildings-3d', 'pp-walls-3d', 'pp-trees-3d', 'pp-assets-3d'];
 
 function addPlanLayers(map, plan, geo) {
   // Real 3D buildings of the surroundings from the style's vector source.
@@ -214,6 +284,7 @@ function addPlanLayers(map, plan, geo) {
       });
     }
   } catch (e) {}
+  addFacadeTextures(map);
   const g = planToGeoJSON(plan, geo);
   const src = (id, data) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data }); };
   src('pp-site', g.site); src('pp-aisles', g.aisles); src('pp-stalls', g.stalls);
@@ -230,20 +301,54 @@ function addPlanLayers(map, plan, geo) {
     paint: { 'line-color': '#f8fafc', 'line-width': ['interpolate', ['linear'], ['zoom'], 16, 0.4, 20, 2.2], 'line-opacity': 0.9 } });
   // Ambient occlusion and a vertical gradient are what stop an extrusion from
   // reading as a flat coloured slab; both ship with Mapbox GL 3.
-  L({ id: 'pp-buildings-3d', type: 'fill-extrusion', source: 'pp-buildings', layout: { visibility: 'none' }, paint: {
-    'fill-extrusion-color': ['coalesce', ['get', 'color'], '#8a97a8'],
+  const EXTRUDE = {
     'fill-extrusion-base': ['coalesce', ['get', 'base'], 0],
     'fill-extrusion-height': ['get', 'height'],
     'fill-extrusion-opacity': 0.97,
     'fill-extrusion-vertical-gradient': true,
     'fill-extrusion-ambient-occlusion-intensity': 0.35,
     'fill-extrusion-ambient-occlusion-radius': 3.5,
-  } });
+  };
+  // Roofs, canopies, gardens and plant: flat colour.
+  L({ id: 'pp-buildings-3d', type: 'fill-extrusion', source: 'pp-buildings', layout: { visibility: 'none' },
+    filter: ['!=', ['get', 'wall'], 1],
+    paint: { ...EXTRUDE, 'fill-extrusion-color': ['coalesce', ['get', 'color'], '#8a97a8'] } });
+  // Walls get the facade texture. A pattern replaces the colour outright, so
+  // this has to be its own layer — patterning the roofs too would put brick
+  // courses on a pitched roof.
+  L({ id: 'pp-walls-3d', type: 'fill-extrusion', source: 'pp-buildings', layout: { visibility: 'none' },
+    filter: ['==', ['get', 'wall'], 1],
+    paint: { ...EXTRUDE, 'fill-extrusion-color': ['coalesce', ['get', 'color'], '#c3c8d0'], 'fill-extrusion-pattern': ['get', 'pattern'] } });
   L({ id: 'pp-assets-3d', type: 'fill-extrusion', source: 'pp-assets', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': '#cbd5e1', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.95 } });
   L({ id: 'pp-trees-3d', type: 'circle', source: 'pp-trees', layout: { visibility: 'none' }, paint: { 'circle-color': '#2f9e44', 'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 3, 20, ['*', ['get', 'r'], 6]], 'circle-stroke-color': '#14532d', 'circle-stroke-width': 1, 'circle-opacity': 0.9 } });
 }
-function setPlanVisible(map, on) {
-  for (const id of PLAN_LAYERS) { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); }
+// Which Lagen switch owns which drape layer. The 2D canvas already honours
+// these; in 3D nothing did, so "Gebouwen uit" was a switch that stopped
+// halfway. `context` is the surrounding real-world buildings, which only exist
+// here and could not be turned off at all.
+const LAYER_OWNER = {
+  'pp-osm-3d': 'context',
+  'pp-buildings-3d': 'building',
+  'pp-walls-3d': 'building',
+  'pp-stalls-fill': 'parking',
+  'pp-bays-line': 'parking',
+  'pp-aisles-fill': 'parking',
+  'pp-site-line': 'site',
+  'pp-lines-line': 'infra',
+  'pp-areas-fill': 'infra',
+  'pp-assets-3d': 'infra',
+  'pp-trees-3d': 'infra',
+};
+// Visible = we are in 3D AND the layer is switched on. The mode leads: in 2D
+// every drape layer must stay off whatever the switches say, or the plan is on
+// screen twice — once on the canvas, once on the map underneath it.
+function applyVisibility(map, is3d, layers) {
+  for (const id of PLAN_LAYERS) {
+    if (!map.getLayer(id)) continue;
+    const owner = LAYER_OWNER[id];
+    const on = is3d && (!owner || !layers || layers[owner] !== false);
+    map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+  }
 }
 function setData(map, plan, geo) {
   if (!map || !map.isStyleLoaded()) return;
@@ -290,7 +395,7 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
     });
   } catch (e) { diag({ style: 'FOUT', detail: e.message }); onError('Kaart kon niet starten: ' + e.message); return null; }
 
-  let ready = false, pending3d = false, lastPlan = plan, tiles = 0;
+  let ready = false, pending3d = false, lastPlan = plan, tiles = 0, layerState = null;
   diag({ style: 'laden…' });
   const loadTimer = setTimeout(() => {
     if (ready) return;
@@ -362,7 +467,7 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
     setTimeout(reportCanvas, 120);
     onError('');
     try { addPlanLayers(map, lastPlan, geo); } catch (e) {}
-    if (pending3d) { setPlanVisible(map, true); }
+    try { applyVisibility(map, pending3d, layerState); } catch (e) {}
     setTimeout(() => { try { map.resize(); } catch (e) {} }, 60);
   });
   map.on('data', (e) => { if (e && e.tile) tiles++; });
@@ -384,7 +489,7 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
       pending3d = is3d;
       try {
         map.easeTo({ pitch: is3d ? 55 : 0, duration: 300 });
-        if (ready) setPlanVisible(map, is3d);
+        if (ready) applyVisibility(map, is3d, layerState);
         // In 3D the user drives the map directly; in 2D our canvas drives it.
         for (const k of ['dragPan', 'scrollZoom', 'dragRotate', 'touchZoomRotate', 'keyboard', 'doubleClickZoom', 'touchPitch']) {
           if (map[k]) { is3d ? map[k].enable() : map[k].disable(); }
@@ -392,6 +497,9 @@ export async function initMap(container, token, geo, plan, onError, styleUrl, on
       } catch (e) {}
     },
     setPlan(p) { lastPlan = p; try { setData(map, p, geo); } catch (e) {} },
+    // The mode is read from the controller, not passed in: two React effects
+    // write the same visibility, and whichever ran last would otherwise win.
+    setLayers(l) { layerState = l; if (ready) { try { applyVisibility(map, pending3d, layerState); } catch (e) {} } },
     // A location search moves the geo anchor; without this the draped plan keeps
     // converting against the anchor captured at construction.
     setGeo(g) {
