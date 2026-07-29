@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-6cd0eed5-43bd-40e8-9e93-c4bd292c6682/styles.css">
+<script src="_ds/nocturne-6cd0eed5-43bd-40e8-9e93-c4bd292c6682/_ds_bundle.js"></script>
+<style>
+  :root {
+    --color-bg: #f5f5f8;
+    --color-surface: #ffffff;
+    --color-text: #1c1d29;
+    --color-divider: #e3e3ea;
+    --color-neutral-100: #161826;
+    --color-neutral-200: #24263a;
+    --color-neutral-300: #3a3d52;
+    --color-neutral-500: #6f7285;
+    --color-neutral-700: #dcdce5;
+    --color-neutral-800: #ececf2;
+    --color-neutral-900: #f5f5f8;
+    --color-accent: #6a5bc4;
+    --color-accent-300: #4a3d99;
+    --color-accent-400: #56489f;
+    --color-accent-600: #8579d6;
+    --color-accent-900: #ece9f8;
+    --shadow-sm: 0 1px 2px rgba(28, 29, 41, 0.07);
+    --shadow-md: 0 4px 12px rgba(28, 29, 41, 0.09);
+    --shadow-lg: 0 18px 44px rgba(28, 29, 41, 0.16);
+  }
+  body { margin: 0; background: var(--color-bg); color: var(--color-text); }
+  .lighten { mix-blend-mode: normal; }
+  a { color: var(--color-accent); text-decoration: none; }
+  a:hover { color: var(--color-accent-300); }
+  .tk-scroll::-webkit-scrollbar { width: 10px; }
+  .tk-scroll::-webkit-scrollbar-thumb { background: var(--color-neutral-700); border-radius: 8px; }
+  .tk-scroll::-webkit-scrollbar-track { background: transparent; }
+</style>
+</helmet>
+<div style="height: 100vh; overflow: hidden; display: flex; flex-direction: column; font-family: var(--font-body); color: var(--color-text); background: var(--color-bg);">
+
+  <nav class="nav" style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px;">
+    <span class="nav-brand" style="margin-right: 6px;">ParkPlanner</span>
+    <span style="display: flex; flex-direction: column; gap: 1px; margin-right: 6px;">
+      <sc-if value="{{ editingName }}" hint-placeholder-val="{{ false }}">
+        <input class="input" type="text" value="{{ projectName }}" onChange="{{ onProjectName }}" onBlur="{{ commitName }}" onKeyDown="{{ nameKey }}" aria-label="Projectnaam" style="width: 190px; padding: 2px 6px; font-size: 12.5px;" />
+      </sc-if>
+      <sc-if value="{{ notEditingName }}" hint-placeholder-val="{{ true }}">
+        <span onDoubleClick="{{ startRename }}" title="Dubbelklik om de projectnaam te wijzigen" style="font-size: 12.5px; cursor: text;">{{ projectName }}</span>
+      </sc-if>
+      <span style="font-size: 10.5px; color: color-mix(in srgb, var(--color-text) 48%, transparent);">{{ savedLabel }}</span>
+    </span>
+    <span style="width: 1px; height: 22px; background: var(--color-divider); margin: 0 4px;"></span>
+    <sc-for list="{{ toolBtns }}" as="t" hint-placeholder-count="2">
+      <button type="button" data-tool="{{ t.id }}" onClick="{{ setTool }}" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; font: inherit; font-size: 12.5px; color: {{ t.ink }}; background: {{ t.bg }}; border: 1px solid {{ t.line }}; border-radius: 6px; cursor: pointer;" style-hover="border-color: var(--color-accent);">
+        <span>{{ t.label }}</span>
+        <span style="font-size: 10px; padding: 0 3px; border: 1px solid var(--color-neutral-700); border-radius: 3px; color: color-mix(in srgb, var(--color-text) 50%, transparent);">{{ t.key }}</span>
+      </button>
+    </sc-for>
+    <button type="button" data-tool="measure" onClick="{{ setTool }}" aria-label="Meetlint (M)" title="Meetlint (M)" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; color: {{ measureInk }}; background: {{ measureBg }}; border: 1px solid {{ measureLine }}; border-radius: 6px; cursor: pointer;" style-hover="border-color: var(--color-accent);">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="8" width="20" height="8" rx="1.5"></rect><path d="M7 8v3M12 8v4M17 8v3"></path></svg>
+    </button>
+    <span style="width: 1px; height: 22px; background: var(--color-divider); margin: 0 4px;"></span>
+    <button type="button" class="btn btn-primary" onClick="{{ openTools }}" aria-label="Teken infrastructuur" title="Teken infrastructuur (T)" style="width: 34px; height: 30px; padding: 0; justify-content: center;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21 5 3M16 21l3-18"></path><path d="M12 5v3M12 11v3M12 17v3"></path></svg>
+    </button>
+    <span style="flex: 1;"></span>
+    <button type="button" class="btn btn-ghost">↻ Rij-as <span style="font-feature-settings: 'tnum' 1; opacity: 0.6;">3/8</span></button>
+    <span style="display: flex; gap: 3px; padding: 3px; background: var(--color-neutral-800); border: 1px solid var(--color-neutral-700); border-radius: 6px;">
+      <sc-for list="{{ viewBtns }}" as="v" hint-placeholder-count="2">
+        <button type="button" data-view="{{ v.id }}" onClick="{{ setView }}" style="padding: 4px 11px; font: inherit; font-size: 12px; color: {{ v.ink }}; background: {{ v.bg }}; border: 0; border-radius: 4px; cursor: pointer;">{{ v.label }}</button>
+      </sc-for>
+    </span>
+    <button type="button" class="btn btn-ghost">⤢ Fit</button>
+    <span style="position: relative;">
+      <button type="button" class="btn btn-ghost" onClick="{{ toggleOptsMenu }}" aria-expanded="{{ optsMenuOpen }}">👁 Weergave ▾</button>
+      <sc-if value="{{ optsMenuOpen }}" hint-placeholder-val="{{ false }}">
+        <span style="position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; display: block; width: 246px; padding: 10px 12px 12px; background: var(--color-surface); border: 1px solid var(--color-neutral-700); border-radius: 8px; box-shadow: var(--shadow-md);">
+          <span style="display: block; margin-bottom: 6px; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent);">Locatie</span>
+          <span style="display: flex; gap: 6px;">
+            <input class="input" type="search" placeholder="Adres zoeken…" aria-label="Adres zoeken" style="flex: 1; min-width: 0; font-size: 12.5px;" />
+            <button type="button" class="btn btn-ghost">Ga</button>
+          </span>
+          <span style="display: block; margin-top: 6px; font-size: 11px; font-feature-settings: 'tnum' 1; color: color-mix(in srgb, var(--color-text) 55%, transparent);">51.0536 N · 3.7253 E — Gent, Wondelgem</span>
+          <span style="display: block; margin: 12px 0 6px; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent);">Preset</span>
+          <select class="input" value="{{ preset }}" onChange="{{ setPreset }}" aria-label="Preset" style="width: 100%; font-size: 12.5px;">
+            <option value="us_standard">VS — Standaard (9×18 ft)</option>
+            <option value="us_large">VS — SUV (10×20 ft)</option>
+            <option value="eu_metric">EU — Metrisch (2,5×5,0 m)</option>
+            <option value="compact">Compact (2,4×4,9 m)</option>
+          </select>
+          <span style="display: block; margin: 12px 0 6px; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent);">Onderdelen</span>
+          <sc-for list="{{ uiParts }}" as="u" hint-placeholder-count="4">
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 12.5px; cursor: pointer;">
+              <input type="checkbox" data-id="{{ u.id }}" checked="{{ u.on }}" onChange="{{ togglePart }}" style="accent-color: var(--color-accent);" />
+              <span>{{ u.label }}</span>
+            </label>
+          </sc-for>
+          <span style="display: block; margin: 12px 0 6px; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent);">Lagen <span style="letter-spacing: 0; text-transform: none; font-feature-settings: 'tnum' 1;">{{ layersOnCount }}</span></span>
+          <sc-for list="{{ layers }}" as="l" hint-placeholder-count="9">
+            <label style="display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 12.5px; cursor: pointer;">
+              <input type="checkbox" data-id="{{ l.id }}" checked="{{ l.on }}" onChange="{{ toggleLayer }}" style="accent-color: var(--color-accent);" />
+              <span style="width: 12px; height: 12px; flex: none; border-radius: 3px; border: 1px solid var(--color-neutral-700); background: {{ l.color }};"></span>
+              <span>{{ l.label }}</span>
+            </label>
+          </sc-for>
+        </span>
+      </sc-if>
+    </span>
+    <button type="button" class="btn btn-ghost" aria-label="Ongedaan maken" title="Ongedaan maken (⌘Z)" style="width: 34px; height: 30px; padding: 0; justify-content: center; font-size: 17px; line-height: 1;">↶</button>
+    <button type="button" class="btn btn-ghost" aria-label="Opnieuw" title="Opnieuw (⇧⌘Z)" style="width: 34px; height: 30px; padding: 0; justify-content: center; font-size: 17px; line-height: 1;">↷</button>
+    <button type="button" class="btn btn-ghost" aria-label="Opslaan" title="Opslaan (⌘S)" style="width: 34px; height: 30px; padding: 0; justify-content: center;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11l5 5v11H4z"></path><path d="M8 4v5h7"></path><rect x="8" y="13" width="8" height="7"></rect></svg>
+    </button>
+    <button type="button" class="btn btn-ghost" aria-label="Export" title="Export (PNG, JSON, GeoJSON, DXF, CSV)" style="width: 40px; height: 30px; padding: 0; justify-content: center; gap: 3px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"></path><path d="m8 7 4-4 4 4"></path><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"></path></svg>
+      <span style="font-size: 9px; opacity: 0.6;">▾</span>
+    </button>
+    <button type="button" class="btn btn-ghost btn-icon" aria-label="Sneltoetsen" title="Sneltoetsen (?)">?</button>
+  </nav>
+
+  <div style="flex: 1; min-height: 0; display: grid; grid-template-columns: {{ gridCols }};">
+
+    <sc-if value="{{ leftClosed }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; background: var(--color-surface); border-right: 1px solid var(--color-divider);">
+        <button type="button" onClick="{{ toggleLeft }}" aria-label="Linkerpaneel uitklappen" title="Linkerpaneel uitklappen" style="display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; color: var(--color-accent); background: var(--color-neutral-800); border: 1px solid var(--color-neutral-700); border-radius: 6px; cursor: pointer;" style-hover="border-color: var(--color-accent);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg>
+        </button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ leftOpen }}" hint-placeholder-val="{{ true }}">
+    <aside class="tk-scroll" style="overflow: auto; background: var(--color-surface); border-right: 1px solid var(--color-divider);">
+      <div style="padding: 12px 14px; border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent); background: color-mix(in srgb, var(--color-accent) 7%, transparent);">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+          <h3 style="margin: 0; flex: 1; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent);">Gereedschapsopties</h3>
+          <button type="button" onClick="{{ toggleLeft }}" aria-label="Linkerpaneel inklappen" title="Linkerpaneel inklappen" style="display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; border-radius: 5px; cursor: pointer;" style-hover="color: var(--color-accent); background: var(--color-neutral-800);">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"></path></svg>
+          </button>
+        </div>
+        <p style="margin: 0; font-size: 12px; line-height: 17px; color: color-mix(in srgb, var(--color-text) 68%, transparent);">{{ toolHint }}</p>
+      </div>
+
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" onClick="{{ toggleObjects }}" aria-expanded="{{ objectsOpen }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ objectsCaret }}</span>
+          <span style="flex: 1; text-align: left;">Objecten</span>
+          <span style="padding: 0 6px; font-size: 10px; letter-spacing: 0; background: var(--color-neutral-800); border-radius: 999px;">{{ objCount }}</span>
+        </button>
+        <sc-if value="{{ objectsOpen }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+            <input class="input" type="search" placeholder="Zoek object…" style="width: 100%; box-sizing: border-box; margin-bottom: 8px; font-size: 12.5px;" />
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <sc-for list="{{ objects }}" as="o" hint-placeholder-count="6">
+                <div data-obj="{{ o.key }}" onClick="{{ selectObj }}" style="display: flex; align-items: center; gap: 7px; padding: 4px 6px; font-size: 12px; border-radius: 5px; cursor: pointer; background: {{ o.bg }}; box-shadow: {{ o.bar }};" style-hover="background: var(--color-neutral-800);">
+                  <span style="width: 10px; height: 10px; flex: none; border-radius: 3px; background: {{ o.color }};"></span>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ o.label }}</span>
+                  <span style="flex: none; font-size: 10.5px; color: color-mix(in srgb, var(--color-text) 52%, transparent);">{{ o.sub }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+    </aside>
+    </sc-if>
+
+    <main style="position: relative; overflow: hidden; background: radial-gradient(circle at 30% 20%, var(--color-neutral-900), var(--color-neutral-800));">
+      <div style="position: absolute; inset: 0; background-image: linear-gradient(to right, color-mix(in srgb, var(--color-text) 6%, transparent) 0 1px, transparent 1px 40px), linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 6%, transparent) 0 1px, transparent 1px 40px); background-size: 40px 40px;"></div>
+      <div style="position: absolute; left: 10%; top: 12%; width: 74%; height: 66%; border: 1.5px solid #b8860b; border-radius: 2px; outline: {{ hl.site }}; outline-offset: 3px;"></div>
+      <div style="position: absolute; left: 13%; top: 17%; width: 68%; height: 56%; border: 1px dashed #0891b2; border-radius: 2px;"></div>
+      <div style="position: absolute; left: 16%; top: 21%; width: 30%; height: 22%; background: #94a3b8; border: 1px solid #64748b; outline: {{ hl.buildingA }}; outline-offset: 2px;"></div>
+      <div style="position: absolute; left: 52%; top: 21%; width: 18%; height: 14%; background: #94a3b8; border: 1px solid #64748b; outline: {{ hl.buildingB }}; outline-offset: 2px;"></div>
+      <div style="position: absolute; left: 52%; top: 36%; width: 18%; height: 8%; border: 2px solid #f97316; border-radius: 0 0 40px 40px; border-top: 0; outline: {{ hl.drivethru }}; outline-offset: 2px;"></div>
+      <div style="position: absolute; left: 9%; top: 49%; width: 14px; height: 14px; border-radius: 50%; background: #22d3ee; border: 1px solid #0e7490; outline: {{ hl.access }}; outline-offset: 3px;"></div>
+      <div style="position: absolute; left: 16%; right: 22%; top: 45%; display: flex; justify-content: space-between; outline: {{ hl.lights }}; outline-offset: 4px;">
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: #fcd34d; border: 1px solid #b45309;"></span>
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: #fcd34d; border: 1px solid #b45309;"></span>
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: #fcd34d; border: 1px solid #b45309;"></span>
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: #fcd34d; border: 1px solid #b45309;"></span>
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: #fcd34d; border: 1px solid #b45309;"></span>
+      </div>
+      <div style="position: absolute; left: 16%; top: 48%; width: 62%; height: 44px; background: linear-gradient(to bottom, #8f93a8, #7c8095); outline: {{ hl.road }}; outline-offset: 2px;"></div>
+      <div style="position: absolute; left: 16%; top: calc(48% + 21px); width: 62%; height: 2px; background: repeating-linear-gradient(to right, #ffffff 0 18px, transparent 18px 34px);"></div>
+      <div style="position: absolute; left: 16%; top: 56%; width: 62%; height: 44px; background: repeating-linear-gradient(to right, #2563eb 0 2px, color-mix(in srgb, #2563eb 18%, transparent) 2px 26px); outline: {{ hl.stallsStd }}; outline-offset: 2px;"></div>
+      <div style="position: absolute; left: 16%; top: 64%; width: 62%; height: 44px; background: repeating-linear-gradient(to right, #6366f1 0 2px, color-mix(in srgb, #22c55e 18%, transparent) 2px 26px); outline: {{ hl.stallsMix }}; outline-offset: 2px;"></div>
+
+      <sc-if value="{{ showHint }}" hint-placeholder-val="{{ true }}">
+      <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 14px; font-size: 12px; border-radius: 999px; background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface)); border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent); color: var(--color-accent-300); box-shadow: var(--shadow-sm); white-space: nowrap; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis;">{{ pillHint }}</div>
+      </sc-if>
+
+      <sc-if value="{{ showHud }}" hint-placeholder-val="{{ true }}">
+      <div style="position: absolute; left: 12px; bottom: {{ hudBottom }}; display: flex; gap: 10px; align-items: center; padding: 6px 10px; font-size: 11.5px; border-radius: 6px; background: rgba(255,255,255,0.92); border: 1px solid var(--color-neutral-700); color: color-mix(in srgb, var(--color-text) 60%, transparent);">
+        <span>Vakken <strong style="font-weight: 600; color: var(--color-text); font-feature-settings: 'tnum' 1;">412</strong></span>
+        <span>Schaal <strong style="font-weight: 600; color: var(--color-text);">1 : 750</strong></span>
+        <span>Zoom <strong style="font-weight: 600; color: var(--color-text);">62 %</strong></span>
+      </div>
+      </sc-if>
+      <sc-if value="{{ showAttrib }}" hint-placeholder-val="{{ true }}">
+      <div style="position: absolute; right: 6px; bottom: {{ attribBottom }}; padding: 2px 7px; font-size: 10px; border-radius: 4px; background: rgba(255,255,255,0.92); color: color-mix(in srgb, var(--color-text) 52%, transparent);">© OpenStreetMap-bijdragers</div>
+      </sc-if>
+
+      <sc-if value="{{ showDealbar }}" hint-placeholder-val="{{ true }}">
+      <div style="position: absolute; left: 0; right: 0; bottom: 0;">
+        <button type="button" onClick="{{ toggleDeal }}" style="position: absolute; right: 12px; top: -23px; height: 23px; padding: 0 12px; font: inherit; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 60%, transparent); background: rgba(255,255,255,0.92); border: 1px solid var(--color-neutral-700); border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer;" style-hover="color: var(--color-text);">{{ dealToggle }}</button>
+        <sc-if value="{{ dealOpen }}" hint-placeholder-val="{{ true }}">
+          <div ref="{{ dealRef }}" style="display: flex; overflow-x: auto; padding: 9px 14px; background: rgba(255,255,255,0.94); border-top: 1px solid var(--color-divider);">
+            <sc-for list="{{ dealCols }}" as="c" hint-placeholder-count="5">
+              <div style="min-width: 148px; flex: 0 0 auto; padding: 0 18px; border-right: 1px solid var(--color-divider);">
+                <div style="margin-bottom: 6px; font-family: var(--font-heading); font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-accent);">{{ c.name }}</div>
+                <sc-for list="{{ c.rows }}" as="r" hint-placeholder-count="4">
+                  <div style="display: flex; justify-content: space-between; gap: 16px; padding: 1.5px 0; font-size: 12px;">
+                    <span style="white-space: nowrap; color: color-mix(in srgb, var(--color-text) 58%, transparent);">{{ r.k }}</span>
+                    <strong style="font-weight: 600; white-space: nowrap; font-feature-settings: 'tnum' 1; color: {{ r.ink }};">{{ r.v }}</strong>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+      </sc-if>
+    </main>
+
+    <aside class="tk-scroll" style="overflow: auto; background: var(--color-surface); border-left: 1px solid var(--color-divider);">
+      <div style="position: sticky; top: 0; z-index: 2; padding: 10px 14px; background: var(--color-surface); border-bottom: 1px solid var(--color-divider);">
+        <input class="input" type="search" placeholder="Zoek in dit paneel…" value="{{ panelQuery }}" onChange="{{ onPanelQuery }}" aria-label="Zoek in dit paneel" style="width: 100%; box-sizing: border-box; font-size: 12.5px;" />
+      </div>
+      <sc-if value="{{ noPanelResults }}" hint-placeholder-val="{{ false }}">
+        <p style="padding: 12px 14px; margin: 0; font-size: 12.5px; color: color-mix(in srgb, var(--color-text) 60%, transparent);">Geen sectie gevonden voor deze zoekterm.</p>
+      </sc-if>
+      <sc-if value="{{ secs.metrics.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" data-sec="metrics" onClick="{{ toggleSec }}" aria-expanded="{{ secs.metrics.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.metrics.caret }}</span>
+          <span style="flex: 1; text-align: left;">Metrics</span>
+        </button>
+        <sc-if value="{{ secs.metrics.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px;">
+          <div style="grid-column: 1 / -1; padding: 9px 10px; background: var(--color-neutral-800); border: 1px solid var(--color-neutral-700); border-radius: 6px;">
+            <div style="font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent);">Totaal vakken</div>
+            <div style="margin-top: 2px; font-family: var(--font-heading); font-size: 30px; font-weight: 700; font-feature-settings: 'tnum' 1; color: var(--color-accent);">412</div>
+          </div>
+          <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="5">
+            <div style="padding: 9px 10px; background: var(--color-neutral-800); border: 1px solid var(--color-neutral-700); border-radius: 6px;">
+              <div style="font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent);">{{ m.k }}</div>
+              <div style="margin-top: 2px; font-family: var(--font-heading); font-size: 19px; font-weight: 700; font-feature-settings: 'tnum' 1;">{{ m.v }}<small style="font-size: 11px; font-weight: 500; color: color-mix(in srgb, var(--color-text) 55%, transparent);">{{ m.u }}</small></div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 12px;">
+          <sc-for list="{{ stallTypes }}" as="s" hint-placeholder-count="6">
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px;">
+              <span style="width: 11px; height: 11px; border-radius: 3px; background: {{ s.color }};"></span>
+              <span>{{ s.label }}</span>
+              <span style="margin-left: auto; font-feature-settings: 'tnum' 1; color: color-mix(in srgb, var(--color-text) 55%, transparent);">{{ s.count }}</span>
+            </div>
+          </sc-for>
+        </div></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ secs.vakrijstrook.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" data-sec="vakrijstrook" onClick="{{ toggleSec }}" aria-expanded="{{ secs.vakrijstrook.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.vakrijstrook.caret }}</span>
+          <span style="flex: 1; text-align: left;">Vak &amp; rijstrook</span>
+        </button>
+        <sc-if value="{{ secs.vakrijstrook.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <div style="display: flex; gap: 3px; margin-bottom: 12px; padding: 3px; background: var(--color-neutral-800); border: 1px solid var(--color-neutral-700); border-radius: 6px;">
+          <sc-for list="{{ layoutBtns }}" as="b" hint-placeholder-count="3">
+            <button type="button" data-layout="{{ b.id }}" onClick="{{ setLayout }}" style="flex: 1; padding: 5px 2px; font: inherit; font-size: 11.5px; color: {{ b.ink }}; background: {{ b.bg }}; border: 0; border-radius: 4px; cursor: pointer;">{{ b.label }}</button>
+          </sc-for>
+        </div>
+        <sc-for list="{{ sliders }}" as="s" hint-placeholder-count="5">
+          <div style="margin-bottom: 12px;">
+            <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; font-size: 12.5px;">
+              <span>{{ s.label }}</span>
+              <span style="font-weight: 600; font-feature-settings: 'tnum' 1; color: var(--color-accent);">{{ s.text }}</span>
+            </label>
+            <input type="range" data-id="{{ s.id }}" min="{{ s.min }}" max="{{ s.max }}" step="{{ s.step }}" value="{{ s.value }}" onChange="{{ setSlider }}" aria-label="{{ s.label }}" style="width: 100%; accent-color: var(--color-accent);" />
+          </div>
+        </sc-for>
+        <div style="display: flex; gap: 3px; padding: 3px; background: var(--color-neutral-800); border: 1px solid var(--color-neutral-700); border-radius: 6px;">
+          <sc-for list="{{ angleBtns }}" as="b" hint-placeholder-count="3">
+            <button type="button" data-angle="{{ b.id }}" onClick="{{ setAngle }}" style="flex: 1; padding: 5px 0; font: inherit; font-size: 12px; color: {{ b.ink }}; background: {{ b.bg }}; border: 0; border-radius: 4px; cursor: pointer;">{{ b.label }}</button>
+          </sc-for>
+        </div>
+        <sc-for list="{{ toggles }}" as="t" hint-placeholder-count="3">
+          <label style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12.5px; cursor: pointer;">
+            <span>{{ t.label }}</span>
+            <input type="checkbox" data-id="{{ t.id }}" checked="{{ t.on }}" onChange="{{ toggleOpt }}" style="accent-color: var(--color-accent);" />
+          </label>
+        </sc-for></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ secs.bereikbaarheid.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" data-sec="bereikbaarheid" onClick="{{ toggleSec }}" aria-expanded="{{ secs.bereikbaarheid.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.bereikbaarheid.caret }}</span>
+          <span style="flex: 1; text-align: left;">Bereikbaarheid</span>
+        </button>
+        <sc-if value="{{ secs.bereikbaarheid.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px;">
+          <sc-for list="{{ vehicles }}" as="v" hint-placeholder-count="4">
+            <button type="button" data-veh="{{ v.id }}" onClick="{{ setVehicle }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 8px; font: inherit; font-size: 12px; text-align: left; color: var(--color-text); background: {{ v.bg }}; border: 1px solid {{ v.line }}; border-radius: 6px; cursor: pointer;" style-hover="border-color: var(--color-accent);">
+              <span>{{ v.icon }}</span>
+              <span>{{ v.label }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <div style="margin: 4px 0 6px; font-size: 12px; font-weight: 600;">{{ knHead }}</div>
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <sc-for list="{{ knelpunten }}" as="k" hint-placeholder-count="3">
+            <div style="display: flex; align-items: flex-start; gap: 7px; padding: 5px 6px; border-radius: 5px; cursor: pointer;" style-hover="background: var(--color-neutral-800);">
+              <span style="width: 10px; height: 10px; margin-top: 4px; flex: none; border-radius: 3px; background: {{ k.color }};"></span>
+              <span style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
+                <span style="font-size: 12px;">{{ k.label }}</span>
+                <span style="font-size: 11px; line-height: 1.35; color: color-mix(in srgb, var(--color-text) 55%, transparent);">{{ k.need }}</span>
+              </span>
+            </div>
+          </sc-for>
+        </div>
+        <p style="margin: 8px 0 0; font-size: 11px; line-height: 1.4; color: color-mix(in srgb, var(--color-text) 52%, transparent);">Cirkelvormige gesleepte breedte — een eerste toets, geen normcitatie.</p></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ secs.vaktypesmix.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" data-sec="vaktypesmix" onClick="{{ toggleSec }}" aria-expanded="{{ secs.vaktypesmix.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.vaktypesmix.caret }}</span>
+          <span style="flex: 1; text-align: left;">Vaktypes (mix)</span>
+        </button>
+        <sc-if value="{{ secs.vaktypesmix.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          <tbody>
+            <sc-for list="{{ mix }}" as="m" hint-placeholder-count="4">
+              <tr>
+                <td style="padding: 4px; border-bottom: 1px solid var(--color-divider);"><span style="display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: middle; border-radius: 3px; background: {{ m.color }};"></span>{{ m.label }}</td>
+                <td style="padding: 4px; text-align: right; border-bottom: 1px solid var(--color-divider); font-feature-settings: 'tnum' 1;">{{ m.pct }}</td>
+                <td style="padding: 4px; text-align: right; border-bottom: 1px solid var(--color-divider); font-feature-settings: 'tnum' 1; color: color-mix(in srgb, var(--color-text) 55%, transparent);">{{ m.n }}</td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+        <p style="margin: 8px 0 0; font-size: 11px; line-height: 1.4; color: color-mix(in srgb, var(--color-text) 52%, transparent);">Minder-valide volgt automatisch de ADA-tabel 208.2 plus de 1-op-6 vanregel.</p></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ secs.zonenschaduw.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" data-sec="zonenschaduw" onClick="{{ toggleSec }}" aria-expanded="{{ secs.zonenschaduw.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.zonenschaduw.caret }}</span>
+          <span style="flex: 1; text-align: left;">Zon en schaduw</span>
+        </button>
+        <sc-if value="{{ secs.zonenschaduw.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+          <input class="input" type="date" value="2026-06-21" aria-label="Datum" style="flex: 1; min-width: 0; font-size: 12px;" />
+          <input class="input" type="time" value="14:30" aria-label="Tijd" style="width: 88px; font-size: 12px;" />
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px;">
+          <span style="color: color-mix(in srgb, var(--color-text) 58%, transparent);">Vakken in schaduw</span>
+          <strong style="font-weight: 600; font-feature-settings: 'tnum' 1;">37</strong>
+        </div>
+        <p style="margin: 6px 0 0; font-size: 11px; line-height: 1.4; color: color-mix(in srgb, var(--color-text) 52%, transparent);">Ware zonnetijd voor de lengtegraad van de site — geen zomertijd.</p></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ secs.lichtenopbrengst.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" data-sec="lichtenopbrengst" onClick="{{ toggleSec }}" aria-expanded="{{ secs.lichtenopbrengst.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.lichtenopbrengst.caret }}</span>
+          <span style="flex: 1; text-align: left;">Licht en opbrengst</span>
+        </button>
+        <sc-if value="{{ secs.lichtenopbrengst.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <div style="display: flex; gap: 3px; margin-bottom: 10px; padding: 3px; background: var(--color-neutral-800); border: 1px solid var(--color-neutral-700); border-radius: 6px;">
+          <sc-for list="{{ lightBtns }}" as="b" hint-placeholder-count="2">
+            <button type="button" data-light="{{ b.id }}" onClick="{{ setLight }}" style="flex: 1; padding: 5px 0; font: inherit; font-size: 12px; color: {{ b.ink }}; background: {{ b.bg }}; border: 0; border-radius: 4px; cursor: pointer;">{{ b.label }}</button>
+          </sc-for>
+        </div>
+        <sc-for list="{{ lightRows }}" as="r" hint-placeholder-count="4">
+          <div style="display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; font-size: 12px;">
+            <span style="color: color-mix(in srgb, var(--color-text) 58%, transparent);">{{ r.k }}</span>
+            <strong style="font-weight: 600; font-feature-settings: 'tnum' 1;">{{ r.v }}</strong>
+          </div>
+        </sc-for>
+        <div style="margin-top: 10px;">
+          <div style="height: 8px; border-radius: 4px; border: 1px solid var(--color-neutral-700); background: linear-gradient(to right, #fef3c7, #fde68a, #fcd34d, #fbbf24, #f59e0b, #d97706);"></div>
+          <div style="display: flex; justify-content: space-between; margin-top: 3px; font-size: 10px; color: color-mix(in srgb, var(--color-text) 52%, transparent);">
+            <span>{{ rampMin }}</span>
+            <span>{{ rampMax }}</span>
+          </div>
+        </div></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ secs.programmaratio.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px; border-bottom: 1px solid var(--color-divider);">
+        <button type="button" data-sec="programmaratio" onClick="{{ toggleSec }}" aria-expanded="{{ secs.programmaratio.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.programmaratio.caret }}</span>
+          <span style="flex: 1; text-align: left;">Programma &amp; ratio</span>
+        </button>
+        <sc-if value="{{ secs.programmaratio.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+          <input class="input" type="number" value="4200" aria-label="GLA in m²" style="flex: 1; min-width: 0; font-size: 12.5px; font-feature-settings: 'tnum' 1;" />
+          <input class="input" type="number" value="4" step="0.5" aria-label="Vakken per 100 m²" style="width: 74px; font-size: 12.5px; font-feature-settings: 'tnum' 1;" />
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0;">
+          <span style="color: color-mix(in srgb, var(--color-text) 58%, transparent);">Vereist</span>
+          <strong style="font-weight: 600; font-feature-settings: 'tnum' 1;">168</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0;">
+          <span style="color: color-mix(in srgb, var(--color-text) 58%, transparent);">Saldo</span>
+          <strong style="font-weight: 600; font-feature-settings: 'tnum' 1; color: #15803d;">+244</strong>
+        </div></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ secs.schemas.vis }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 12px 14px;">
+        <button type="button" data-sec="schemas" onClick="{{ toggleSec }}" aria-expanded="{{ secs.schemas.open }}" style="display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; font: inherit; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-text);">
+          <span style="color: var(--color-accent);">{{ secs.schemas.caret }}</span>
+          <span style="flex: 1; text-align: left;">Schema's</span>
+        </button>
+        <sc-if value="{{ secs.schemas.open }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 10px;">
+        
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <sc-for list="{{ schemes }}" as="s" hint-placeholder-count="4">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; background: {{ s.bg }}; border: 1px solid {{ s.line }}; border-radius: 6px;">
+              <span style="display: flex; flex-direction: column; line-height: 1.3;">
+                <span style="font-size: 12px; font-weight: 600;">{{ s.label }}</span>
+                <span style="font-size: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent);">{{ s.count }}</span>
+              </span>
+              <button type="button" class="btn btn-ghost" style="padding: 4px 8px; font-size: 11px;">Toepassen</button>
+            </div>
+          </sc-for>
+        </div></div>
+        </sc-if>
+      </div>
+      </sc-if>
+    </aside>
+  </div>
+
+  <sc-if value="{{ open }}" hint-placeholder-val="{{ true }}">
+    <div class="dialog-backdrop" style="position: fixed; inset: 0; display: grid; place-items: center; padding: 28px; background: color-mix(in srgb, #1c1d29 38%, transparent); z-index: 50;">
+      <div class="dialog elev-lg" role="dialog" aria-modal="true" aria-label="Teken infrastructuur" style="width: min(1120px, 100%); max-height: min(860px, 92vh); display: flex; flex-direction: column; padding: 0; overflow: hidden;">
+
+        <header style="padding: var(--space-4) var(--space-6) 0;">
+          <div style="display: flex; align-items: flex-start; gap: var(--space-4);">
+            <div style="flex: 1;">
+              <span style="display: block; font-size: 12px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--color-accent);">Bibliotheek</span>
+              <h2 class="dialog-title" style="margin: 6px 0 0;">Teken infrastructuur</h2>
+              <p style="margin: 6px 0 0; font-size: 13.5px; line-height: 20px; max-width: 62ch; color: color-mix(in srgb, var(--color-text) 72%, transparent);">Alles wat je op het kavel kunt tekenen, per categorie. Kies een vak om het gereedschap te activeren; sleep daarna op de plattegrond.</p>
+            </div>
+            <button type="button" class="btn btn-ghost btn-icon" aria-label="Sluiten" onClick="{{ close }}">✕</button>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-4); border-bottom: 1px solid var(--color-divider);">
+            <button type="button" onClick="{{ showTools }}" style="padding: 9px 2px; font: inherit; font-size: 13.5px; color: {{ toolsTabInk }}; background: none; border: 0; border-bottom: 2px solid {{ toolsTabLine }}; cursor: pointer;">Infrastructuur <span style="font-feature-settings: 'tnum' 1; opacity: 0.6;">{{ toolCount }}</span></button>
+            <button type="button" onClick="{{ showAssets }}" style="padding: 9px 2px; font: inherit; font-size: 13.5px; color: {{ assetsTabInk }}; background: none; border: 0; border-bottom: 2px solid {{ assetsTabLine }}; cursor: pointer;">Eigen assets <span style="font-feature-settings: 'tnum' 1; opacity: 0.6;">{{ assetCount }}</span></button>
+            <span style="flex: 1;"></span>
+            <input class="input" type="search" placeholder="Zoeken in bibliotheek…" value="{{ query }}" onChange="{{ onQuery }}" style="width: 240px; margin-bottom: 8px; font-size: 13px;" />
+          </div>
+        </header>
+
+        <sc-if value="{{ tabTools }}" hint-placeholder-val="{{ true }}">
+          <div class="tk-scroll" style="flex: 1; overflow: auto; padding: var(--space-6);">
+            <sc-for list="{{ groups }}" as="g" hint-placeholder-count="3">
+              <section style="margin-bottom: var(--space-6);">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                  <span style="width: 28px; height: 1px; background: var(--color-accent);"></span>
+                  <h3 style="margin: 0; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 13px; letter-spacing: 0.07em; text-transform: uppercase;">{{ g.name }}</h3>
+                  <span style="font-size: 12px; font-feature-settings: 'tnum' 1; color: color-mix(in srgb, var(--color-text) 50%, transparent);">{{ g.count }}</span>
+                  <span style="flex: 1; height: 1px; background: linear-gradient(to right, var(--color-divider), transparent);"></span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(228px, 1fr)); gap: var(--space-3);">
+                  <sc-for list="{{ g.tools }}" as="t" hint-placeholder-count="4">
+                    <div role="button" tabIndex="0" data-id="{{ t.id }}" onClick="{{ pick }}" style="display: flex; flex-direction: column; gap: 10px; text-align: left; padding: 10px; font: inherit; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-neutral-700); border-radius: var(--radius-md); cursor: pointer;" style-hover="border-color: color-mix(in srgb, var(--color-accent) 60%, transparent); box-shadow: var(--shadow-md);">
+                      <span style="display: block; height: 74px; border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, #1c1d29 14%, transparent); background: {{ t.preview }};"></span>
+                      <span style="display: flex; align-items: center; gap: 8px;">
+                        <span style="width: 11px; height: 11px; border-radius: 3px; border: 1px solid color-mix(in srgb, #1c1d29 22%, transparent); background: {{ t.swatch }};"></span>
+                        <span style="font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 14px;">{{ t.name }}</span>
+                        <span style="flex: 1;"></span>
+                        <span style="font-size: 11px; font-feature-settings: 'tnum' 1; padding: 1px 5px; border-radius: 4px; color: color-mix(in srgb, var(--color-text) 62%, transparent); border: 1px solid var(--color-neutral-700);">{{ t.key }}</span>
+                      </span>
+                      <span style="display: block; font-size: 12.5px; line-height: 18px; color: color-mix(in srgb, var(--color-text) 70%, transparent);">{{ t.desc }}</span>
+                      <sc-if value="{{ t.hasVariants }}" hint-placeholder-val="{{ false }}">
+                        <span style="display: block;">
+                          <span style="display: block; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 52%, transparent); margin-bottom: 6px;">Combinatie</span>
+                          <span style="display: flex; flex-wrap: wrap; gap: 5px;">
+                            <sc-for list="{{ t.variants }}" as="v" hint-placeholder-count="4">
+                              <button type="button" data-id="{{ t.id }}" data-variant="{{ v.label }}" onClick="{{ pickVariant }}" style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; font: inherit; font-size: 11.5px; color: {{ v.ink }}; background: {{ v.bg }}; border: 1px solid {{ v.line }}; border-radius: 999px; cursor: pointer;" style-hover="border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);">
+                                <span style="font-size: 13px; line-height: 1;">{{ v.glyph }}</span>
+                                <span>{{ v.label }}</span>
+                              </button>
+                            </sc-for>
+                          </span>
+                        </span>
+                      </sc-if>
+                      <sc-if value="{{ t.hasValue }}" hint-placeholder-val="{{ false }}">
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                          <input class="input" type="number" step="10" min="5" max="120" data-id="{{ t.id }}" value="{{ t.value }}" onChange="{{ setValue }}" aria-label="Waarde" style="width: 84px; font-size: 13px; font-feature-settings: 'tnum' 1;" />
+                          <span style="font-size: 12px; color: color-mix(in srgb, var(--color-text) 62%, transparent);">{{ t.unit }} — aanpasbaar bij plaatsen</span>
+                        </span>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </section>
+            </sc-for>
+            <sc-if value="{{ noResults }}" hint-placeholder-val="{{ false }}">
+              <p style="margin: 0; font-size: 13.5px; color: color-mix(in srgb, var(--color-text) 62%, transparent);">Geen gereedschap gevonden voor deze zoekterm.</p>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ tabAssets }}" hint-placeholder-val="{{ false }}">
+          <div class="tk-scroll" style="flex: 1; overflow: auto; padding: var(--space-6);">
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--space-6);">
+              <div>
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                  <span style="width: 28px; height: 1px; background: var(--color-accent);"></span>
+                  <h3 style="margin: 0; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 13px; letter-spacing: 0.07em; text-transform: uppercase;">Eigen assets</h3>
+                  <span style="flex: 1; height: 1px; background: linear-gradient(to right, var(--color-divider), transparent);"></span>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-4);">
+                  <button type="button" data-cat="alles" onClick="{{ filterCat }}" class="tag tag-outline" style="cursor: pointer;">Alles</button>
+                  <sc-for list="{{ cats }}" as="c" hint-placeholder-count="2">
+                    <button type="button" data-cat="{{ c.name }}" onClick="{{ filterCat }}" class="tag tag-outline" style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer;"><span>{{ c.name }}</span><span style="opacity: 0.6; font-feature-settings: 'tnum' 1;">{{ c.count }}</span></button>
+                  </sc-for>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3);">
+                  <sc-for list="{{ visibleAssets }}" as="a" hint-placeholder-count="3">
+                    <div style="display: flex; flex-direction: column; gap: 9px; padding: 10px; background: var(--color-surface); border: 1px solid var(--color-neutral-700); border-radius: var(--radius-md);">
+                      <span class="lighten" style="display: block; height: 116px; border-radius: var(--radius-sm); overflow: hidden; background: var(--color-neutral-800);">
+                        <x-import component-from-global-scope="image-slot" from="./image-slot.js" id="{{ a.id }}" shape="rect" placeholder="{{ a.hint }}" hint-size="100%,116px" style="width: 100%; height: 116px;"></x-import>
+                      </span>
+                      <input class="input" type="text" value="{{ a.name }}" data-id="{{ a.id }}" onChange="{{ renameAsset }}" aria-label="Naam van asset" style="font-size: 13px;" />
+                      <select class="input" data-id="{{ a.id }}" value="{{ a.cat }}" onChange="{{ setAssetCat }}" aria-label="Categorie" style="font-size: 12.5px;">
+                        <sc-for list="{{ a.catOptions }}" as="c" hint-placeholder-count="3">
+                          <option value="{{ c }}">{{ c }}</option>
+                        </sc-for>
+                      </select>
+                    </div>
+                  </sc-for>
+                  <button type="button" onClick="{{ addAsset }}" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 200px; padding: 14px; font: inherit; color: color-mix(in srgb, var(--color-text) 72%, transparent); background: none; border: 1px dashed color-mix(in srgb, var(--color-accent) 45%, transparent); border-radius: var(--radius-md); cursor: pointer;" style-hover="background: color-mix(in srgb, var(--color-accent) 10%, transparent); color: var(--color-text);">
+                    <span style="font-size: 22px; line-height: 1; color: var(--color-accent);">+</span>
+                    <span style="font-size: 13px;">Asset importeren</span>
+                    <span style="font-size: 12px; text-align: center; line-height: 17px; color: color-mix(in srgb, var(--color-text) 58%, transparent);">Sleep een PNG, SVG of DWG-export in het vak dat verschijnt.</span>
+                  </button>
+                </div>
+              </div>
+
+              <div style="border-left: 1px solid var(--color-divider); padding-left: var(--space-4);">
+                <h4 style="margin: 0 0 4px; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 13px; letter-spacing: 0.07em; text-transform: uppercase;">Eigen categorieën</h4>
+                <p style="margin: 0 0 14px; font-size: 12.5px; line-height: 18px; color: color-mix(in srgb, var(--color-text) 68%, transparent);">Groepeer je imports zoals je wilt — bijvoorbeeld per leverancier, fase of merk.</p>
+                <div style="display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px;">
+                  <sc-for list="{{ cats }}" as="c" hint-placeholder-count="3">
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 7px 9px; font-size: 13px; background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent); border: 1px solid var(--color-neutral-700); border-radius: var(--radius-sm);">
+                      <span style="flex: 1;">{{ c.name }}</span>
+                      <span style="font-size: 11.5px; font-feature-settings: 'tnum' 1; color: color-mix(in srgb, var(--color-text) 55%, transparent);">{{ c.count }}</span>
+                      <button type="button" data-cat="{{ c.name }}" onClick="{{ removeCat }}" aria-label="Categorie verwijderen" style="padding: 0 2px; font: inherit; font-size: 13px; color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; cursor: pointer;" style-hover="color: var(--color-accent);">✕</button>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                  <input class="input" type="text" placeholder="Nieuwe categorie" value="{{ newCat }}" onChange="{{ onNewCat }}" onKeyDown="{{ onCatKey }}" style="flex: 1; min-width: 0; font-size: 13px;" />
+                  <button type="button" class="btn btn-primary" onClick="{{ addCat }}">Voeg toe</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <footer style="display: flex; align-items: center; gap: var(--space-3); padding: 12px var(--space-6); border-top: 1px solid var(--color-divider);">
+          <span style="font-size: 12.5px; color: color-mix(in srgb, var(--color-text) 60%, transparent);">Geselecteerd: <strong style="font-weight: 500; color: var(--color-text);">{{ selectedLabel }}</strong></span>
+          <sc-if value="{{ hasPlaceValue }}" hint-placeholder-val="{{ false }}">
+            <span style="display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: color-mix(in srgb, var(--color-text) 60%, transparent);">
+              <span>Waarde bij plaatsen</span>
+              <input class="input" type="number" step="10" min="5" max="120" data-id="{{ selectedId }}" value="{{ placeValue }}" onChange="{{ setValue }}" aria-label="Waarde bij plaatsen" style="width: 78px; font-size: 13px; font-feature-settings: 'tnum' 1;" />
+              <span>{{ placeUnit }}</span>
+            </span>
+          </sc-if>
+          <span style="flex: 1;"></span>
+          <button type="button" class="btn btn-ghost" onClick="{{ close }}">Sluiten</button>
+          <button type="button" class="btn btn-primary" onClick="{{ close }}">Tekenen</button>
+        </footer>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+const ROAD = 'linear-gradient(to bottom, #2f3346, #24273a)';
+const GRASSY = 'linear-gradient(to bottom, #1f3a26, #16281b)';
+const PAVE = 'linear-gradient(to bottom, #2b2d3d, #212333)';
+const dash = (c, on, off) => `repeating-linear-gradient(to right, ${c} 0 ${on}px, transparent ${on}px ${on + off}px)`;
+
+function band(base, overlay) { return overlay ? `${overlay}, ${base}` : base; }
+
+const DATA = [
+  { name: 'Site & gebouw', pinnedCount: 0, tools: [
+    { name: 'Site tekenen', swatch: '#b8860b', key: 'P', desc: 'Klik punten voor de siterand · dubbelklik of het beginpunt sluit de vorm.',
+      preview: band('linear-gradient(to bottom, #eef2f7, #e3e9f2)', 'linear-gradient(0deg, transparent 6px, rgba(184,134,11,.75) 6px 8px, transparent 8px), linear-gradient(90deg, transparent 8px, rgba(184,134,11,.75) 8px 10px, transparent 10px)') },
+    { name: 'Gebouw (rechthoek)', swatch: '#64748b', key: 'B', desc: 'Sleep een rechthoek voor een gebouw of uitsluitingszone.',
+      preview: band('linear-gradient(to bottom, #eef2f7, #e3e9f2)', 'linear-gradient(120deg, transparent 46%, rgba(100,116,139,.45) 46% 54%, transparent 54%)') },
+    { name: 'Gebouw (vrije vorm)', swatch: '#94a3b8', key: 'N', desc: 'Klik punten · dubbelklik sluit · een hoek verslepen hertekent het exterieur.',
+      preview: band('linear-gradient(to bottom, #eef2f7, #e3e9f2)', 'conic-gradient(from 20deg at 44% 52%, rgba(100,116,139,.45) 0 22%, transparent 0 100%)') },
+    { name: 'Parkeervak plaatsen', swatch: '#2563eb', key: 'K', desc: 'Losse vakken plaatsen; ze snappen aan bestaande vakken en aan wegen.',
+      preview: band('linear-gradient(to bottom, #e7ecf4, #dde4ee)', 'repeating-linear-gradient(to right, rgba(37,99,235,.7) 0 2px, transparent 2px 22px)') } ] },
+  { name: 'Rijden', pinnedCount: 3, tools: [
+    { name: 'Weg', swatch: '#c9c6ee', key: 'W', desc: 'Rijbaan met instelbare breedte, bochtradius en middenmarkering.',
+      preview: band(ROAD, `linear-gradient(transparent 34px, ${'rgba(233,233,237,.55)'} 34px 36px, transparent 36px)`) },
+    { name: 'In/uitrit', swatch: '#3a3d4e', key: 'I', desc: 'Aansluiting op de openbare weg, met inritradius en zichthoek.',
+      preview: band(ROAD, 'linear-gradient(115deg, transparent 42%, rgba(145,132,217,.35) 42% 58%, transparent 58%)') },
+    { name: 'Drive-thru', swatch: '#ef6c2a', key: 'D', desc: 'Rijstrook langs een unit, met stapelruimte en uitgiftepunt.',
+      preview: band('linear-gradient(to bottom, #2c2436, #221d2c)', 'radial-gradient(60px 60px at 20% 120%, transparent 34px, rgba(239,108,42,.7) 34px 38px, transparent 38px)') } ] },
+  { name: 'Markeringen', pinnedCount: 0, tools: [
+    { name: 'Parkeervak haaks', swatch: '#e9e9ed', key: 'P', desc: 'Rij haakse vakken, 2,5 × 5,0 m, aantal volgt de lengte.',
+      preview: band(PAVE, dash('rgba(233,233,237,.6)', 2, 22)) },
+    { name: 'Parkeervak langs', swatch: '#d6d4ea', key: '', desc: 'Langsparkeren tegen de rijbaan, met in- en uitrijruimte.',
+      preview: band(PAVE, 'repeating-linear-gradient(to right, rgba(233,233,237,.5) 0 2px, transparent 2px 46px)') },
+    { name: 'Parkeervak schuin', swatch: '#bab7d8', key: '', desc: 'Vakken onder 45° of 60° voor eenrichtingsverkeer.',
+      preview: band(PAVE, 'repeating-linear-gradient(60deg, rgba(233,233,237,.5) 0 2px, transparent 2px 26px)') },
+    { name: 'Invalidenplaats', swatch: '#4a83d6', key: '', desc: 'Verbreed vak met pictogram en toegangspad.',
+      preview: band('linear-gradient(to bottom, #1e2a3d, #1a2333)', 'linear-gradient(90deg, transparent 46%, rgba(74,131,214,.55) 46% 54%, transparent 54%)') },
+    { name: 'Laadplaats EV', swatch: '#2fb08a', key: '', desc: 'Vak met laadzuil, kabelvrije loopruimte en bordje.',
+      preview: band('linear-gradient(to bottom, #16302a, #12241f)', 'linear-gradient(90deg, transparent 44%, rgba(47,176,138,.6) 44% 50%, transparent 50%)') },
+    { name: 'Belijning doorlopend', swatch: '#e9e9ed', key: '', desc: 'Doorgetrokken streep — niet overschrijden.',
+      preview: band(PAVE, 'linear-gradient(transparent 36px, rgba(233,233,237,.7) 36px 38px, transparent 38px)') },
+    { name: 'Belijning onderbroken', swatch: '#cfcfda', key: '', desc: 'Onderbroken streep tussen rijstroken.',
+      preview: band(PAVE, `linear-gradient(transparent 36px, transparent 36px), ${dash('rgba(233,233,237,.7)', 16, 14)}`) },
+    { name: 'Stopstreep', swatch: '#f2f2f6', key: '', desc: 'Dwarse stopstreep voor kruising of uitrit.',
+      preview: band(PAVE, 'linear-gradient(90deg, transparent 40%, rgba(242,242,246,.75) 40% 46%, transparent 46%)') },
+    { name: 'Haaientanden', swatch: '#f0e3c4', key: '', desc: 'Voorrangsdriehoeken op de rijbaan.',
+      preview: band(PAVE, 'repeating-linear-gradient(to right, rgba(240,227,196,.7) 0 10px, transparent 10px 20px)') },
+    { name: 'Richtingpijl', swatch: '#9184d9', key: '', desc: 'Pijlmarkering per strook — kies de combinatie van toegestane richtingen.',
+      variants: [
+        { label: 'Rechtdoor', glyph: '↑' },
+        { label: 'Links', glyph: '←' },
+        { label: 'Rechts', glyph: '→' },
+        { label: 'Rechtdoor + links', glyph: '↰' },
+        { label: 'Rechtdoor + rechts', glyph: '↱' },
+        { label: 'Links + rechts', glyph: '↔' },
+        { label: 'Alle richtingen', glyph: '⇅' },
+        { label: 'Keren', glyph: '↺' },
+      ],
+      preview: band(PAVE, 'linear-gradient(90deg, transparent 30%, rgba(145,132,217,.65) 30% 66%, transparent 66%)') },
+    { name: 'Snelheid', swatch: '#f2f2f6', key: '', desc: 'Snelheidsmarkering op de rijbaan — één waarde, aan te passen bij het plaatsen.',
+      value: 30, unit: 'km/u',
+      preview: band(PAVE, 'radial-gradient(18px 18px at 50% 48%, rgba(242,242,246,.18) 70%, transparent 72%), linear-gradient(90deg, transparent 40%, rgba(242,242,246,.6) 40% 60%, transparent 60%)') } ] },
+  { name: 'Pictogrammen', pinnedCount: 0, tools: [
+    { name: 'Invalide', swatch: '#4a83d6', key: '', desc: 'Pictogram in het vak, in wit of blauw uitgevoerd.',
+      preview: band('linear-gradient(to bottom, #1e2a3d, #1a2333)', 'radial-gradient(14px 14px at 50% 46%, rgba(74,131,214,.8) 60%, transparent 62%)') },
+    { name: 'EV-laden', swatch: '#2fb08a', key: '', desc: 'Laadpictogram bij een laadplaats.',
+      preview: band('linear-gradient(to bottom, #16302a, #12241f)', 'radial-gradient(13px 13px at 50% 46%, rgba(47,176,138,.8) 60%, transparent 62%)') },
+    { name: 'Vrachtwagen', swatch: '#cfcfda', key: '', desc: 'Markering voor laad- en loszone.',
+      preview: band(PAVE, 'linear-gradient(90deg, transparent 32%, rgba(207,207,218,.55) 32% 68%, transparent 68%)') },
+    { name: 'Fiets', swatch: '#c0392b', key: '', desc: 'Fietssymbool op pad of suggestiestrook.',
+      preview: band('linear-gradient(to bottom, #3a1f1c, #2b1715)', 'radial-gradient(10px 10px at 40% 54%, rgba(233,233,237,.7) 60%, transparent 62%), radial-gradient(10px 10px at 62% 54%, rgba(233,233,237,.7) 60%, transparent 62%)') },
+    { name: 'Voetganger', swatch: '#e9e9ed', key: '', desc: 'Voetgangerssymbool op looproute.',
+      preview: band(PAVE, 'radial-gradient(9px 9px at 50% 38%, rgba(233,233,237,.75) 60%, transparent 62%)') } ] },
+  { name: 'Borden', pinnedCount: 0, tools: [
+    { name: 'Stopbord', swatch: '#c0392b', key: '', desc: 'B7 op mast, met plaatsingsafstand tot de rand.',
+      preview: band('linear-gradient(to bottom, #222432, #1b1d29)', 'radial-gradient(16px 16px at 50% 40%, rgba(192,57,43,.85) 70%, transparent 72%)') },
+    { name: 'Voorrangsbord', swatch: '#f0c14b', key: '', desc: 'Voorrangsweg of voorrang verlenen.',
+      preview: band('linear-gradient(to bottom, #222432, #1b1d29)', 'conic-gradient(from 45deg at 50% 40%, rgba(240,193,75,.85) 0 25%, transparent 0 100%)') },
+    { name: 'Verboden in te rijden', swatch: '#c0392b', key: '', desc: 'Eenrichtingsafsluiting bij een uitrit.',
+      preview: band('linear-gradient(to bottom, #222432, #1b1d29)', 'radial-gradient(15px 15px at 50% 40%, transparent 8px, rgba(192,57,43,.85) 8px 15px, transparent 15px)') },
+    { name: 'Maximumsnelheid', swatch: '#e9e9ed', key: '', desc: 'Snelheidsbord per rijloper op het terrein.',
+      preview: band('linear-gradient(to bottom, #222432, #1b1d29)', 'radial-gradient(15px 15px at 50% 40%, rgba(233,233,237,.8) 9px, rgba(192,57,43,.8) 9px 15px, transparent 15px)') },
+    { name: 'Parkeerbord P', swatch: '#4a83d6', key: '', desc: 'Blauw P-bord, met onderbord voor doelgroep.',
+      preview: band('linear-gradient(to bottom, #1e2a3d, #1a2333)', 'linear-gradient(90deg, transparent 42%, rgba(74,131,214,.8) 42% 58%, transparent 58%)') },
+    { name: 'Richtingbord', swatch: '#2fb08a', key: '', desc: 'Wegwijzer richting entree, laden of parkeren.',
+      preview: band('linear-gradient(to bottom, #16302a, #12241f)', 'linear-gradient(90deg, rgba(47,176,138,.7) 0 60%, transparent 60%)') },
+    { name: 'Hoogtebeperking', swatch: '#f0c14b', key: '', desc: 'Portaal met doorrijhoogte bij een luifel of kelder.',
+      preview: band('linear-gradient(to bottom, #2a2718, #201e13)', 'linear-gradient(transparent 22px, rgba(240,193,75,.75) 22px 26px, transparent 26px)') },
+    { name: 'Wegwijzer totem', swatch: '#9184d9', key: '', desc: 'Hoge totem voor retailnamen bij de entree.',
+      preview: band('linear-gradient(to bottom, #24223a, #1b1a2b)', 'linear-gradient(90deg, transparent 44%, rgba(145,132,217,.7) 44% 56%, transparent 56%)') } ] },
+  { name: 'Retail', pinnedCount: 0, tools: [
+    { name: 'Winkelunit', swatch: '#9184d9', key: 'U', desc: 'Unit met breedte, diepte en eigen entreezijde.',
+      preview: band('linear-gradient(to bottom, #24223a, #1b1a2b)', 'linear-gradient(0deg, rgba(145,132,217,.5) 0 2px, transparent 2px)') },
+    { name: 'Luifel', swatch: '#7d72c4', key: '', desc: 'Overkapping voor de gevel, met kolomritme.',
+      preview: band('linear-gradient(to bottom, #24223a, #1b1a2b)', 'repeating-linear-gradient(to right, rgba(145,132,217,.5) 0 2px, transparent 2px 24px)') },
+    { name: 'Terras', swatch: '#c98b4b', key: '', desc: 'Buitenruimte bij een unit, met looplijn ernaast.',
+      preview: band('linear-gradient(to bottom, #2e2519, #241d13)', 'repeating-linear-gradient(45deg, rgba(201,139,75,.35) 0 6px, transparent 6px 12px)') },
+    { name: 'Trolley-opstelplaats', swatch: '#cfcfda', key: '', desc: 'Karrenstalling met aanrijroute voor personeel.',
+      preview: band(PAVE, 'repeating-linear-gradient(to right, rgba(207,207,218,.45) 0 3px, transparent 3px 14px)') } ] },
+  { name: 'Langzaam verkeer', pinnedCount: 4, tools: [
+    { name: 'Wandelpad', swatch: '#e3e2ea', key: 'L', desc: 'Voetpad met vrije breedte en verhoogde band.',
+      preview: band('linear-gradient(to bottom, #34364a, #292b3b)', 'repeating-linear-gradient(to right, rgba(233,233,237,.16) 0 1px, transparent 1px 18px)') },
+    { name: 'Fietspad', swatch: '#c0392b', key: 'F', desc: 'Fietsstrook in rood asfalt, één- of tweerichting.',
+      preview: band('linear-gradient(to bottom, #3d201c, #2c1614)', dash('rgba(233,233,237,.5)', 12, 12)) },
+    { name: 'Zebrapad', swatch: '#f2f2f6', key: 'Z', desc: 'Oversteek over de rijbaan, haaks op de rijrichting.',
+      preview: band(ROAD, 'repeating-linear-gradient(to right, rgba(242,242,246,.8) 0 10px, transparent 10px 20px)') },
+    { name: 'Fietsparking', swatch: '#1f6f78', key: '', desc: 'Nietjes of dubbellaags rek, met manoeuvreerruimte.',
+      preview: band('linear-gradient(to bottom, #16303a, #10222a)', 'repeating-linear-gradient(to right, rgba(31,111,120,.9) 0 3px, transparent 3px 16px)') } ] },
+  { name: 'Groen', pinnedCount: 2, tools: [
+    { name: 'Gras', swatch: '#2f9e52', key: 'G', desc: 'Groenvlak, telt mee in de verhardingsbalans.',
+      preview: band(GRASSY, 'repeating-linear-gradient(65deg, rgba(47,158,82,.35) 0 3px, transparent 3px 9px)') },
+    { name: 'Boom', swatch: '#1f7a3f', key: 'B', desc: 'Boom met kroondiameter en plantafstand in een rij.',
+      preview: band(GRASSY, 'radial-gradient(20px 20px at 34% 50%, rgba(31,122,63,.85) 70%, transparent 72%), radial-gradient(14px 14px at 66% 56%, rgba(31,122,63,.6) 70%, transparent 72%)') } ] },
+  { name: 'Licht', pinnedCount: 2, tools: [
+    { name: 'Lichtmast', swatch: '#f0d27a', key: 'M', desc: 'Mast met hoogte en lichtcirkel, plaatsbaar in een rij.',
+      preview: band('linear-gradient(to bottom, #2a2718, #201e13)', 'radial-gradient(26px 26px at 50% 52%, rgba(240,210,122,.35) 60%, transparent 62%)') },
+    { name: 'Zonnecarport', swatch: '#3aa5d9', key: '', desc: 'Overkapping met PV boven parkeervelden.',
+      preview: band('linear-gradient(to bottom, #16293a, #101f2c)', 'repeating-linear-gradient(to right, rgba(58,165,217,.45) 0 14px, transparent 14px 17px)') } ] },
+  { name: 'Overig', pinnedCount: 2, tools: [
+    { name: 'Toegang', swatch: '#2fd1e0', key: 'A', desc: 'Entreepunt van gebouw of terrein, koppelt looproutes.',
+      preview: band('linear-gradient(to bottom, #14313a, #0f242c)', 'linear-gradient(90deg, transparent 44%, rgba(47,209,224,.7) 44% 56%, transparent 56%)') },
+    { name: 'Markering', swatch: '#f0a93a', key: 'K', desc: 'Vrije notitie of maatlijn — telt niet mee in de rapportage.',
+      preview: band('linear-gradient(to bottom, #2c2517, #211c11)', 'repeating-linear-gradient(to right, rgba(240,169,58,.7) 0 8px, transparent 8px 18px)') } ] },
+];
+
+let uid = 0;
+const withIds = DATA.map((g, gi) => ({
+  ...g,
+  tools: g.tools.map((t, ti) => ({ ...t, id: 'tool-' + gi + '-' + ti, key: t.key || '·' })),
+}));
+
+const TOOLBTNS = [
+  { id: 'select', label: 'Selecteren', key: 'V' },
+];
+const SECTIONS = [
+  { id: 'metrics', title: 'Metrics', words: 'vakken site bebouwd verhard oriëntaties legende' },
+  { id: 'vakrijstrook', title: 'Vak & rijstrook', words: 'vakbreedte vakdiepte rijstrook setback groeneilanden hoek layout' },
+  { id: 'bereikbaarheid', title: 'Bereikbaarheid', words: 'voertuig knelpunten brandweer vrachtwagen bocht keerruimte' },
+  { id: 'vaktypesmix', title: 'Vaktypes (mix)', words: 'standaard compact ev minder-valide personeel motor ada' },
+  { id: 'zonenschaduw', title: 'Zon en schaduw', words: 'datum tijd schaduw zonnetijd' },
+  { id: 'lichtenopbrengst', title: 'Licht en opbrengst', words: 'lux uniformiteit kunstlicht zon carport kwp opbrengst' },
+  { id: 'programmaratio', title: 'Programma & ratio', words: 'gla vereist saldo ratio' },
+  { id: 'schemas', title: "Schema's", words: 'variant recht schuin concentrisch uitgelijnd' },
+];
+const TOOL_HINTS = {
+  select: 'Klik een object om het te selecteren · sleep een marquee voor meerdere · Alt-sleep neemt de weginrichting mee.',
+  site: 'Klik punten voor de siterand · dubbelklik of het beginpunt sluit de vorm.',
+  building: 'Sleep een rechthoek voor een gebouw of uitsluitingszone.',
+  poly: 'Gebouw in vrije vorm: klik punten · dubbelklik sluit · een hoek verslepen hertekent het exterieur.',
+  stall: 'Plaats losse vakken; ze snappen aan bestaande vakken en aan wegen.',
+  measure: 'Klik twee punten voor een maat · Esc stopt.',
+};
+const PILL_HINTS = {
+  select: 'Selecteren — klik of sleep een marquee',
+  site: 'Site: klik punten · dubbelklik sluit',
+  building: 'Sleep een rechthoek voor een gebouw / uitsluitingszone',
+  poly: 'Gebouw vrije vorm: klik punten · dubbelklik sluit',
+  stall: 'Parkeervak plaatsen · Esc stopt',
+  measure: 'Meetlint: klik twee punten · Esc stopt',
+};
+const LAYERS = [
+  { id: 'grid', label: 'Raster', color: '#94a3b8' },
+  { id: 'site', label: 'Site-grens', color: '#b8860b' },
+  { id: 'setback', label: 'Setback', color: '#0891b2' },
+  { id: 'building', label: 'Gebouwen', color: '#64748b' },
+  { id: 'parking', label: 'Parkeren', color: '#2563eb' },
+  { id: 'infra', label: 'Infrastructuur', color: '#0e7490' },
+  { id: 'context', label: 'Omgeving (3D)', color: '#c3c8d2' },
+  { id: 'shadow', label: 'Schaduw', color: '#334155' },
+  { id: 'lightmap', label: 'Lichtkaart', color: '#f59e0b' },
+];
+const OBJECTS = [
+  { key: 'site', color: '#b8860b', label: 'Site-grens', sub: 'perceel' },
+  { key: 'road', color: '#3b424e', label: 'Wegennet', sub: '7 segmenten' },
+  { key: 'buildingA', color: '#64748b', label: 'Retailunit A', sub: 'gebouw' },
+  { key: 'buildingB', color: '#64748b', label: 'Retailunit B', sub: 'gebouw' },
+  { key: 'stallsStd', color: '#2563eb', label: 'Standaard', sub: '341 vakken' },
+  { key: 'stallsMix', color: '#6366f1', label: 'Minder-valide / EV', sub: '36 vakken' },
+  { key: 'drivethru', color: '#f97316', label: 'Drive-thru', sub: 'lijn' },
+  { key: 'access', color: '#22d3ee', label: 'Toegang 1', sub: 'punt' },
+  { key: 'lights', color: '#fcd34d', label: 'Lichtmast ×14', sub: 'punt' },
+];
+const STALL_TYPES = [
+  { label: 'Standaard', color: '#2563eb', count: 341, pct: '83 %' },
+  { label: 'Compact', color: '#0ea5e9', count: 18, pct: '4 %' },
+  { label: 'EV / laadpunt', color: '#22c55e', count: 24, pct: '6 %' },
+  { label: 'Minder-valide', color: '#6366f1', count: 12, pct: '3 %' },
+  { label: 'Personeel', color: '#f59e0b', count: 11, pct: '3 %' },
+  { label: 'Motor', color: '#a855f7', count: 6, pct: '1 %' },
+];
+const VEHICLES = [
+  { id: 'car', label: 'Personenwagen', icon: '🚗' },
+  { id: 'van', label: 'Bestelwagen', icon: '🚐' },
+  { id: 'truck', label: 'Vrachtwagen', icon: '🚚' },
+  { id: 'fire', label: 'Brandweer', icon: '🚒' },
+];
+const KNELPUNTEN = {
+  car: [],
+  van: [{ color: '#f59e0b', label: 'Bocht bij inrit noord', need: 'Gesleepte breedte 5,4 m · beschikbaar 5,0 m' }],
+  truck: [
+    { color: '#dc2626', label: 'Doodlopende rij C', need: 'Geen keerruimte en geen ruimte om achteruit te rijden' },
+    { color: '#f59e0b', label: 'Bocht bij inrit noord', need: 'Gesleepte breedte 7,1 m · beschikbaar 5,0 m' },
+    { color: '#f59e0b', label: '6 vakken onbereikbaar', need: 'Rijstrook te smal voor dit ontwerpvoertuig' },
+  ],
+  fire: [
+    { color: '#dc2626', label: 'Gevel Retailunit B', need: 'Opstelplaats op 24 m · maximaal 15 m' },
+    { color: '#dc2626', label: 'Doodlopende rij C', need: 'Geen keerruimte voor een brandweervoertuig' },
+    { color: '#f59e0b', label: 'Bocht bij inrit noord', need: 'Gesleepte breedte 9,2 m · beschikbaar 5,0 m' },
+  ],
+};
+const DEAL = [
+  { name: 'Site', rows: [['Oppervlak', '18.640 m²'], ['Bebouwd', '22 %'], ['Verhard', '61 %'], ['FAR', '0,31']] },
+  { name: 'Gebouw', rows: [['Voetafdruk', '4.100 m²'], ['Vloeropp. (GLA)', '4.200 m²'], ['Beschikbaar', '12.980 m²']] },
+  { name: 'Parking', rows: [['Plaatsen', '412'], ['Fysieke vakken', '406'], ['m² / vak', '32,4'], ['Rijstroken', '11']] },
+  { name: 'Toegankelijk', rows: [['Minder-valide', '12/9'], ['Toegangspunten', '2'], ['Oriëntaties', '8']] },
+  { name: 'Zoning', rows: [['Vereist', '168'], ['Geleverd', '412'], ['Saldo', '+244', 'ok']] },
+];
+const PRESET_VALS = {
+  us_standard: { stallWidth: 2.7, stallDepth: 5.5, aisleWidth: 7.3 },
+  us_large: { stallWidth: 3.0, stallDepth: 6.1, aisleWidth: 7.3 },
+  eu_metric: { stallWidth: 2.5, stallDepth: 5.0, aisleWidth: 6.0 },
+  compact: { stallWidth: 2.4, stallDepth: 4.9, aisleWidth: 6.0 },
+};
+
+class Component extends DCLogic {
+  state = {
+    tool: 'select',
+    view: '2d',
+    dealOpen: true,
+    dealH: 0,
+    parts: { hud: true, hint: true, attrib: true, dealbar: true },
+    optsMenuOpen: false,
+    projectName: 'Kavel Noord — variant B',
+    editingName: false,
+    savedAt: '14:12',
+    secOpen: {},
+    panelQuery: '',
+    selObj: null,
+    leftClosed: false,
+    preset: 'eu_metric',
+    layout: 'strip',
+    angle: 90,
+    vehicle: 'truck',
+    lightMode: 'artificial',
+    layerOn: { grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true, shadow: false, lightmap: false },
+    params: { stallWidth: 2.5, stallDepth: 5.0, aisleWidth: 6.0, setback: 6, islandWidth: 2.5 },
+    opts: { singleLoaded: false, turnaround: true, alignLongestEdge: false },
+    open: true,
+    tab: 'tools',
+    query: '',
+    selected: 'tool-0-0',
+    cats: ['Leverancier — Vebego', 'Fase 2'],
+    newCat: '',
+    filter: 'alles',
+    variants: {},
+    values: {},
+    assets: [
+      { id: 'asset-1', name: 'Laadzuil type 22kW', cat: 'Leverancier — Vebego', hint: 'Sleep hier de render van de laadzuil' },
+      { id: 'asset-2', name: 'Reclamemast klant', cat: 'Ongecategoriseerd', hint: 'Sleep hier een foto of SVG van de mast' },
+      { id: 'asset-3', name: 'Bushalte abri', cat: 'Fase 2', hint: 'Sleep hier de plattegrond van de abri' },
+    ],
+  };
+
+  componentDidMount() {
+    this._key = (e) => {
+      const t = e.target;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (e.key === 't' || e.key === 'T') this.setState({ open: true, tab: 'tools' });
+      if (e.key === 'Escape') this.setState({ open: false });
+    };
+    addEventListener('keydown', this._key);
+  }
+  componentDidUpdate() { this.measureDeal(); }
+
+  measureDeal() {
+    cancelAnimationFrame(this._raf);
+    this._raf = requestAnimationFrame(() => {
+      const h = this._dealEl ? this._dealEl.offsetHeight : 0;
+      if (h && h !== this.state.dealH) this.setState({ dealH: h });
+    });
+  }
+
+  componentWillUnmount() { removeEventListener('keydown', this._key); cancelAnimationFrame(this._raf); }
+
+  now() {
+    const d = new Date();
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  catCount(name) { return this.state.assets.filter((a) => a.cat === name).length; }
+
+  renderVals() {
+    const q = this.state.query.trim().toLowerCase();
+    const decorate = (t) => {
+      const active = this.state.variants[t.id] || (t.variants && t.variants[0].label);
+      return {
+        ...t,
+        hasVariants: !!t.variants,
+        hasValue: t.value != null,
+        value: this.state.values[t.id] ?? t.value,
+        variants: (t.variants || []).map((v) => {
+          const on = v.label === active;
+          return {
+            ...v,
+            ink: on ? 'var(--color-text)' : 'color-mix(in srgb, var(--color-text) 66%, transparent)',
+            bg: on ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'transparent',
+            line: on ? 'var(--color-accent)' : 'var(--color-neutral-700)',
+          };
+        }),
+      };
+    };
+    const groups = withIds
+      .map((g) => {
+        const tools = (q ? g.tools.filter((t) => (t.name + ' ' + t.desc).toLowerCase().includes(q)) : g.tools).map(decorate);
+        return { name: g.name, count: tools.length, tools, pinned: q ? tools : g.tools.slice(0, g.pinnedCount) };
+      })
+      .filter((g) => g.tools.length);
+
+    const all = withIds.flatMap((g) => g.tools);
+    const sel = all.find((t) => t.id === this.state.selected);
+    const cats = this.state.cats.map((name) => ({ name, count: this.catCount(name) }));
+    const baseOpts = ['Ongecategoriseerd'].concat(this.state.cats);
+    const visibleAssets = (this.state.filter === 'alles'
+      ? this.state.assets
+      : this.state.assets.filter((a) => a.cat === this.state.filter)
+    ).map((a) => ({ ...a, catOptions: baseOpts.includes(a.cat) ? baseOpts : baseOpts.concat(a.cat) }));
+
+    const ink = (on) => (on ? 'var(--color-text)' : 'color-mix(in srgb, var(--color-text) 58%, transparent)');
+    const line = (on) => (on ? 'var(--color-accent)' : 'transparent');
+    const isTools = this.state.tab === 'tools';
+
+    const s = this.state;
+    const segInk = (on) => (on ? '#ffffff' : 'color-mix(in srgb, var(--color-text) 58%, transparent)');
+    const segBg = (on) => (on ? 'var(--color-accent)' : 'transparent');
+    const kn = KNELPUNTEN[s.vehicle] || [];
+    const p = s.params;
+    const pq = s.panelQuery.trim().toLowerCase();
+
+    return {
+      toolBtns: TOOLBTNS.map((t) => ({
+        ...t,
+        ink: s.tool === t.id ? '#ffffff' : 'var(--color-text)',
+        bg: s.tool === t.id ? 'var(--color-accent)' : 'var(--color-neutral-800)',
+        line: s.tool === t.id ? 'var(--color-accent)' : 'var(--color-neutral-700)',
+      })),
+      toolHint: TOOL_HINTS[s.tool],
+      pillHint: PILL_HINTS[s.tool],
+      setTool: (e) => this.setState({ tool: e.currentTarget.dataset.tool }),
+      projectName: s.projectName,
+      editingName: s.editingName,
+      notEditingName: !s.editingName,
+      savedLabel: 'Laatst opgeslagen om ' + s.savedAt,
+      startRename: () => this.setState({ editingName: true }),
+      onProjectName: (e) => this.setState({ projectName: e.target.value }),
+      commitName: () => this.setState({ editingName: false, savedAt: this.now() }),
+      nameKey: (e) => {
+        if (e.key === 'Enter') this.setState({ editingName: false, savedAt: this.now() });
+        if (e.key === 'Escape') this.setState({ editingName: false });
+      },
+      measureInk: s.tool === 'measure' ? '#ffffff' : 'var(--color-text)',
+      measureBg: s.tool === 'measure' ? 'var(--color-accent)' : 'var(--color-neutral-800)',
+      measureLine: s.tool === 'measure' ? 'var(--color-accent)' : 'var(--color-neutral-700)',
+      optsMenuOpen: !!s.optsMenuOpen,
+      toggleOptsMenu: () => this.setState((st) => ({ optsMenuOpen: !st.optsMenuOpen })),
+      uiParts: [
+        { id: 'hud', label: 'HUD (vakken, schaal)' },
+        { id: 'hint', label: 'Hint-balk' },
+        { id: 'attrib', label: 'Kaartattributie' },
+        { id: 'dealbar', label: 'Tabulatiebalk' },
+      ].map((u) => ({ ...u, on: s.parts[u.id] !== false })),
+      togglePart: (e) => {
+        const id = e.currentTarget.dataset.id, on = e.target.checked;
+        this.setState((st) => ({ parts: { ...st.parts, [id]: on } }));
+      },
+      showHud: s.parts.hud !== false,
+      showHint: s.parts.hint !== false,
+      showAttrib: s.parts.attrib !== false,
+      showDealbar: s.parts.dealbar !== false,
+      panelQuery: s.panelQuery,
+      onPanelQuery: (e) => this.setState({ panelQuery: e.target.value }),
+      secs: SECTIONS.reduce((acc, sec) => {
+        const open = s.secOpen[sec.id] !== false;
+        acc[sec.id] = {
+          open,
+          caret: open ? '▾' : '▸',
+          vis: !pq || (sec.title + ' ' + sec.words).toLowerCase().includes(pq),
+        };
+        return acc;
+      }, {}),
+      noPanelResults: !!pq && !SECTIONS.some((sec) => (sec.title + ' ' + sec.words).toLowerCase().includes(pq)),
+      toggleSec: (e) => {
+        const id = e.currentTarget.dataset.sec;
+        this.setState((st) => ({ secOpen: { ...st.secOpen, [id]: st.secOpen[id] === false } }));
+      },
+      leftOpen: !s.leftClosed,
+      leftClosed: !!s.leftClosed,
+      gridCols: (s.leftClosed ? '48px' : '236px') + ' minmax(0, 1fr) 316px',
+      toggleLeft: () => this.setState((st) => ({ leftClosed: !st.leftClosed })),
+      layersOpen: s.layersOpen !== false,
+      layersCaret: s.layersOpen !== false ? '▾' : '▸',
+      layersOnCount: LAYERS.filter((l) => s.layerOn[l.id]).length + '/' + LAYERS.length,
+      toggleLayers: () => this.setState((st) => ({ layersOpen: st.layersOpen === false })),
+      viewBtns: [
+        { id: '2d', label: '2D', ink: segInk(s.view === '2d'), bg: segBg(s.view === '2d') },
+        { id: '3d', label: '3D', ink: segInk(s.view === '3d'), bg: segBg(s.view === '3d') },
+      ],
+      setView: (e) => this.setState({ view: e.currentTarget.dataset.view }),
+      layers: LAYERS.map((l) => ({ ...l, on: !!s.layerOn[l.id] })),
+      toggleLayer: (e) => {
+        const id = e.currentTarget.dataset.id, on = e.target.checked;
+        this.setState((st) => ({ layerOn: { ...st.layerOn, [id]: on } }));
+      },
+      objects: OBJECTS.map((o) => ({
+        ...o,
+        bg: s.selObj === o.key ? 'color-mix(in srgb, var(--color-accent) 14%, var(--color-neutral-800))' : 'transparent',
+        bar: s.selObj === o.key ? 'inset 2px 0 0 var(--color-accent)' : 'none',
+      })),
+      objCount: OBJECTS.length,
+      selectObj: (e) => {
+        const key = e.currentTarget.dataset.obj;
+        this.setState((st) => ({ selObj: st.selObj === key ? null : key }));
+      },
+      hl: OBJECTS.reduce((acc, o) => {
+        acc[o.key] = s.selObj === o.key ? '2px solid var(--color-accent)' : 'none';
+        return acc;
+      }, {}),
+      objectsOpen: s.objectsOpen !== false,
+      objectsCaret: s.objectsOpen !== false ? '▾' : '▸',
+      toggleObjects: () => this.setState((st) => ({ objectsOpen: st.objectsOpen === false })),
+      preset: s.preset,
+      setPreset: (e) => {
+        const key = e.target.value;
+        this.setState((st) => ({ preset: key, params: { ...st.params, ...PRESET_VALS[key] } }));
+      },
+      metrics: [
+        { k: 'Site', v: '18.640', u: ' m²' },
+        { k: 'Bebouwd', v: '22', u: '%' },
+        { k: 'm² / vak', v: '32,4', u: '' },
+        { k: 'Verhard', v: '61', u: '%' },
+        { k: 'Oriëntaties', v: '8', u: '' },
+      ],
+      stallTypes: STALL_TYPES,
+      mix: STALL_TYPES.map((t) => ({ color: t.color, label: t.label, pct: t.pct, n: t.count })),
+      sliders: [
+        { id: 'stallWidth', label: 'Vakbreedte', value: p.stallWidth, min: 2.2, max: 3.5, step: 0.1, text: p.stallWidth.toFixed(1).replace('.', ',') + ' m' },
+        { id: 'stallDepth', label: 'Vakdiepte', value: p.stallDepth, min: 4.5, max: 6.5, step: 0.1, text: p.stallDepth.toFixed(1).replace('.', ',') + ' m' },
+        { id: 'aisleWidth', label: 'Rijstrook', value: p.aisleWidth, min: 5, max: 8, step: 0.1, text: p.aisleWidth.toFixed(1).replace('.', ',') + ' m' },
+        { id: 'setback', label: 'Setback', value: p.setback, min: 0, max: 20, step: 0.5, text: p.setback.toFixed(1).replace('.', ',') + ' m' },
+        { id: 'islandWidth', label: 'Groeneilanden', value: p.islandWidth, min: 0, max: 6, step: 0.5, text: p.islandWidth > 0 ? p.islandWidth.toFixed(1).replace('.', ',') + ' m' : 'uit' },
+      ],
+      setSlider: (e) => {
+        const id = e.currentTarget.dataset.id, v = Number(e.target.value);
+        this.setState((st) => ({ params: { ...st.params, [id]: v } }));
+      },
+      layoutBtns: [
+        { id: 'strip', label: 'Recht' },
+        { id: 'hybrid', label: 'Rand+midden' },
+        { id: 'perimeter', label: 'Concentrisch' },
+      ].map((b) => ({ ...b, ink: segInk(s.layout === b.id), bg: segBg(s.layout === b.id) })),
+      setLayout: (e) => this.setState({ layout: e.currentTarget.dataset.layout }),
+      angleBtns: [45, 60, 90].map((a) => ({ id: a, label: a + '°', ink: segInk(s.angle === a), bg: segBg(s.angle === a) })),
+      setAngle: (e) => this.setState({ angle: Number(e.currentTarget.dataset.angle) }),
+      toggles: [
+        { id: 'singleLoaded', label: 'Enkelzijdige rijen', on: s.opts.singleLoaded },
+        { id: 'turnaround', label: 'Keerruimte bij doodlopers', on: s.opts.turnaround },
+        { id: 'alignLongestEdge', label: 'Uitlijnen op langste rand', on: s.opts.alignLongestEdge },
+      ],
+      toggleOpt: (e) => {
+        const id = e.currentTarget.dataset.id, on = e.target.checked;
+        this.setState((st) => ({ opts: { ...st.opts, [id]: on } }));
+      },
+      vehicles: VEHICLES.map((v) => ({
+        ...v,
+        bg: s.vehicle === v.id ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'var(--color-neutral-800)',
+        line: s.vehicle === v.id ? 'var(--color-accent)' : 'var(--color-neutral-700)',
+      })),
+      setVehicle: (e) => this.setState({ vehicle: e.currentTarget.dataset.veh }),
+      knelpunten: kn,
+      knHead: kn.length ? kn.length + ' knelpunten' : 'Geen knelpunten voor dit voertuig',
+      lightBtns: [
+        { id: 'artificial', label: 'Kunstlicht' },
+        { id: 'sun', label: 'Zon' },
+      ].map((b) => ({ ...b, ink: segInk(s.lightMode === b.id), bg: segBg(s.lightMode === b.id) })),
+      setLight: (e) => this.setState({ lightMode: e.currentTarget.dataset.light }),
+      lightRows: s.lightMode === 'artificial'
+        ? [{ k: 'Gemiddeld', v: '21 lux' }, { k: 'Minimum', v: '6 lux' }, { k: 'U₀ (doel 0,25)', v: '0,29' }, { k: 'Donkerste vak', v: 'rij C — 4 lux' }]
+        : [{ k: 'Instraling', v: '1.045 kWh/m²' }, { k: 'Carport kWp', v: '318 kWp' }, { k: 'Opbrengst', v: '291 MWh/j' }, { k: 'Schaduwverlies', v: '4,2 %' }],
+      rampMin: s.lightMode === 'artificial' ? '0 lux' : '600 kWh/m²',
+      rampMax: s.lightMode === 'artificial' ? '40 lux' : '1.100 kWh/m²',
+      schemes: [
+        { label: 'Huidig — recht 90°', count: '412 plaatsen', best: true },
+        { label: 'Schuin 60°', count: '388 plaatsen' },
+        { label: 'Rand + midden', count: '401 plaatsen' },
+        { label: 'Uitgelijnd op rand', count: '405 plaatsen' },
+      ].map((x) => ({
+        ...x,
+        bg: x.best ? 'color-mix(in srgb, #16a34a 12%, var(--color-surface))' : 'var(--color-neutral-800)',
+        line: x.best ? '#16a34a' : 'var(--color-neutral-700)',
+      })),
+      dealOpen: s.dealOpen,
+      dealToggle: s.dealOpen ? 'Tabulatie verbergen' : 'Tabulatie tonen',
+      toggleDeal: () => this.setState((st) => ({ dealOpen: !st.dealOpen })),
+      dealCols: DEAL.map((c) => ({
+        name: c.name,
+        rows: c.rows.map((r) => ({ k: r[0], v: r[1], ink: r[2] === 'ok' ? '#15803d' : 'var(--color-text)' })),
+      })),
+      dealRef: (el) => {
+        this._dealEl = el;
+        this.measureDeal();
+      },
+      hudBottom: (s.dealOpen ? (s.dealH || 132) : 0) + 55 + 'px',
+      attribBottom: (s.dealOpen ? (s.dealH || 132) : 0) + 29 + 'px',
+      open: this.state.open,
+      groups,
+      cats,
+      visibleAssets,
+      query: this.state.query,
+      newCat: this.state.newCat,
+      noResults: groups.length === 0,
+      tabTools: isTools,
+      tabAssets: !isTools,
+      toolsTabInk: ink(isTools), toolsTabLine: line(isTools),
+      assetsTabInk: ink(!isTools), assetsTabLine: line(!isTools),
+      toolCount: all.length,
+      assetCount: this.state.assets.length,
+      selectedLabel: sel
+        ? sel.name + (sel.variants ? ' — ' + (this.state.variants[sel.id] || sel.variants[0].label) : '')
+          + (sel.value != null ? ' — ' + (this.state.values[sel.id] ?? sel.value) + ' ' + sel.unit : '')
+        : 'niets',
+      selectedId: sel ? sel.id : '',
+      hasPlaceValue: !!sel && sel.value != null,
+      placeValue: sel && sel.value != null ? (this.state.values[sel.id] ?? sel.value) : 0,
+      placeUnit: sel && sel.unit ? sel.unit : '',
+      pickVariant: (e) => {
+        e.stopPropagation();
+        const { id, variant } = e.currentTarget.dataset;
+        this.setState((s) => ({ selected: id, variants: { ...s.variants, [id]: variant } }));
+      },
+      setValue: (e) => {
+        const id = e.currentTarget.dataset.id, v = Number(e.target.value);
+        this.setState((s) => ({ selected: id, values: { ...s.values, [id]: v } }));
+      },
+      openTools: () => this.setState({ open: true, tab: 'tools' }),
+      openAssets: () => this.setState({ open: true, tab: 'assets' }),
+      showTools: () => this.setState({ tab: 'tools' }),
+      showAssets: () => this.setState({ tab: 'assets' }),
+      close: () => this.setState({ open: false }),
+      onQuery: (e) => this.setState({ query: e.target.value }),
+      pick: (e) => this.setState({ selected: e.currentTarget.dataset.id }),
+      filterCat: (e) => this.setState({ filter: e.currentTarget.dataset.cat }),
+      onNewCat: (e) => this.setState({ newCat: e.target.value }),
+      onCatKey: (e) => { if (e.key === 'Enter') this.addCategory(); },
+      addCat: () => this.addCategory(),
+      removeCat: (e) => {
+        const name = e.currentTarget.dataset.cat;
+        this.setState((s) => ({
+          cats: s.cats.filter((c) => c !== name),
+          filter: s.filter === name ? 'alles' : s.filter,
+          assets: s.assets.map((a) => (a.cat === name ? { ...a, cat: 'Ongecategoriseerd' } : a)),
+        }));
+      },
+      setAssetCat: (e) => {
+        const id = e.currentTarget.dataset.id, cat = e.target.value;
+        this.setState((s) => ({ assets: s.assets.map((a) => (a.id === id ? { ...a, cat } : a)) }));
+      },
+      renameAsset: (e) => {
+        const id = e.currentTarget.dataset.id, name = e.target.value;
+        this.setState((s) => ({ assets: s.assets.map((a) => (a.id === id ? { ...a, name } : a)) }));
+      },
+      addAsset: () => this.setState((s) => ({
+        assets: s.assets.concat({
+          id: 'asset-new-' + (++uid),
+          name: 'Nieuw asset ' + uid,
+          cat: s.filter === 'alles' ? 'Ongecategoriseerd' : s.filter,
+          hint: 'Sleep hier je afbeelding',
+        }),
+      })),
+    };
+  }
+
+  addCategory() {
+    const name = this.state.newCat.trim();
+    if (!name || this.state.cats.includes(name)) return;
+    this.setState((s) => ({ cats: s.cats.concat(name), newCat: '' }));
+  }
+}
+
+</script>
+</body>
+</html>
