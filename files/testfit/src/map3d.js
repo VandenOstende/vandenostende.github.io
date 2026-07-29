@@ -7,12 +7,12 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=cd80cc29';
-import { STALL_TYPES } from './solver.js?v=cd80cc29';
-import { polyOf, ribbonPoly, zebraQuads, hatchQuads, STRIPE_SPEC } from './geometry.js?v=cd80cc29';
-import { ANNOT_TYPES } from './annots.js?v=cd80cc29';
-import { PICTOS } from './pictos.js?v=cd80cc29';
-import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=cd80cc29';
+import { localToLatLon } from './basemap.js?v=3d74081d';
+import { STALL_TYPES } from './solver.js?v=3d74081d';
+import { polyOf, ribbonPoly, zebraQuads, hatchQuads, STRIPE_SPEC } from './geometry.js?v=3d74081d';
+import { ANNOT_TYPES, surfaceOf } from './annots.js?v=3d74081d';
+import { PICTOS } from './pictos.js?v=3d74081d';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=3d74081d';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -101,8 +101,13 @@ function lineFeature(pts, geo, props) {
 }
 // Colours live in ANNOT_TYPES; this used to keep a second hand-maintained copy
 // that silently drifted whenever a kind was added.
-function annColor(kind) {
-  return (ANNOT_TYPES[kind] || {}).color || '#eab308';
+// A surface's colour: its own material if it has one, otherwise its kind's.
+// This needed the annotation and not just a kind string once materials existed —
+// two areas of the same kind, one gravel and one asphalt, are not the same
+// colour any more.
+function annColor(kind, an) {
+  const mat = surfaceOf(an);
+  return mat ? mat.tint : ((ANNOT_TYPES[kind] || {}).color || '#eab308');
 }
 // One list, not two: anything drawn as an open line in 2D drapes as a line in
 // 3D. Point markings and signage are handled separately.
@@ -122,11 +127,14 @@ function roadPolys(anns, only) {
   const out = [];
   for (const an of anns) {
     const t = ANNOT_TYPES[an.kind];
-    if (!t || !t.body || an.closed || !an.points || an.points.length < 2) continue;
+    const obj = an.shape === 'object' && an.points && an.points.length === 4;
+    // `closed` marks a plaza; a road object is closed only because it is a
+    // rectangle, and it is still carriageway.
+    if (!t || !t.body || (an.closed && !obj) || !an.points || an.points.length < 2) continue;
     if (only === 'tarmac' && !t.aisleColor) continue;
     if (only === 'own' && t.aisleColor) continue;
-    const poly = ribbonPoly(an.points, an.width || t.width || 6, an.align, an.curved);
-    if (poly && poly.length >= 3) out.push({ poly, kind: an.kind });
+    const poly = obj ? an.points : ribbonPoly(an.points, an.width || t.width || 6, an.align, an.curved);
+    if (poly && poly.length >= 3) out.push({ poly, kind: an.kind, ann: an });
   }
   return out;
 }
@@ -275,12 +283,12 @@ export function planToGeoJSON(plan, geo) {
     ].map((q) => polyFeature(q, geo, {}))),
     // Paths and cycle tracks, in their own colour rather than dissolved into the
     // asphalt they are drawn beside.
-    paths: fc(roadPolys(anns, 'own').map((r) => polyFeature(r.poly, geo, { color: annColor(r.kind) }))),
+    paths: fc(roadPolys(anns, 'own').map((r) => polyFeature(r.poly, geo, { color: annColor(r.kind, r.ann) }))),
     buildings: fc(buildingParts(plan, geo)),
     bays: fc((plan.stalls || []).flatMap((s) => bayMarks(s.poly)).map((seg) => lineFeature(seg, geo, {}))),
     site: fc(plan.site && plan.site.length >= 3 ? [polyFeature(plan.site, geo, {})] : []),
-    areas: fc(anns.filter((an) => an.points && an.points.length >= 3 && (an.kind === 'grass' || an.kind === 'bikeparking' || an.closed)).map((an) => polyFeature(an.points, geo, { color: annColor(an.kind) }))),
-    lines: fc(anns.filter((an) => an.points && an.points.length >= 2 && !an.closed && isLineKind(an.kind)).map((an) => lineFeature(an.points, geo, { color: annColor(an.kind), width: an.width || 1 }))),
+    areas: fc(anns.filter((an) => an.points && an.points.length >= 3 && (an.kind === 'grass' || an.kind === 'bikeparking' || an.closed)).map((an) => polyFeature(an.points, geo, { color: annColor(an.kind, an) }))),
+    lines: fc(anns.filter((an) => an.points && an.points.length >= 2 && !an.closed && isLineKind(an.kind)).map((an) => lineFeature(an.points, geo, { color: annColor(an.kind, an), width: an.width || 1 }))),
     // Trees and access points: both a plain disc on the ground, so they share a
     // layer and carry their own colour rather than earning one each.
     trees: fc(anns.filter((an) => (an.kind === 'tree' || an.kind === 'access') && an.points && an.points[0]).map((an) => {

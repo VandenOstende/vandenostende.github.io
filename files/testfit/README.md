@@ -55,14 +55,29 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   line you draw can be the centreline *or* a kerb. Walkways and cycle paths
   work the same way. They merge into one seamless tarmac surface together with
   the solver's own aisles.
+- **Three ways to draw a road.** As a *line* — click points, and the width
+  follows the type. As an **object** — one click drops a rectangle you then size
+  by its width and length fields, stretch by an end grip and turn by a grip
+  beside it; stalls snap along it because it carries a real centreline. Or as
+  **multipoint** — click points for a free-form surface.
+- **Surface materials** — asphalt, concrete, pavers, gravel, sand or grass. The
+  material decides the colour *and* how much of the area counts as hard: a
+  runoff coefficient rather than a paved/unpaved flag, so half-hard can be said
+  without inventing a third category. Leave it unset and nothing changes.
+- **Snapping is a switch** (`S`). On, points land on existing vertices and
+  stalls tuck against a road or their neighbours. Off means off: things go
+  exactly where you click, with no fallback grid.
 - **Belgian/EU road markings and signage** — arrows, shark's teeth, stop lines,
   hatched zones, speed numerals, ground pictograms, and plate-on-a-post signs
   (B1, B5, C1, C43, E9a, F19, accessible, EV).
-- **Junctions.** Where two drawn ways cross, the app asks what that place is: a
-  junction, a junction with an interruption (bollards across the arm you name),
-  or not linked. Undecided crossings are marked in red until you answer.
-  A junction behaves as one object — one row in the object list, and dragging
-  one arm moves the whole network.
+- **Junctions.** Where two drawn ways meet — crossing, or one ending on the
+  other's kerb — the app asks what that place is: a junction, a junction with an
+  interruption, or not linked. Undecided crossings are marked in red until you
+  answer, and **double-clicking one reopens the choice**, so a decision is never
+  final. For an interruption you click the arm you want closed, on the plan, and
+  the bollards stand at the **mouth** of that arm, flush with the kerb of the
+  road it meets. A junction behaves as one object — one row in the object list,
+  and dragging one arm moves the whole network.
 - **Alt-drag** takes everything standing on a road (signs, markings, stalls)
   along with it; there is a sticky toggle if you want that to be the default.
 - Ways **snap** to existing vertices, can be **closed** into a square or plaza,
@@ -213,8 +228,9 @@ against the optimum tilt for the latitude, which is a fact and not an opinion.
 | `Del` | Delete selection | `Esc` | Cancel |
 | `K` | Place stall | `/` | Focus the tool search |
 | `R` / `Shift+R` | Rotate in 15° steps | `?` | Shortcut list |
-| `Space` | Pan (hold) | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo |
-| `Ctrl/⌘+D` | Duplicate | `Ctrl/⌘+C` / `+V` | Copy / Paste |
+| `S` | Snapping on/off | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo |
+| `Space` | Pan (hold) | `Ctrl/⌘+D` | Duplicate |
+| `Ctrl/⌘+C` / `+V` | Copy / Paste | `?` | Shortcut list |
 
 Scroll to zoom. Pan by dragging with the right mouse button, the middle button,
 `Space` held down, or the Pan tool. On a trackpad, a two-finger swipe pans and
@@ -239,6 +255,11 @@ Multi-level structured/garage parking (tray counts), generative variants, and
 PDF/Revit/glTF export.
 
 ---
+
+The impervious figure is a plain sum of surfaces with **no overlap subtracted**,
+so a road drawn across a drive aisle is counted twice and the percentage
+saturates early on a busy plan. Doing better needs boolean polygon clipping,
+which this project deliberately does not carry.
 
 An educational demonstrator; not affiliated with TestFit. Parking dimensions and
 accessible-stall counts vary by jurisdiction — every value is configurable.

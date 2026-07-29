@@ -14,7 +14,7 @@
 // treats as blocked, and a design that grew past it would silently change the
 // parking result the moment you picked a type.
 // ============================================================
-import { polygonCentroid, polygonArea } from './geometry.js?v=cd80cc29';
+import { polygonCentroid, polygonArea } from './geometry.js?v=3d74081d';
 
 export const BUILDING_USES = {
   retail:      { key: 'retail',      label: 'Retail',   floors: 1, floorH: 4.5, keywords: 'winkel supermarkt shop baanwinkel' },

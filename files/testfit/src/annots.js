@@ -92,6 +92,27 @@ export const ANNOT_TYPES = {
                  keywords: 'carport overkapping zonnepanelen pv luifel afdak zonnedak solar' },
 };
 
+// ---------- Surface materials ----------
+// What a surface is made of, and how much rain runs off it rather than soaking
+// away. A coefficient rather than a paved/unpaved flag, because that is how
+// stormwater is actually reckoned and it lets "half hard" be said without
+// inventing a third category.
+//
+// `surfaceOf` returns null when no material was chosen. That is deliberate:
+// an annotation without one behaves exactly as it did before materials existed,
+// so no saved plan quietly changes its numbers.
+export const SURFACES = {
+  asphalt:  { key: 'asphalt',  label: 'Asfalt',   tint: '#3b424e', runoff: 1.00 },
+  concrete: { key: 'concrete', label: 'Beton',    tint: '#9ca3af', runoff: 1.00 },
+  paver:    { key: 'paver',    label: 'Klinkers', tint: '#8d6e63', runoff: 0.60 },
+  gravel:   { key: 'gravel',   label: 'Kiezel',   tint: '#a8a29e', runoff: 0.40 },
+  sand:     { key: 'sand',     label: 'Zand',     tint: '#e3cf9e', runoff: 0.20 },
+  grass:    { key: 'grass',    label: 'Gras',     tint: '#3f9b46', runoff: 0.10 },
+};
+export const surfaceOf = (an) => (an && SURFACES[an.material]) || null;
+/** How much of this surface's area counts as hard. 1 when nothing was chosen. */
+export const runoffOf = (an) => { const m = surfaceOf(an); return m ? m.runoff : 1; };
+
 // ---------- Imported assets ----------
 // An imported symbol is not a new kind of object — it is a point annotation
 // whose painter happens to draw a bitmap. Registering it here means the palette,

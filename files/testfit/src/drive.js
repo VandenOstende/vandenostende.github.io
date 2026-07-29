@@ -11,11 +11,12 @@
 
 import {
   dist, distPointSegment, pointInPolygon, polygonCentroid, polyOf,
-  ribbonCentre, sampleEdges, segmentsIntersect,
-} from './geometry.js?v=cd80cc29';
-import { ANNOT_TYPES } from './annots.js?v=cd80cc29';
-import { aisleAxis } from './solver.js?v=cd80cc29';
-import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=cd80cc29';
+  ribbonCentre, ribbonPoly, sampleEdges, segmentsIntersect,
+  polylineCum, polylineAt, nearestOnPolyline,
+} from './geometry.js?v=3d74081d';
+import { ANNOT_TYPES } from './annots.js?v=3d74081d';
+import { aisleAxis } from './solver.js?v=3d74081d';
+import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=3d74081d';
 
 // ---------- Design vehicles ----------
 //
@@ -69,6 +70,10 @@ const DRIVABLE = { road: 1, driveway: 1, drivethru: 1 };
 
 const CLEAR = 0.25;   // m of shy distance kept from each kerb
 const LINK_SLOP = 0.1; // m of tolerance when deciding two carriageways overlap
+// How far a street's head may stop short of, or poke past, another street's
+// kerb and still count as meeting it. Half a metre either way is a drawn line
+// wobbling, not a different intention.
+const T_SLOP = 0.5;
 
 // ---------- The swept-path model ----------
 
@@ -182,7 +187,10 @@ export function findCrossings(anns) {
   const ways = [];
   (anns || []).forEach((a, i) => {
     const t = ANNOT_TYPES[a.kind];
-    if (t && t.body && !a.closed && a.points && a.points.length >= 2) ways.push({ i, a });
+    // A road object is closed because it is a rectangle, not because it is a
+    // plaza — it can still meet another road at a junction.
+    const obj = a.shape === 'object' && a.points && a.points.length === 4;
+    if (t && t.body && (!a.closed || obj) && a.points && a.points.length >= 2) ways.push({ i, a });
   });
   const out = new Map();
   for (let m = 0; m < ways.length; m++) {
@@ -197,6 +205,40 @@ export function findCrossings(anns) {
           // one entry per place is what the user is being asked about.
           if (!out.has(key)) out.set(key, { key, at, i: A.i, j: B.i });
         }
+      }
+    }
+  }
+
+  // T-junctions: a street whose HEAD comes out on another street.
+  //
+  // The proper-intersection test above needs the two drawn lines to actually
+  // cross, with a tolerance of about 1e-9. Draw a side street up to the KERB of
+  // a main road — which is what everyone does — and nothing is found at all,
+  // while buildDriveNetwork happily links the two on carriageway overlap. So the
+  // app never asked, and the T connected in silence.
+  //
+  // Deliberately NOT the network's own rule ("the carriageways touch"): that is
+  // also true of two roads running side by side for fifty metres, and would
+  // bury you in junction questions. An ENDPOINT inside someone else's
+  // carriageway is precisely "the head of a street meets another street".
+  for (let m = 0; m < ways.length; m++) {
+    for (let n = 0; n < ways.length; n++) {
+      if (m === n) continue;
+      const A = ways[m], B = ways[n];
+      if (A.a.closed || B.a.closed) continue;
+      const line = centrelineOf({ ann: B.a });
+      if (!line || line.pts.length < 2) continue;
+      const cum = polylineCum(line.pts);
+      const reach = line.width / 2 + T_SLOP;
+      for (const end of [A.a.points[0], A.a.points[A.a.points.length - 1]]) {
+        const foot = nearestOnPolyline(end, line.pts, cum);
+        if (!foot || foot.dd > reach) continue;
+        // Not at B's own far end — two streets meeting head to head is a
+        // continuation, not a junction.
+        if (foot.s < 1e-6 || foot.s > cum[cum.length - 1] - 1e-6) continue;
+        const at = { x: foot.x, y: foot.y };
+        const key = junctionKey(at);
+        if (!out.has(key)) out.set(key, { key, at, i: Math.min(A.i, B.i), j: Math.max(A.i, B.i) });
       }
     }
   }
@@ -253,10 +295,16 @@ export function centrelineOf(src) {
   const a = src.ann;
   const t = ANNOT_TYPES[a.kind] || {};
   const width = a.width || t.width || 3;
-  if (a.kind === 'driveway') {
-    // A closed 4-point rectangle straddling the site edge. Its axis is the line
-    // between the midpoints of the two short sides — derived from the points, so
-    // it survives the rectangle being dragged or resized.
+  if (a.kind === 'driveway' || (a.shape === 'object' && a.points && a.points.length === 4)) {
+    // A closed 4-point rectangle: a driveway straddling the site edge, or a road
+    // drawn as an object. Its axis is the line between the midpoints of the two
+    // short sides — derived from the points, so it survives the rectangle being
+    // dragged, resized or rotated.
+    //
+    // Deriving it here rather than trusting a stored heading is what lets one
+    // definition serve the drivability network AND the stall snap: before this,
+    // app.js had its own idea of where a road's centre was and read an object
+    // road's corner ring as if it were the centreline.
     const p = a.points;
     if (!p || p.length < 4) return null;
     const l01 = dist(p[0], p[1]), l12 = dist(p[1], p[2]);
@@ -268,6 +316,82 @@ export function centrelineOf(src) {
   const mid = ribbonCentre(a.points, width, a.align, a.curved);
   if (!mid) return null;
   return { pts: mid.map((q) => ({ x: q.x, y: q.y })), width };
+}
+
+/**
+ * The arms of a junction: every direction you can drive away from it.
+ *
+ * A crossing knew only its two *ways*, and `branchHeading` reports mod 180°, so
+ * the north and the south arm of one street were literally indistinguishable.
+ * With no direction there is nowhere to push a bollard row, and a T — three arms,
+ * not four — cannot be described at all.
+ *
+ * An arm exists in a direction if there is meaningful road beyond the junction
+ * that way. A side street that ENDS at the junction therefore contributes one
+ * arm, not two, which is exactly what makes a T a T.
+ */
+export function junctionArms(anns, c, minLen = 1.5) {
+  const out = [];
+  for (const which of ['i', 'j']) {
+    const idx = which === 'j' ? c.j : c.i;
+    const a = (anns || [])[idx];
+    if (!a || !a.points || a.points.length < 2) continue;
+    const line = centrelineOf({ ann: a });
+    if (!line || line.pts.length < 2) continue;
+    const cum = polylineCum(line.pts);
+    const total = cum[cum.length - 1];
+    const foot = nearestOnPolyline(c.at, line.pts, cum);
+    if (!foot) continue;
+    // Forward is +1 along the centreline, backward -1. Each is an arm only if
+    // enough road is left that way.
+    for (const dir of [1, -1]) {
+      const run = dir > 0 ? total - foot.s : foot.s;
+      if (run < minLen) continue;
+      // Probe a couple of metres along that way; the direction from the foot to
+      // the probe is the arm's own heading, full circle rather than mod 180.
+      const probe = polylineAt(line.pts, cum, Math.min(total, Math.max(0, foot.s + dir * Math.min(run, 2))));
+      const ux = probe.x - foot.x, uy = probe.y - foot.y;
+      const len = Math.hypot(ux, uy) || 1;
+      out.push({
+        ann: idx, at: { x: foot.x, y: foot.y },
+        ux: ux / len, uy: uy / len,
+        heading: ((Math.atan2(uy, ux) * 180) / Math.PI + 360) % 360,
+        width: line.width, run,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Where an arm leaves the carriageway of the way it meets — the mouth of the
+ * street. Bollards belong here, flush with the kerb, not in the middle of the
+ * road being crossed.
+ *
+ * Walking the arm out of the other way's ribbon polygon rather than solving
+ * `hw / sin θ` keeps it right for a kerb-aligned way (whose asphalt is offset
+ * from the drawn line) and for a curved one.
+ */
+export function armMouth(anns, c, arm) {
+  const other = (anns || [])[arm.ann === c.i ? c.j : c.i];
+  if (!other || !other.points || other.points.length < 2) return arm.at;
+  const poly = other.shape === 'object' && other.points.length === 4
+    ? other.points
+    : ribbonPoly(other.points, other.width || (ANNOT_TYPES[other.kind] || {}).width || 6, other.align, other.curved);
+  if (!poly || poly.length < 3) return arm.at;
+  const far = { x: arm.at.x + arm.ux * 200, y: arm.at.y + arm.uy * 200 };
+  let best = 0;
+  for (let k = 0; k < poly.length; k++) {
+    const p = poly[k], q = poly[(k + 1) % poly.length];
+    const ex = q.x - p.x, ey = q.y - p.y;
+    const dx = far.x - arm.at.x, dy = far.y - arm.at.y;
+    const den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((p.x - arm.at.x) * ey - (p.y - arm.at.y) * ex) / den;
+    const u = ((p.x - arm.at.x) * dy - (p.y - arm.at.y) * dx) / den;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1 && t > best) best = t;
+  }
+  return { x: arm.at.x + (far.x - arm.at.x) * best, y: arm.at.y + (far.y - arm.at.y) * best };
 }
 
 /**

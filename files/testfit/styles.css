@@ -978,3 +978,9 @@ body.resizing .panel-resize { pointer-events: auto; }
   display: flex; justify-content: space-between;
   font-size: 10px; color: var(--muted); margin-top: 3px;
 }
+
+/* Surface materials: a swatch beside the name, because "gravel" and "sand" are
+   easier to tell apart by colour than by word at a glance. */
+.mat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 6px; }
+.mat-grid .type-btn { display: flex; align-items: center; gap: 6px; justify-content: flex-start; }
+.mat-grid .dot { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
