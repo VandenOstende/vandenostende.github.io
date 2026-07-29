@@ -4,22 +4,22 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=5cb33568';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=d3273c24';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, STRIPE_SPEC,
-} from './geometry.js?v=5cb33568';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=5cb33568';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=5cb33568';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=5cb33568';
-import { parseParcel, simplifyRing } from './importers.js?v=5cb33568';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=5cb33568';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=5cb33568';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=5cb33568';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=5cb33568';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=5cb33568';
-import { BUILD_ID } from './build.js?v=5cb33568';
+} from './geometry.js?v=d3273c24';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=d3273c24';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=d3273c24';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d3273c24';
+import { parseParcel, simplifyRing } from './importers.js?v=d3273c24';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=d3273c24';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=d3273c24';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=d3273c24';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=d3273c24';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=d3273c24';
+import { BUILD_ID } from './build.js?v=d3273c24';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -777,6 +777,7 @@ function draw(ctx, opts) {
   if (layers.infra && doc.annotations) {
     drawAnnotations(ctx, doc.annotations, w2s, view.scale, false, selAnnIdx);
     if (crossings) drawCrossings(ctx, crossings, doc.annotations, w2s, view.scale);
+    if (opts.pickArms) drawArmPicker(ctx, opts.pickArms, w2s, view.scale);
   }
 
   // Driveway placement preview (snapped to the site edge)
@@ -1565,36 +1566,55 @@ function drawIssues(ctx, list, focus, w2s, scale) {
 // A crossing that has not been made into a junction gets a red bar across it:
 // the two ways only look joined because the tarmac is one surface, and nothing
 // should ever be silently connected.
+// The arms of a junction, lit up so one can be clicked. Deliberately fat and
+// translucent: it is a target, not a drawing.
+function drawArmPicker(ctx, arms, w2s, scale) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const arm of arms) {
+    const tip = { x: arm.at.x + arm.ux * Math.min(arm.run, 10), y: arm.at.y + arm.uy * Math.min(arm.run, 10) };
+    const a = w2s(arm.at), b = w2s(tip);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = 'rgba(239,68,68,0.55)';
+    ctx.lineWidth = Math.max(6, arm.width * scale);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawCrossings(ctx, list, anns, w2s, scale) {
   for (const c of list) {
     if (c.mode === 'merged') continue;
     const s = w2s(c.at);
     if (c.mode === 'break') {
-      // Bollards across the branch that is closed to traffic: the arm whose
-      // heading matches the one recorded when the choice was made.
-      const di = Math.abs(((branchHeading(anns, c, 'i') - (c.dir || 0) + 270) % 180) - 90);
-      const dj = Math.abs(((branchHeading(anns, c, 'j') - (c.dir || 0) + 270) % 180) - 90);
-      const ref = anns[dj < di ? c.j : c.i];
-      if (!ref || !ref.points || ref.points.length < 2) continue;
-      // Direction of the closed branch at this point; the bollards stand across it.
-      let bi = 0, bd = Infinity;
-      for (let k = 0; k < ref.points.length - 1; k++) {
-        const d = distPointSegment(c.at, ref.points[k], ref.points[k + 1]);
-        if (d < bd) { bd = d; bi = k; }
-      }
-      const a = ref.points[bi], b = ref.points[bi + 1];
-      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
-      const half = ((ref.width || ANNOT_TYPES[ref.kind]?.width || 6) / 2) - 0.35;
-      const n = Math.max(2, Math.round((half * 2) / 1.4));
+      // Bollards across the arm that is closed, standing at the MOUTH of that
+      // arm — flush with the kerb of the road it meets. They used to be centred
+      // on the crossing point itself, which put them in the middle of the road
+      // being crossed instead of at the head of the street.
+      const arms = junctionArms(anns, c);
+      if (!arms.length) continue;
+      // Which arm: an explicit heading if the choice recorded one, otherwise the
+      // legacy mod-180 `dir`, which named a whole way and so closes both of its
+      // arms.
+      const pick = c.arm != null
+        ? arms.filter((a) => Math.abs(((a.heading - c.arm + 540) % 360) - 180) < 30)
+        : arms.filter((a) => Math.abs((((a.heading % 180) - (c.dir || 0) + 270) % 180) - 90) < 30);
+      const chosen = pick.length ? pick : arms.slice(0, 1);
       ctx.fillStyle = '#e2e8f0';
       ctx.strokeStyle = 'rgba(15,23,42,0.55)';
       ctx.lineWidth = 1;
-      for (let k = 0; k <= n; k++) {
-        const t = -half + (2 * half * k) / n;
-        const p = w2s({ x: c.at.x + nx * t, y: c.at.y + ny * t });
-        const r = Math.max(1.6, 0.22 * scale);
-        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      for (const arm of chosen) {
+        const at = armMouth(anns, c, arm);
+        const nx = -arm.uy, ny = arm.ux;          // across the arm
+        const half = Math.max(0.6, arm.width / 2 - 0.35);
+        const n = Math.max(2, Math.round((half * 2) / 1.4));
+        for (let k = 0; k <= n; k++) {
+          const t = -half + (2 * half * k) / n;
+          const p = w2s({ x: at.x + nx * t, y: at.y + ny * t });
+          const r = Math.max(1.6, 0.22 * scale);
+          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
       }
       continue;
     }
@@ -1733,7 +1753,11 @@ function App() {
     try { return localStorage.getItem('pp_snap') !== 'off'; } catch (e) { return true; }
   });
   const [staleBuild, setStaleBuild] = useState('');
-  const [askJunction, setAskJunction] = useState(null); // the crossing whose popover is open
+  const [askJunction, setAskJunction] = useState(null);
+  // While set, the junction's arms are lit up on the plan and the next click
+  // picks one. Naming an arm by clicking it beats choosing between two buttons
+  // labelled "Weg 3" and "Weg 5", which say nothing about where they are.
+  const [pickArm, setPickArm] = useState(null); // the crossing whose popover is open
   const [placing, setPlacing] = useState(0); // >0 while a duplicated group follows the cursor
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
@@ -1908,7 +1932,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=5cb33568', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=d3273c24', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2122,7 +2146,7 @@ function App() {
     const jn = doc.junctions || {};
     return findCrossings(doc.annotations).map((c) => {
       const rec = jn[c.key] || {};
-      return { ...c, mode: rec.mode || '', dir: rec.dir };
+      return { ...c, mode: rec.mode || '', dir: rec.dir, arm: rec.arm };
     });
   }, [doc.annotations, doc.junctions]);
   // Which network each way belongs to: union–find over the joined crossings.
@@ -2152,9 +2176,13 @@ function App() {
   // it is a fact about the *place*, so it lives in `junctions` under the position
   // key and the networks fall out of it. The closed branch of an interruption is
   // stored as its heading, not its index, so it survives ways being reordered.
-  const setJunction = (c, mode, branch) => {
+  const setJunction = (c, mode, branch, armHeading) => {
     const rec = { mode };
-    if (mode === 'break') rec.dir = branchHeading(doc.annotations, c, branch);
+    // A full-circle heading names ONE arm. The old mod-180 `dir` named a whole
+    // way and so closed both of its arms; it stays readable so no saved plan
+    // changes behaviour, but new decisions are per arm.
+    if (mode === 'break' && armHeading != null) rec.arm = armHeading;
+    else if (mode === 'break') rec.dir = branchHeading(doc.annotations, c, branch);
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, junctions: { ...(d.junctions || {}), [c.key]: rec } }) });
     setAskJunction(null);
   };
@@ -2179,13 +2207,14 @@ function App() {
         showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel, shadows,
         lightField, lightGrid,
+        pickArms: pickArm ? junctionArms(doc.annotations, pickArm) : null,
         // Only when asked: a checkbox, or a row the user clicked.
         driveIssues: showIssues ? driveIssues : (focusIssue >= 0 && driveIssues[focusIssue] ? [driveIssues[focusIssue]] : null),
         focusIssue: showIssues ? focusIssue : (focusIssue >= 0 ? 0 : -1),
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid, pickArm]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -2270,7 +2299,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=5cb33568').then(async (m) => {
+    import('./map3d.js?v=d3273c24').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -2921,6 +2950,19 @@ function App() {
       // it sits on top of the tarmac it is marking.
       const { w2s: w2sJ } = makeTransform(view);
       const askHit = crossings.find((c) => c.mode !== 'merged' && c.mode !== 'break' && dist(w2sJ(c.at), sp) < 12);
+      if (pickArm) {
+        // Nearest arm to the click, measured at the stub the plan is showing.
+        const arms = junctionArms(doc.annotations, pickArm);
+        let best = null, bestD = Infinity;
+        for (const arm of arms) {
+          const tip = { x: arm.at.x + arm.ux * Math.min(arm.run, 10), y: arm.at.y + arm.uy * Math.min(arm.run, 10) };
+          const d = distPointSegment(wp, arm.at, tip);
+          if (d < bestD) { bestD = d; best = arm; }
+        }
+        if (best && bestD < Math.max(4, best.width)) setJunction(pickArm, 'break', null, best.heading);
+        setPickArm(null);
+        return;
+      }
       if (askHit) { setAskJunction(askHit); return; }
       const v = hitVertex(sp);
       // CHECKPOINT here, not COMMIT on pointer-up: an identity updater is a
@@ -3431,6 +3473,12 @@ function App() {
       // clicked, so the shape can be refined by dragging. Selection itself
       // already happened on the preceding pointer-down.
       const sp = getScreen(e);
+      // A junction first: double-clicking one reopens the choice, so a decision
+      // is never final. This has to come before the vertex insert below, which
+      // would otherwise splice a point into the road you were aiming at.
+      const { w2s: w2sD } = makeTransform(view);
+      const cross = crossings.find((c) => dist(w2sD(c.at), sp) < 14);
+      if (cross) { setAskJunction(cross); return; }
       const ai = hitAnnotation(sp);
       if (ai < 0) return;
       setTool('select'); setStallSel([]); setAisleSel(null);
@@ -4874,16 +4922,18 @@ function migrateDoc(d) {
             <div className="cross-ask" style=${{ left: Math.round(p.x) + 'px', top: Math.round(p.y) + 'px' }}>
               <div className="cross-ask-h">Kruising · ${nameOf(askJunction.i)} × ${nameOf(askJunction.j)}</div>
               <button className="btn" onClick=${() => setJunction(askJunction, 'merged')}>Kruispunt</button>
-              <div className="cross-ask-row">
-                <span>Onderbreking op</span>
-                <button className="btn ghost" onClick=${() => setJunction(askJunction, 'break', 'i')}>${nameOf(askJunction.i)}</button>
-                <button className="btn ghost" onClick=${() => setJunction(askJunction, 'break', 'j')}>${nameOf(askJunction.j)}</button>
-              </div>
+              <button className="btn ghost" onClick=${() => { setPickArm(askJunction); setAskJunction(null); }}>
+                Onderbreking — klik de tak aan
+              </button>
               <button className="btn ghost" onClick=${() => setJunction(askJunction, 'none')}>Niet koppelen</button>
               <button className="cross-ask-x" title="Later beslissen" onClick=${() => setAskJunction(null)}>✕</button>
             </div>`;
         })()}
-        ${openCrossings.length > 0 && !askJunction && html`
+        ${pickArm && html`
+          <button className="cross-pending" onClick=${() => setPickArm(null)}>
+            Klik de tak die dicht moet — Esc annuleert
+          </button>`}
+        ${openCrossings.length > 0 && !askJunction && !pickArm && html`
           <button className="cross-pending" onClick=${() => setAskJunction(openCrossings[0])}>
             ${openCrossings.length} onbesliste kruising${openCrossings.length > 1 ? 'en' : ''} — beslissen
           </button>`}
