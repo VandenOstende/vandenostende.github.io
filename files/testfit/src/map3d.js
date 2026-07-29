@@ -7,12 +7,12 @@
 // draped onto it as GeoJSON layers with Mapbox Standard's real 3D
 // buildings. Requires the user's own Mapbox public token.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=cd80cc29';
-import { STALL_TYPES } from './solver.js?v=cd80cc29';
-import { polyOf, ribbonPoly, zebraQuads, hatchQuads, STRIPE_SPEC } from './geometry.js?v=cd80cc29';
-import { ANNOT_TYPES } from './annots.js?v=cd80cc29';
-import { PICTOS } from './pictos.js?v=cd80cc29';
-import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=cd80cc29';
+import { localToLatLon } from './basemap.js?v=8696eb62';
+import { STALL_TYPES } from './solver.js?v=8696eb62';
+import { polyOf, ribbonPoly, zebraQuads, hatchQuads, STRIPE_SPEC } from './geometry.js?v=8696eb62';
+import { ANNOT_TYPES } from './annots.js?v=8696eb62';
+import { PICTOS } from './pictos.js?v=8696eb62';
+import { buildingDesign, DEFAULT_USE, PART_COLORS, materialOf, WALL_ROLES } from './buildings.js?v=8696eb62';
 
 const MB_VERSION = 'v3.7.0';
 const MB_SEMVER = '3.7.0';
@@ -122,10 +122,13 @@ function roadPolys(anns, only) {
   const out = [];
   for (const an of anns) {
     const t = ANNOT_TYPES[an.kind];
-    if (!t || !t.body || an.closed || !an.points || an.points.length < 2) continue;
+    const obj = an.shape === 'object' && an.points && an.points.length === 4;
+    // `closed` marks a plaza; a road object is closed only because it is a
+    // rectangle, and it is still carriageway.
+    if (!t || !t.body || (an.closed && !obj) || !an.points || an.points.length < 2) continue;
     if (only === 'tarmac' && !t.aisleColor) continue;
     if (only === 'own' && t.aisleColor) continue;
-    const poly = ribbonPoly(an.points, an.width || t.width || 6, an.align, an.curved);
+    const poly = obj ? an.points : ribbonPoly(an.points, an.width || t.width || 6, an.align, an.curved);
     if (poly && poly.length >= 3) out.push({ poly, kind: an.kind });
   }
   return out;

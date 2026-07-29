@@ -12,10 +12,10 @@
 import {
   dist, distPointSegment, pointInPolygon, polygonCentroid, polyOf,
   ribbonCentre, sampleEdges, segmentsIntersect,
-} from './geometry.js?v=cd80cc29';
-import { ANNOT_TYPES } from './annots.js?v=cd80cc29';
-import { aisleAxis } from './solver.js?v=cd80cc29';
-import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=cd80cc29';
+} from './geometry.js?v=8696eb62';
+import { ANNOT_TYPES } from './annots.js?v=8696eb62';
+import { aisleAxis } from './solver.js?v=8696eb62';
+import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=8696eb62';
 
 // ---------- Design vehicles ----------
 //
@@ -182,7 +182,10 @@ export function findCrossings(anns) {
   const ways = [];
   (anns || []).forEach((a, i) => {
     const t = ANNOT_TYPES[a.kind];
-    if (t && t.body && !a.closed && a.points && a.points.length >= 2) ways.push({ i, a });
+    // A road object is closed because it is a rectangle, not because it is a
+    // plaza — it can still meet another road at a junction.
+    const obj = a.shape === 'object' && a.points && a.points.length === 4;
+    if (t && t.body && (!a.closed || obj) && a.points && a.points.length >= 2) ways.push({ i, a });
   });
   const out = new Map();
   for (let m = 0; m < ways.length; m++) {
@@ -253,10 +256,16 @@ export function centrelineOf(src) {
   const a = src.ann;
   const t = ANNOT_TYPES[a.kind] || {};
   const width = a.width || t.width || 3;
-  if (a.kind === 'driveway') {
-    // A closed 4-point rectangle straddling the site edge. Its axis is the line
-    // between the midpoints of the two short sides — derived from the points, so
-    // it survives the rectangle being dragged or resized.
+  if (a.kind === 'driveway' || (a.shape === 'object' && a.points && a.points.length === 4)) {
+    // A closed 4-point rectangle: a driveway straddling the site edge, or a road
+    // drawn as an object. Its axis is the line between the midpoints of the two
+    // short sides — derived from the points, so it survives the rectangle being
+    // dragged, resized or rotated.
+    //
+    // Deriving it here rather than trusting a stored heading is what lets one
+    // definition serve the drivability network AND the stall snap: before this,
+    // app.js had its own idea of where a road's centre was and read an object
+    // road's corner ring as if it were the centreline.
     const p = a.points;
     if (!p || p.length < 4) return null;
     const l01 = dist(p[0], p[1]), l12 = dist(p[1], p[2]);

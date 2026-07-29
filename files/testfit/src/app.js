@@ -4,22 +4,22 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=cd80cc29';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8696eb62';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, STRIPE_SPEC,
-} from './geometry.js?v=cd80cc29';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=cd80cc29';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=cd80cc29';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=cd80cc29';
-import { parseParcel, simplifyRing } from './importers.js?v=cd80cc29';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=cd80cc29';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=cd80cc29';
-import { junctionKey, findCrossings, branchHeading, analysePlan, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=cd80cc29';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=cd80cc29';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=cd80cc29';
-import { BUILD_ID } from './build.js?v=cd80cc29';
+} from './geometry.js?v=8696eb62';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=8696eb62';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=8696eb62';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8696eb62';
+import { parseParcel, simplifyRing } from './importers.js?v=8696eb62';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=8696eb62';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=8696eb62';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=8696eb62';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=8696eb62';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=8696eb62';
+import { BUILD_ID } from './build.js?v=8696eb62';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -120,6 +120,61 @@ function makeDriveway(frame, width, depth) {
   return { kind: 'driveway', points, closed: true, anchor: { x: c.x, y: c.y }, nx, ny, tx, ty, width, depth };
 }
 
+/**
+ * A road drawn as an object: a rectangle whose corners are DERIVED from a
+ * centre, a width, a length and a heading.
+ *
+ * Before this, an object road was four loose corner points with `width: 0` and
+ * nothing else. Everything downstream that wanted a centreline and a width got
+ * neither: `roadLines` read the corner ring as if it were the centre of the
+ * road, so a stall snapped to the outline instead of alongside it; `roadPolys`
+ * dropped it in 3D because it is `closed`; and the inspector had no block for
+ * it at all. Storing the recipe instead of only its result fixes all three at
+ * the source.
+ *
+ * `prev` is the record being rebuilt. Passing it through is not politeness — it
+ * is the bug `setDrivewayWidth` still has: that one rebuilds from a literal, so
+ * every field not named there is silently gone the moment the width changes.
+ */
+function makeRoadRect(center, width, length, rot, prev) {
+  const c = Math.cos(rot || 0), s = Math.sin(rot || 0);
+  const hl = Math.max(0.5, length) / 2, hw = Math.max(0.5, width) / 2;
+  // Local (along, across) → world. Same rotation as stallAt.
+  const at = (u, v) => ({ x: center.x + u * c - v * s, y: center.y + u * s + v * c });
+  return {
+    ...(prev || {}),
+    kind: (prev && prev.kind) || 'road',
+    shape: 'object',
+    points: [at(-hl, -hw), at(hl, -hw), at(hl, hw), at(-hl, hw)],
+    closed: true,
+    at: { x: center.x, y: center.y },
+    width, length, rot: rot || 0,
+  };
+}
+
+/** Is this annotation a parametric road object? */
+const isRoadObject = (a) => !!a && a.shape === 'object' && Array.isArray(a.points) && a.points.length === 4;
+
+/**
+ * Read the parameters back out of a bare four-corner rectangle.
+ *
+ * Plans saved before the object road became parametric carry only the corners.
+ * Recovering width, length and heading from them means such a plan keeps its
+ * exact geometry instead of snapping to a default the first time it is touched.
+ */
+function roadRectParams(a) {
+  const p = a.points;
+  const cx = (p[0].x + p[1].x + p[2].x + p[3].x) / 4;
+  const cy = (p[0].y + p[1].y + p[2].y + p[3].y) / 4;
+  const e0 = Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y);   // along
+  const e1 = Math.hypot(p[2].x - p[1].x, p[2].y - p[1].y);   // across
+  return {
+    at: { x: cx, y: cy },
+    length: e0, width: e1,
+    rot: Math.atan2(p[1].y - p[0].y, p[1].x - p[0].x),
+  };
+}
+
 const CAR_LEN = 6; // metres of queue per stacked vehicle in a drive-thru
 
 // Total length of an open polyline (metres).
@@ -160,6 +215,9 @@ function circlePoly(cx, cy, r, n = 40) {
 // Thin wrapper so callers can pass an annotation instead of loose numbers; the
 // geometry itself is shared with the exporters and the 3D drape.
 function ribbon(ann, t) {
+  // A road object already IS its polygon — its four corners are the carriageway,
+  // not a centreline to lay a ribbon along.
+  if (ann && ann.shape === 'object' && ann.points && ann.points.length === 4) return ann.points;
   const ty = t || ANNOT_TYPES[ann.kind] || {};
   return ribbonPoly(ann.points, ann.width || ty.width || 3, ann.align, ann.curved);
 }
@@ -414,7 +472,9 @@ function draw(ctx, opts) {
     if (layers.infra) {
       for (const an of doc.annotations || []) {
         const t = ANNOT_TYPES[an.kind];
-        if (t && t.body && !an.closed) addRing(ribbon(an, t));
+        // A road object is `closed` because it is a rectangle, not because it is a
+      // plaza — it is still carriageway and belongs in the one tarmac surface.
+      if (t && t.body && (!an.closed || an.shape === 'object')) addRing(ribbon(an, t));
       }
     }
     ctx.fillStyle = TH.aisle;
@@ -724,6 +784,14 @@ function draw(ctx, opts) {
     drawDriveway(ctx, hover.driveway, w2s, view.scale, true);
   }
 
+  // Road-object placement preview: the real object, drawn where it would land.
+  if (hover && hover.roadRect) {
+    pathPoly(ctx, hover.roadRect.points, w2s, true);
+    ctx.fillStyle = 'rgba(34,197,94,0.30)'; ctx.fill();
+    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5; ctx.stroke();
+    drawDims(ctx, [hover.roadRect.points[0], hover.roadRect.points[1], hover.roadRect.points[2]], w2s);
+  }
+
   // Circle area preview
   if (hover && hover.circle) {
     const c = w2s(hover.circle.c), rpx = hover.circle.r * view.scale;
@@ -789,10 +857,19 @@ function draw(ctx, opts) {
   if (opts.showHandles) {
     for (const p of doc.site) drawHandle(ctx, w2s(p), '#f8b500');
     for (const o of doc.obstacles) for (const p of polyOf(o)) drawHandle(ctx, w2s(p), '#7c8896');
-    // Resize handles on the selected annotation (except driveways).
+    // Resize handles on the selected annotation. A driveway keeps its edge-frame
+    // shape and a road object its rectangle, so neither offers loose corners —
+    // the object gets a length grip on each end and a rotate grip beside it.
     if (selection && selection.type === 'annot') {
       const a = (doc.annotations || [])[selection.index];
-      if (a && a.kind !== 'driveway' && a.points) for (const p of a.points) drawHandle(ctx, w2s(p), '#60a5fa');
+      if (isRoadObject(a)) {
+        for (const g of roadRectGrips(a)) {
+          if (g.kind === 'rot') drawRotGrip(ctx, w2s(g.at));
+          else drawHandle(ctx, w2s(g.at), '#60a5fa');
+        }
+      } else if (a && a.kind !== 'driveway' && a.points) {
+        for (const p of a.points) drawHandle(ctx, w2s(p), '#60a5fa');
+      }
     }
   }
 
@@ -826,6 +903,42 @@ function pathPoly(ctx, poly, w2s, close) {
     else ctx.lineTo(s.x, s.y);
   });
   if (close) ctx.closePath();
+}
+
+/**
+ * The grips of a road object, in world coordinates.
+ *
+ * Two length grips on the short ends and one rotate grip standing off the side.
+ * Derived from the stored parameters, so they follow the object rather than
+ * needing to be kept in step with it.
+ */
+function roadRectGrips(a) {
+  const { at, width, length, rot } = a;
+  const c = Math.cos(rot || 0), s = Math.sin(rot || 0);
+  const to = (u, v) => ({ x: at.x + u * c - v * s, y: at.y + u * s + v * c });
+  const hl = length / 2;
+  return [
+    { kind: 'len', end: -1, at: to(-hl, 0) },
+    { kind: 'len', end: 1, at: to(hl, 0) },
+    // Clear of the body, so grabbing it can never be mistaken for a drag.
+    { kind: 'rot', at: to(0, -(width / 2) - Math.max(2.5, width * 0.45)) },
+  ];
+}
+
+// The rotate grip reads as a turn, not as another corner.
+function drawRotGrip(ctx, s) {
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, 6.5, -Math.PI * 0.75, Math.PI * 0.6);
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s.x + 3.2, s.y - 6.6);
+  ctx.lineTo(s.x + 7.4, s.y - 4.2);
+  ctx.lineTo(s.x + 2.6, s.y - 1.6);
+  ctx.closePath();
+  ctx.fillStyle = '#f59e0b';
+  ctx.fill();
 }
 
 function drawHandle(ctx, s, color) {
@@ -1601,7 +1714,9 @@ function App() {
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
-  const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' for roads (draggable object)
+  const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' (object) | 'multi'
+  const [annotLength, setAnnotLength] = useState(20); // m — the road object's length
+  const [annotRot, setAnnotRot] = useState(0);        // deg — the road object's heading
   const [annotCurved, setAnnotCurved] = useState(true);
   // What the line you draw means for a carriageway: its centre, or one of its
   // kerbs (seen in the direction you draw).
@@ -1787,7 +1902,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=cd80cc29', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=8696eb62', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2147,7 +2262,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=cd80cc29').then(async (m) => {
+    import('./map3d.js?v=8696eb62').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -2382,17 +2497,25 @@ function App() {
   // stalls tile next to solver stalls); otherwise a coarse metric grid.
   // Drivable lines a stall can park against, sampled the way they are drawn so
   // snapping follows the visible curve rather than the control points.
+  // Where the drivable ways actually run, for snapping stalls and orienting
+  // markings. The centreline comes from drive.js so there is exactly one answer
+  // to "where is the middle of this road" — this used to be a second, simpler
+  // rule that read an object road's four corners as a centreline and made a
+  // stall cling to the outline instead of lying alongside it.
   const roadLines = useMemo(() => (doc.annotations || [])
     .filter((a) => {
       const t = ANNOT_TYPES[a.kind];
-      return t && t.mode === 'line' && t.blocks && a.points && a.points.length >= 2;
+      return t && t.blocks && a.points && a.points.length >= 2
+        && (t.mode === 'line' || a.shape === 'object');
     })
     .map((a) => {
-      const pts = tessellateOpen(a.points, !!a.curved);
+      const c = centrelineOf({ ann: a });
+      if (!c || c.pts.length < 2) return null;
+      const pts = a.shape === 'object' ? c.pts : tessellateOpen(c.pts, !!a.curved);
       const cum = polylineCum(pts);
-      return { pts, cum, len: cum[cum.length - 1], half: (a.width || ANNOT_TYPES[a.kind].width || 6) / 2 };
+      return { pts, cum, len: cum[cum.length - 1], half: c.width / 2 };
     })
-    .filter((l) => l.len > 0.1), [doc.annotations]);
+    .filter((l) => l && l.len > 0.1), [doc.annotations]);
 
   // Heading of the nearest road at a point, in degrees, for orienting markings.
   // 0 when there is no road nearby — an arrow then points up until you press R.
@@ -2656,11 +2779,21 @@ function App() {
       for (let vi = 0; vi < op.length; vi++)
         if (dist(w2s(op[vi]), sp) < 9) return { type: 'obsV', obs: oi, index: vi };
     }
-    // Corner handles on the selected annotation (resize by dragging) — not for
-    // driveways, which keep their edge-frame shape.
+    // Handles on the selected annotation. A driveway keeps its edge-frame shape
+    // and a road object its rectangle, so instead of four loose corners the
+    // object offers a length grip per end and a rotate grip beside it — dragging
+    // a parameter, not a point.
     if (selection && selection.type === 'annot') {
       const a = (doc.annotations || [])[selection.index];
-      if (a && a.kind !== 'driveway' && a.points) {
+      if (isRoadObject(a)) {
+        for (const g of roadRectGrips(a)) {
+          if (dist(w2s(g.at), sp) < 10) {
+            return g.kind === 'rot'
+              ? { type: 'annRot', ann: selection.index }
+              : { type: 'annLen', ann: selection.index, end: g.end };
+          }
+        }
+      } else if (a && a.kind !== 'driveway' && a.points) {
         for (let vi = 0; vi < a.points.length; vi++)
           if (dist(w2s(a.points[vi]), sp) < 9) return { type: 'annV', ann: selection.index, index: vi };
       }
@@ -2949,9 +3082,16 @@ function App() {
         addAnnotation(ann);
         return;
       }
-      // Road as a draggable rectangle object (resize afterwards via corners).
+      // A road drawn as an object is placed with one click at a fixed size and
+      // reshaped afterwards — by its fields or by its grips. Same two-call
+      // symmetry as the driveway above: the preview builds the real object and
+      // the click stores that same object. It used to be a rectangle you dragged
+      // out, which left it with four loose corners and no width at all, so
+      // nothing downstream could find its centreline.
       if (annotKind === 'road' && roadShape === 'rect') {
-        dragRef.current = { mode: 'annotArea', start: snap, cur: snap, roadRect: true };
+        addAnnotation(makeRoadRect(snap, annotWidth, annotLength, (annotRot * Math.PI) / 180));
+        setSelection({ type: 'annot', index: (doc.annotations || []).length });
+        setTool('select');
         return;
       }
       if (t.mode === 'area') {
@@ -2992,6 +3132,10 @@ function App() {
           const frame = siteEdgeFrame(wp, sitePoly, polygonCentroid(sitePoly));
           setHover(frame ? { driveway: makeDriveway(frame, annotWidth, ANNOT_TYPES.driveway.depth || 12) } : null);
         }
+        return;
+      }
+      if (tool === 'annot' && annotKind === 'road' && roadShape === 'rect') {
+        setHover({ roadRect: makeRoadRect(snapPoint(sp), annotWidth, annotLength, (annotRot * Math.PI) / 180) });
         return;
       }
       if (tool === 'measure' && measure && measure.points.length) {
@@ -3094,6 +3238,30 @@ function App() {
           const anns = (d.annotations || []).map((a, i) => (i === t.ann ? { ...a, points: a.points.map((p, j) => (j === t.index ? { x: wp.x, y: wp.y } : p)) } : a));
           return { ...d, annotations: anns };
         }
+        // A road object's grips move a parameter, not a point: the rectangle is
+        // rebuilt from the recipe, so it stays a rectangle no matter where the
+        // cursor wanders.
+        if (t.type === 'annLen' || t.type === 'annRot') {
+          const anns = (d.annotations || []).slice();
+          const a = anns[t.ann];
+          if (!isRoadObject(a)) return d;
+          if (t.type === 'annRot') {
+            let rot = Math.atan2(wp.y - a.at.y, wp.x - a.at.x) + Math.PI / 2;
+            if (e.shiftKey) rot = Math.round(rot / ANGLE_SNAP) * ANGLE_SNAP;
+            anns[t.ann] = makeRoadRect(a.at, a.width, a.length, rot, a);
+          } else {
+            // Drag one end; the other stays put, so the object grows from the
+            // end you took hold of instead of from its middle.
+            const c = Math.cos(a.rot), s2 = Math.sin(a.rot);
+            const along = (wp.x - a.at.x) * c + (wp.y - a.at.y) * s2;
+            const fixed = -t.end * (a.length / 2);
+            const length = Math.max(1, Math.abs(along - fixed));
+            const mid = fixed + t.end * (length / 2);
+            anns[t.ann] = makeRoadRect(
+              { x: a.at.x + c * mid, y: a.at.y + s2 * mid }, a.width, length, a.rot, a);
+          }
+          return { ...d, annotations: anns };
+        }
         const obstacles = d.obstacles.map((o) => (Array.isArray(o) ? o.slice() : { ...o, poly: o.poly.slice() }));
         const tgt = obstacles[t.obs];
         if (Array.isArray(tgt)) tgt[t.index] = wp; else tgt.poly[t.index] = wp;
@@ -3187,14 +3355,12 @@ function App() {
     } else if (drag.mode === 'annotArea') {
       const r = rectFrom(drag.start, drag.cur);
       if (Math.abs(r.w) > 0.5 && Math.abs(r.h) > 0.5) {
-        const isRoad = !!drag.roadRect;
         // An area is a closed ring whichever tool drew it. Rectangles used to be
         // the exception, and that exception was invisible until you switched to
         // 3D and found the same shape present when drawn as a polygon and gone
         // when dragged as a rectangle.
         const isArea = (ANNOT_TYPES[annotKind] || {}).mode === 'area';
-        addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0, closed: isRoad || isArea });
-        if (isRoad) { setSelection({ type: 'annot', index: (doc.annotations || []).length }); setTool('select'); }
+        addAnnotation({ kind: annotKind, points: rectPoly(r.x, r.y, r.w, r.h), width: 0, closed: isArea });
       }
       setHover(null);
     } else if (drag.mode === 'annotCircle') {
@@ -3256,7 +3422,9 @@ function App() {
       setTool('select'); setStallSel([]); setAisleSel(null);
       setSelection({ type: 'annot', index: ai });
       const ann = (doc.annotations || [])[ai];
-      if (!ann || ann.kind === 'driveway' || !ann.points || ann.points.length < 2) return;
+      // A driveway and a road object are rectangles derived from parameters;
+      // splicing a fifth point into one would break that relationship silently.
+      if (!ann || ann.kind === 'driveway' || isRoadObject(ann) || !ann.points || ann.points.length < 2) return;
       const { w2s } = makeTransform(view);
       // Insert on the segment nearest the click, in the raw (control) points.
       let best = null;
@@ -3922,10 +4090,28 @@ function App() {
   };
   // Apply a loaded file. Accepts the new wrapped format ({_pp, doc, view,
   // basemapStyle}) as well as a bare document from older saves.
+/**
+ * Bring an older document up to date.
+ *
+ * A road drawn as an object used to be stored as four loose corners with
+ * `width: 0`. Recovering its width, length and heading from the rectangle keeps
+ * such a plan exactly the shape it was — the alternative is that it silently
+ * takes a default size the first time anything touches it.
+ */
+function migrateDoc(d) {
+  const anns = (d.annotations || []).map((a) => {
+    if (!a || a.kind !== 'road' || a.shape || !a.closed) return a;
+    if (!Array.isArray(a.points) || a.points.length !== 4) return a;
+    const q = roadRectParams(a);
+    return { ...a, shape: 'object', at: q.at, width: q.width, length: q.length, rot: q.rot };
+  });
+  return anns === d.annotations ? d : { ...d, annotations: anns };
+}
+
   const applyLoaded = (payload) => {
     const d = payload && payload.doc && payload.doc.site ? payload.doc : payload;
     if (!(d && d.site && d.params)) { alert('Ongeldig bestand'); return false; }
-    const merged = { ...initialDoc, ...d };
+    const merged = migrateDoc({ ...initialDoc, ...d });
     // Register the document's own symbols before the first draw. The effect on
     // doc.assets would catch up a frame later, but that frame is a plan with
     // visible holes in it.
@@ -4437,9 +4623,23 @@ function App() {
               <label>Weg tekenen als</label>
               <div className="seg">
                 <button className=${roadShape === 'line' ? 'active' : ''} onClick=${() => setRoadShape('line')}>Lijn</button>
-                <button className=${roadShape === 'rect' ? 'active' : ''} onClick=${() => setRoadShape('rect')}>Object (rechthoek)</button>
+                <button className=${roadShape === 'rect' ? 'active' : ''} onClick=${() => setRoadShape('rect')}>Object</button>
+                <button className=${roadShape === 'multi' ? 'active' : ''} onClick=${() => setRoadShape('multi')}>Multipoint</button>
               </div>
-              <div className="mix-note">${roadShape === 'rect' ? 'Sleep een rechthoek; daarna selecteren en aan de hoeken slepen om te vergroten.' : 'Klik punten voor een weglijn.'}</div>
+              <div className="mix-note">${roadShape === 'rect'
+                ? 'Klik om een weg van vaste maat neer te zetten. Daarna: breedte in het veld, lengte aan de kopse grepen, draaien aan de oranje greep.'
+                : roadShape === 'multi'
+                  ? 'Klik punten voor een vrij gevormd wegvlak. Niet rijdbaar — het materiaal bepaalt of het als verhard telt.'
+                  : 'Klik punten voor een weglijn.'}</div>
+            </div>`}
+          ${tool === 'annot' && annotKind === 'road' && roadShape === 'rect' && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Lengte <span className="val">${annotLength.toFixed(1)} m</span></label>
+              <input type="range" min="3" max="120" step="0.5" value=${annotLength}
+                onInput=${(e) => setAnnotLength(+e.target.value)} />
+              <label style=${{ marginTop: '8px' }}>Draaiing <span className="val">${annotRot}°</span></label>
+              <input type="range" min="0" max="355" step="5" value=${annotRot}
+                onInput=${(e) => setAnnotRot(+e.target.value)} />
             </div>`}
           ${tool === 'annot' && ANNOT_TYPES[annotKind].body && !(annotKind === 'road' && roadShape === 'rect') && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
@@ -4811,6 +5011,45 @@ function App() {
                 <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
               </div>
             </div>`}
+          ${isRoadObject(doc.annotations[selection.index]) && (() => {
+            const a = doc.annotations[selection.index], ai = selection.index;
+            // Every edit rebuilds the rectangle from the recipe and passes the
+            // old record through, so nothing else on it is lost on the way.
+            const set = (patch) => dispatch({ type: 'COMMIT', updater: (d) => {
+              const anns = (d.annotations || []).slice();
+              const cur = anns[ai];
+              if (!isRoadObject(cur)) return d;
+              anns[ai] = makeRoadRect(patch.at || cur.at,
+                patch.width == null ? cur.width : patch.width,
+                patch.length == null ? cur.length : patch.length,
+                patch.rot == null ? cur.rot : patch.rot, cur);
+              return { ...d, annotations: anns };
+            } });
+            const deg = Math.round((((a.rot * 180) / Math.PI) % 360 + 360) % 360);
+            return html`
+              <div className="field">
+                <label>Breedte</label>
+                <div className="row">
+                  <input type="number" min="1" max="40" step="0.5" value=${a.width.toFixed(1)}
+                    onChange=${(e) => set({ width: Math.max(1, Math.min(40, parseFloat(e.target.value) || 6)) })} />
+                  <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
+                </div>
+              </div>
+              <div className="field">
+                <label>Lengte</label>
+                <div className="row">
+                  <input type="number" min="1" max="400" step="0.5" value=${a.length.toFixed(1)}
+                    onChange=${(e) => set({ length: Math.max(1, Math.min(400, parseFloat(e.target.value) || 20)) })} />
+                  <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
+                </div>
+              </div>
+              <div className="field">
+                <label>Draaiing <span className="val">${deg}°</span></label>
+                <input type="range" min="0" max="355" step="5" value=${deg}
+                  onInput=${(e) => set({ rot: (+e.target.value * Math.PI) / 180 })} />
+                <div className="mix-note">Of sleep de oranje greep naast de weg; Shift klemt op 15°.</div>
+              </div>`;
+          })()}
           ${doc.annotations[selection.index].kind === 'drivethru' && (() => {
             const a = doc.annotations[selection.index];
             const len = polylineLen(a.points), R = a.turnR || 7.5;

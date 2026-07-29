@@ -4,7 +4,7 @@
 // this posts back {reqId, result} (or {reqId, error}). A dead/absent
 // worker is handled by an inline fallback in app.js.
 // ============================================================
-import { solveParking } from './solver.js?v=cd80cc29';
+import { solveParking } from './solver.js?v=8696eb62';
 
 self.onmessage = (e) => {
   const { reqId, site, obstacles, params, orientationIndex } = e.data || {};
