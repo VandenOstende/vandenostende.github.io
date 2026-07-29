@@ -4,22 +4,22 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=3d74081d';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=f81a791d';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, STRIPE_SPEC,
-} from './geometry.js?v=3d74081d';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=3d74081d';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=3d74081d';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=3d74081d';
-import { parseParcel, simplifyRing } from './importers.js?v=3d74081d';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=3d74081d';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=3d74081d';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=3d74081d';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=3d74081d';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=3d74081d';
-import { BUILD_ID } from './build.js?v=3d74081d';
+} from './geometry.js?v=f81a791d';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=f81a791d';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=f81a791d';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=f81a791d';
+import { parseParcel, simplifyRing } from './importers.js?v=f81a791d';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=f81a791d';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=f81a791d';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=f81a791d';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=f81a791d';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=f81a791d';
+import { BUILD_ID } from './build.js?v=f81a791d';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -349,7 +349,6 @@ export const UI_PARTS = [
   { id: 'tbAxis', group: 'Werkbalk', label: 'Rij-as & Reset' },
   { id: 'tbUndo', group: 'Werkbalk', label: 'Undo / Redo' },
   { id: 'tbView', group: 'Werkbalk', label: '2D / 3D' },
-  { id: 'tbTheme', group: 'Werkbalk', label: 'Thema-knop' },
   { id: 'tbZoom', group: 'Werkbalk', label: 'Zoom & Fit' },
   { id: 'tbFile', group: 'Werkbalk', label: 'Opslaan / Laden / Perceel' },
   { id: 'tbExport', group: 'Werkbalk', label: 'Export' },
@@ -372,64 +371,46 @@ const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max
 // ---------- Canvas theme ----------
 // Only the colours that actually break when the backdrop flips. Meaning-bearing
 // colours (STALL_TYPES, ANNOT_TYPES, the green previews, the orange drive-thru)
-// stay as they are — they read on both. Roles, not hues, so a future theme is a
+// stay as they are. Roles, not hues, so a change of ground is a
 // data change.
-const THEMES = {
-  dark: {
-    grid: 'rgba(255,255,255,0.045)',
-    ink: 'rgba(255,255,255,0.95)',      // glyphs and labels drawn on the plan
-    inkSoft: 'rgba(255,255,255,0.7)',
-    inkFaint: 'rgba(255,255,255,0.5)',
-    onStall: 'rgba(255,255,255,0.85)',  // dividers/arrows painted on filled shapes
-    outline: 'rgba(0,0,0,0.35)',
-    sel: '#ffffff',                     // selection halo
-    plate: 'rgba(15,18,22,0.85)',       // small label plates
-    plateInk: '#a7f3d0',
-    handleCore: '#0f1216',
-    aisle: 'rgba(43,51,64,0.9)',
-    building: 'rgba(100,116,139,0.5)',
-    buildingLine: '#7c8896',
-    badge: 'rgba(230,234,239,0.9)',
-    pictoHalo: 'rgba(0,0,0,0.55)',
-  },
-  light: {
-    grid: 'rgba(15,23,42,0.07)',
-    ink: 'rgba(17,24,39,0.92)',
-    inkSoft: 'rgba(17,24,39,0.62)',
-    inkFaint: 'rgba(17,24,39,0.45)',
-    onStall: 'rgba(255,255,255,0.9)',   // stalls stay saturated, so keep white here
-    outline: 'rgba(0,0,0,0.28)',
-    sel: '#111827',
-    plate: 'rgba(255,255,255,0.92)',
-    plateInk: '#047857',
-    handleCore: '#ffffff',
-    aisle: 'rgba(148,163,184,0.45)',
-    building: 'rgba(100,116,139,0.35)',
-    buildingLine: '#64748b',
-    badge: 'rgba(30,41,59,0.9)',
-    pictoHalo: 'rgba(15,23,42,0.75)',
-  },
+// The plan's own ink, on the design's light ground. One set: the design
+// specifies a light interface, and a second palette nobody drew is a liability
+// dressed up as a feature.
+const TH_BASE = {
+  grid: 'rgba(28,29,41,0.07)',
+  ink: 'rgba(28,29,41,0.92)',         // glyphs and labels drawn on the plan
+  inkSoft: 'rgba(28,29,41,0.62)',
+  inkFaint: 'rgba(28,29,41,0.45)',
+  onStall: 'rgba(255,255,255,0.9)',   // stalls stay saturated, so keep white here
+  outline: 'rgba(0,0,0,0.28)',
+  sel: '#6a5bc4',                     // selection halo — the design's accent
+  plate: 'rgba(255,255,255,0.94)',    // small label plates
+  plateInk: '#4a3d99',
+  handleCore: '#ffffff',
+  aisle: 'rgba(111,114,133,0.35)',
+  building: 'rgba(58,61,82,0.30)',
+  buildingLine: '#6f7285',
+  badge: 'rgba(28,29,41,0.9)',
+  pictoHalo: 'rgba(28,29,41,0.75)',
 };
+
 // Set once per frame by draw(). Module-level so the paint helpers don't each
 // need a theme parameter threaded through them; rendering is synchronous.
 // The light map's sequential ramp: one hue (amber — it is light, after all),
-// six steps, monotonic. Each theme's steps are picked against its own surface,
-// so neither is the other one inverted. Alpha stays well under 1 because this
-// is a wash over a drawing that still has to be readable underneath it.
-const LIGHT_RAMP = {
-  light: ['rgba(254,243,199,0.55)', 'rgba(253,230,138,0.60)', 'rgba(252,211,77,0.65)',
-    'rgba(251,191,36,0.70)', 'rgba(245,158,11,0.72)', 'rgba(217,119,6,0.75)'],
-  dark: ['rgba(120,53,15,0.55)', 'rgba(146,64,14,0.60)', 'rgba(180,83,9,0.65)',
-    'rgba(217,119,6,0.70)', 'rgba(245,158,11,0.72)', 'rgba(251,191,36,0.75)'],
-};
+// The light map's sequential ramp: one hue (amber — it is light, after all),
+// six steps, monotonic on the design's light ground. Alpha stays well under 1
+// because this is a wash over a drawing that still has to be readable under it.
+const LIGHT_RAMP = ['rgba(254,243,199,0.55)', 'rgba(253,230,138,0.60)', 'rgba(252,211,77,0.65)',
+  'rgba(251,191,36,0.70)', 'rgba(245,158,11,0.72)', 'rgba(217,119,6,0.75)'];
 
-let TH = THEMES.dark;
+
+let TH = TH_BASE;
 
 // ---------- Rendering ----------
 function draw(ctx, opts) {
   const { view, doc, result, layers, dpr, drawing, hover, selection, size,
           stallSel, aisleSel, marquee, sitePoly, crossings } = opts;
-  TH = THEMES[opts.theme] || THEMES.dark;
+  TH = TH_BASE;
   const site = sitePoly || doc.site;
   const { w2s } = makeTransform(view);
   ctx.save();
@@ -717,16 +698,15 @@ function draw(ctx, opts) {
   // One hue, stepping monotonically away from the surface. A sequential ramp,
   // never a rainbow: the question here is *how much*, and a rainbow makes the
   // reader decode a legend where they should simply see more and less. The
-  // dark theme gets its own steps chosen against the dark surface rather than
-  // an inverted copy of the light ones, because on dark paper "more" has to
-  // get brighter, not darker.
+  // The steps are chosen against this ground; they are not a formula, so a
+  // different ground would want its own set rather than an inversion.
   // Nothing to say when nothing arrives: with no lamps placed every cell reads
   // zero, and painting the whole site in the palest step would claim a faint
   // glow that is not there. Darkness is the absence of the wash, not its first
   // rung — so a cell at zero stays bare and the plan shows through.
   if (layers.lightmap && opts.lightField && opts.lightGrid && opts.lightField.stats.max > 0) {
     const { values, stats } = opts.lightField;
-    const ramp = LIGHT_RAMP[opts.theme === 'light' ? 'light' : 'dark'];
+    const ramp = LIGHT_RAMP;
     const hi = stats.max;
     const s = opts.lightGrid.step, half = s / 2;
     ctx.save();
@@ -1813,13 +1793,6 @@ function App() {
   const [mbToken, setMbToken] = useState(() => { try { return localStorage.getItem('pp_mapbox_token') || ''; } catch (e) { return ''; } });
   const [mapStyle, setMapStyle] = useState(() => { try { return localStorage.getItem('pp_map_style') || 'satellite'; } catch (e) { return 'satellite'; } });
   // Light by default; the stored choice wins, then the OS preference.
-  const [theme, setTheme] = useState(() => {
-    try {
-      const saved = localStorage.getItem('pp_theme');
-      if (saved === 'light' || saved === 'dark') return saved;
-      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    } catch (e) { return 'light'; }
-  });
   const [mbTokenInput, setMbTokenInput] = useState('');
   const [map3dError, setMap3dError] = useState('');
   // The error card sits over the middle of the canvas. It has to be dismissable:
@@ -1936,7 +1909,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=3d74081d', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=f81a791d', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2208,7 +2181,7 @@ function App() {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
         drawing, hover, selection, size: sizeRef.current,
-        showHandles: tool === 'select', theme, measure, guides: guidesRef.current,
+        showHandles: tool === 'select', measure, guides: guidesRef.current,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel, shadows,
         lightField, lightGrid,
         pickArms: pickArm ? junctionArms(doc.annotations, pickArm) : null,
@@ -2218,7 +2191,7 @@ function App() {
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, theme, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid, pickArm]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid, pickArm]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -2303,7 +2276,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=3d74081d').then(async (m) => {
+    import('./map3d.js?v=f81a791d').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -2359,12 +2332,6 @@ function App() {
   }, [view, viewMode, doc.geo, sitePoly, mapReady]);
 
   // Drive the CSS token set off the root element and remember the choice.
-  useEffect(() => {
-    try {
-      document.documentElement.setAttribute('data-theme', theme);
-      localStorage.setItem('pp_theme', theme);
-    } catch (e) {}
-  }, [theme]);
 
   // Tilt / plan-drape on 2D↔3D switch, and keep the draped plan fresh in 3D.
   useEffect(() => { if (map3dRef.current) map3dRef.current.setMode(viewMode === '3d'); }, [viewMode]);
@@ -3630,7 +3597,7 @@ function App() {
     ? { backgroundImage: 'url(' + t.asset.src + ')', backgroundSize: 'contain', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', borderRadius: 0 }
     // A carriageway is painted like the solver's aisles, so the swatch has to
     // be that colour too — otherwise the palette promises a different road.
-    : t && t.aisleColor ? { background: (THEMES[theme] || THEMES.dark).aisle }
+    : t && t.aisleColor ? { background: TH_BASE.aisle }
     : { background: (t && t.color) || '#94a3b8' });
 
   // Bring an object into view without changing the zoom more than needed.
@@ -4627,9 +4594,6 @@ function migrateDoc(d) {
             ${[['2d', '2D'], ['3d', '3D']].map(([m, lbl]) => html`
               <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
           </div>`}
-        ${vis('tbTheme') && html`
-          <button className="btn ghost" title=${theme === 'dark' ? 'Licht thema' : 'Donker thema'}
-            onClick=${() => setTheme(theme === 'dark' ? 'light' : 'dark')}>${theme === 'dark' ? '☀️' : '🌙'}</button>`}
         <div className="tb-spacer"></div>
         ${vis('tbZoom') && html`
           <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
