@@ -5,9 +5,9 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=d3273c24';
-import { polyOf, ribbonPoly } from './geometry.js?v=d3273c24';
-import { ANNOT_TYPES } from './annots.js?v=d3273c24';
+import { localToLatLon } from './basemap.js?v=3d74081d';
+import { polyOf, ribbonPoly } from './geometry.js?v=3d74081d';
+import { ANNOT_TYPES } from './annots.js?v=3d74081d';
 
 // A drawn carriageway is an area, not a centreline: exporting the hairline lost
 // its width, its offset and its corners.
@@ -45,14 +45,14 @@ export function toGeoJSON(plan, geo) {
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
     const body = bodyPoly(an);
-    if (body) { feats.push(poly(body, { kind: an.kind, width: an.width || 6, align: an.align || 'center' })); return; }
+    if (body) { feats.push(poly(body, { kind: an.kind, material: an.material, width: an.width || 6, align: an.align || 'center' })); return; }
     if (isPoint(an)) {
-      const props = { kind: an.kind, diameter: an.width || 5 };
+      const props = { kind: an.kind, material: an.material, diameter: an.width || 5 };
       if (an.angle != null) props.angle = an.angle;
       if (an.value != null) props.value = an.value;
       feats.push(point(an.points[0], props));
-    } else if (an.points.length >= 3 && (AREA_KINDS.includes(an.kind) || an.closed)) feats.push(poly(an.points, { kind: an.kind }));
-    else if (an.points.length >= 2) feats.push(line(an.points, { kind: an.kind, width: an.width || 1 }));
+    } else if (an.points.length >= 3 && (AREA_KINDS.includes(an.kind) || an.closed)) feats.push(poly(an.points, { kind: an.kind, material: an.material }));
+    else if (an.points.length >= 2) feats.push(line(an.points, { kind: an.kind, material: an.material, width: an.width || 1 }));
   });
   return { type: 'FeatureCollection', features: feats };
 }
@@ -77,7 +77,9 @@ export function toDXF(plan) {
   (plan.stalls || []).forEach((s) => addPoly(s.poly, 'STALLS_' + (s.type || 'standard').toUpperCase(), true));
   (plan.annotations || []).forEach((an) => {
     if (!an.points || !an.points.length) return;
-    const layer = String(an.kind).toUpperCase();
+    // A material can only travel in the layer name here — DXF entities carry no
+  // attributes in this writer.
+  const layer = String(an.kind).toUpperCase() + (an.material ? '_' + String(an.material).toUpperCase() : '');
     const body = bodyPoly(an);
     if (body) { addPoly(body, layer, true); return; }
     if (isPoint(an)) addCircle(an.points[0], (an.width || 5) / 2, an.kind === 'tree' ? 'TREES' : layer);

@@ -4,22 +4,22 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=d3273c24';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=3d74081d';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, STRIPE_SPEC,
-} from './geometry.js?v=d3273c24';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=d3273c24';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=d3273c24';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d3273c24';
-import { parseParcel, simplifyRing } from './importers.js?v=d3273c24';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=d3273c24';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=d3273c24';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=d3273c24';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=d3273c24';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=d3273c24';
-import { BUILD_ID } from './build.js?v=d3273c24';
+} from './geometry.js?v=3d74081d';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=3d74081d';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=3d74081d';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=3d74081d';
+import { parseParcel, simplifyRing } from './importers.js?v=3d74081d';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=3d74081d';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=3d74081d';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=3d74081d';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=3d74081d';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=3d74081d';
+import { BUILD_ID } from './build.js?v=3d74081d';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1443,7 +1443,10 @@ function drawAnnotation(ctx, ann, w2s, scale, selected, index) {
     ctx.beginPath();
     pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
     ctx.closePath();
-    ctx.fillStyle = ann.kind === 'grass' ? hexA(t.color, 0.5) : 'rgba(14,116,144,0.35)';
+    // Every area but grass used to be the same teal. A chosen material is what
+    // the surface actually is, so it decides the colour.
+    const mat = surfaceOf(ann);
+    ctx.fillStyle = mat ? hexA(mat.tint, 0.55) : (ann.kind === 'grass' ? hexA(t.color, 0.5) : 'rgba(14,116,144,0.35)');
     ctx.fill();
     ctx.strokeStyle = selected ? TH.sel : t.color;
     ctx.lineWidth = selected ? 2.5 : 1.5;
@@ -1737,6 +1740,7 @@ function App() {
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' (object) | 'multi'
   const [annotLength, setAnnotLength] = useState(20); // m — the road object's length
   const [annotRot, setAnnotRot] = useState(0);        // deg — the road object's heading
+  const [annotMaterial, setAnnotMaterial] = useState('');  // '' = leave it unset
   const [annotCurved, setAnnotCurved] = useState(true);
   // What the line you draw means for a carriageway: its centre, or one of its
   // kerbs (seen in the direction you draw).
@@ -1932,7 +1936,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=d3273c24', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=3d74081d', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2299,7 +2303,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=d3273c24').then(async (m) => {
+    import('./map3d.js?v=3d74081d').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -3144,6 +3148,19 @@ function App() {
       // the click stores that same object. It used to be a rectangle you dragged
       // out, which left it with four loose corners and no width at all, so
       // nothing downstream could find its centreline.
+      // Multipoint: a free-form road surface. Points clicked like a polygon, and
+      // it closes into a shape rather than a ribbon of fixed width — what it IS
+      // is decided by its material, not by being called a road.
+      if (annotKind === 'road' && roadShape === 'multi') {
+        const first = drawing && drawing.points[0];
+        const { w2s: w2sM } = makeTransform(view);
+        if (first && drawing.points.length >= 3 && dist(w2sM(first), sp) < 12) {
+          addAnnotation({ kind: 'road', shape: 'multi', points: drawing.points, closed: true, width: 0, material: annotMaterial || 'asphalt' });
+          setDrawing(null); setTool('select'); return;
+        }
+        setDrawing((d) => ({ points: [...(d ? d.points : []), snap] }));
+        return;
+      }
       if (annotKind === 'road' && roadShape === 'rect') {
         addAnnotation(makeRoadRect(snap, annotWidth, annotLength, (annotRot * Math.PI) / 180));
         setSelection({ type: 'annot', index: (doc.annotations || []).length });
@@ -3464,6 +3481,9 @@ function App() {
       commitSite(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'obstaclepoly' && drawing && drawing.points.length >= 3) {
       commitObstaclePoly(drawing.points); setDrawing(null); setTool('select');
+    } else if (tool === 'annot' && annotKind === 'road' && roadShape === 'multi' && drawing && drawing.points.length >= 3) {
+      addAnnotation({ kind: 'road', shape: 'multi', points: drawing.points, closed: true, width: 0, material: annotMaterial || 'asphalt' });
+      setDrawing(null); setTool('select');
     } else if (tool === 'annot' && ANNOT_TYPES[annotKind].mode === 'area' && drawing && drawing.points.length >= 3) {
       finishAreaPoly(drawing.points);
     } else if (tool === 'annot' && drawing && drawing.points.length >= 2) {
@@ -4696,6 +4716,21 @@ function migrateDoc(d) {
                   ? 'Klik punten voor een vrij gevormd wegvlak. Niet rijdbaar — het materiaal bepaalt of het als verhard telt.'
                   : 'Klik punten voor een weglijn.'}</div>
             </div>`}
+          ${tool === 'annot' && (roadShape === 'multi' || ANNOT_TYPES[annotKind].mode === 'area' || ANNOT_TYPES[annotKind].body) && html`
+            <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
+              <label>Ondergrond</label>
+              <div className="mat-grid">
+                <button className=${'type-btn' + (annotMaterial === '' ? ' active' : '')} onClick=${() => setAnnotMaterial('')}>Standaard</button>
+                ${Object.values(SURFACES).map((m) => html`
+                  <button key=${m.key} className=${'type-btn' + (annotMaterial === m.key ? ' active' : '')}
+                    title=${`Afstroming ${m.runoff.toFixed(2)}`} onClick=${() => setAnnotMaterial(m.key)}>
+                    <span className="dot" style=${{ background: m.tint }}></span>${m.label}
+                  </button>`)}
+              </div>
+              <div className="mix-note">${annotMaterial
+                ? `Afstroming ${SURFACES[annotMaterial].runoff.toFixed(2)} — ${SURFACES[annotMaterial].runoff >= 1 ? 'telt volledig als verhard' : `telt voor ${Math.round(SURFACES[annotMaterial].runoff * 100)} % mee als verhard`}.`
+                : 'Geen keuze — telt volledig als verhard, zoals voorheen.'}</div>
+            </div>`}
           ${tool === 'annot' && annotKind === 'road' && roadShape === 'rect' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>Lengte <span className="val">${annotLength.toFixed(1)} m</span></label>
@@ -5086,6 +5121,29 @@ function migrateDoc(d) {
                 <span style=${{ alignSelf: 'center', color: 'var(--muted)', fontSize: '12px' }}>m</span>
               </div>
             </div>`}
+          ${(() => {
+            const a = doc.annotations[selection.index], ai = selection.index;
+            const t = ANNOT_TYPES[a.kind] || {};
+            if (!(t.mode === 'area' || t.body || a.shape)) return '';
+            const cur = a.material || '';
+            return html`
+              <div className="field">
+                <label>Ondergrond</label>
+                <div className="mat-grid">
+                  <button className=${'type-btn' + (cur === '' ? ' active' : '')}
+                    onClick=${() => updateAnnotation(ai, { material: undefined })}>Standaard</button>
+                  ${Object.values(SURFACES).map((m) => html`
+                    <button key=${m.key} className=${'type-btn' + (cur === m.key ? ' active' : '')}
+                      title=${`Afstroming ${m.runoff.toFixed(2)}`}
+                      onClick=${() => updateAnnotation(ai, { material: m.key })}>
+                      <span className="dot" style=${{ background: m.tint }}></span>${m.label}
+                    </button>`)}
+                </div>
+                <div className="mix-note">${cur
+                  ? `Afstroming ${SURFACES[cur].runoff.toFixed(2)} — telt voor ${Math.round(SURFACES[cur].runoff * 100)} % mee als verhard oppervlak.`
+                  : 'Geen keuze — telt volledig als verhard.'}</div>
+              </div>`;
+          })()}
           ${isRoadObject(doc.annotations[selection.index]) && (() => {
             const a = doc.annotations[selection.index], ai = selection.index;
             // Every edit rebuilds the rectangle from the recipe and passes the

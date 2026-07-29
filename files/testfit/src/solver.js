@@ -15,7 +15,8 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=d3273c24';
+} from './geometry.js?v=3d74081d';
+import { ANNOT_TYPES, runoffOf } from './annots.js?v=3d74081d';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -620,11 +621,15 @@ export function computeMetrics(site, obstacles, result, params, annotations) {
   for (const t of result.turnarounds || []) paved += polygonArea(t.poly || t);
   for (const an of annotations || []) {
     if (!an.points || NON_PAVED.has(an.kind)) continue;
-    if (an.points.length >= 3 && (an.closed || an.kind === 'bikeparking')) paved += polygonArea(an.points);
-    else if (an.points.length >= 2 && (an.kind === 'road' || an.kind === 'walkway' || an.kind === 'bikepath')) {
+    // What the surface is made of scales its contribution: gravel and grass let
+    // most of the rain through, asphalt none of it. Without a material chosen
+    // this is 1, so the number is exactly what it was before materials existed.
+    const ro = runoffOf(an);
+    if (an.points.length >= 3 && (an.closed || an.kind === 'bikeparking')) paved += polygonArea(an.points) * ro;
+    else if (an.points.length >= 2 && (an.kind === 'road' || an.kind === 'walkway' || an.kind === 'bikepath' || an.kind === 'drivethru')) {
       let len = 0;
       for (let i = 0; i < an.points.length - 1; i++) len += Math.hypot(an.points[i + 1].x - an.points[i].x, an.points[i + 1].y - an.points[i].y);
-      paved += len * (an.width || 1);
+      paved += len * (an.width || (ANNOT_TYPES[an.kind] || {}).width || 1) * ro;
     }
   }
   const imperviousPct = siteArea > 0 ? Math.min(1, paved / siteArea) : 0;
