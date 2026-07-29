@@ -4,22 +4,22 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8696eb62';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=5cb33568';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, STRIPE_SPEC,
-} from './geometry.js?v=8696eb62';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=8696eb62';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=8696eb62';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8696eb62';
-import { parseParcel, simplifyRing } from './importers.js?v=8696eb62';
-import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=8696eb62';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=8696eb62';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=8696eb62';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=8696eb62';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=8696eb62';
-import { BUILD_ID } from './build.js?v=8696eb62';
+} from './geometry.js?v=5cb33568';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=5cb33568';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=5cb33568';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=5cb33568';
+import { parseParcel, simplifyRing } from './importers.js?v=5cb33568';
+import { ANNOT_TYPES, ANNOT_GROUPS, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=5cb33568';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=5cb33568';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=5cb33568';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=5cb33568';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=5cb33568';
+import { BUILD_ID } from './build.js?v=5cb33568';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1727,6 +1727,11 @@ function App() {
   // some Windows setups grab Alt+drag to move windows, so the browser never
   // sees it. This is the same thing without a modifier.
   const [carryRiders, setCarryRiders] = useState(false);
+  // Snapping is a preference, not a law. It sticks across sessions because it is
+  // a way of working rather than a property of the plan.
+  const [snapOn, setSnapOn] = useState(() => {
+    try { return localStorage.getItem('pp_snap') !== 'off'; } catch (e) { return true; }
+  });
   const [staleBuild, setStaleBuild] = useState('');
   const [askJunction, setAskJunction] = useState(null); // the crossing whose popover is open
   const [placing, setPlacing] = useState(0); // >0 while a duplicated group follows the cursor
@@ -1824,6 +1829,7 @@ function App() {
   const placingRef = useRef(null); // the group hanging off the cursor, waiting to be dropped
   const leftPanelRef = useRef(null);
   const carryRidersRef = useRef(false); // read inside the drag handler
+  const snapRef = useRef(true);         // ditto — pointer handlers are not re-created
   const wheelRef = useRef({ at: -1e9, zoom: true }); // latched wheel gesture mode
   const spaceRef = useRef(null); // tool to restore when Space (hold-to-pan) is released
   const geoAppliedRef = useRef(null); // last geo anchor pushed to the 3D camera
@@ -1902,7 +1908,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=8696eb62', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=5cb33568', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2183,6 +2189,8 @@ function App() {
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
+  snapRef.current = snapOn;
+  useEffect(() => { try { localStorage.setItem('pp_snap', snapOn ? 'on' : 'off'); } catch (e) {} }, [snapOn]);
   docRef.current = doc;
   vmRef.current = viewMode;
   // The map lifecycle effect finishes asynchronously, long after the render that
@@ -2262,7 +2270,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=8696eb62').then(async (m) => {
+    import('./map3d.js?v=5cb33568').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -2375,6 +2383,9 @@ function App() {
   // site, obstacles) within ~11px; otherwise return the plain world point.
   const snapPoint = (sp) => {
     const { w2s, s2w } = makeTransform(view);
+    // Off means off: the point goes exactly where the cursor is, not onto a
+    // quarter-metre grid and not onto a neighbour.
+    if (!snapRef.current) return s2w(sp);
     let best = null, bestD = 11;
     const consider = (pt) => { const d = dist(w2s(pt), sp); if (d < bestD) { bestD = d; best = pt; } };
     (doc.annotations || []).forEach((a) => (a.points || []).forEach(consider));
@@ -2560,6 +2571,9 @@ function App() {
 
   // Road snap wins; otherwise fall back to the neighbouring-stall lattice.
   const snapStall = (click) => {
+    // With snapping off the stall goes exactly where you clicked, at whatever
+    // rotation R has set — no road, no lattice, no rounding.
+    if (!snapRef.current) return { center: { x: click.x, y: click.y }, theta: (stallRot * Math.PI) / 180, onRoad: false };
     const r = snapStallToRoad(click);
     const base = r || { center: snapStallCenter(click), theta: result.angleUsed || 0, onRoad: false };
     return { ...base, theta: base.theta + (stallRot * Math.PI) / 180 };
@@ -3902,6 +3916,7 @@ function App() {
           if (!spaceRef.current) { spaceRef.current = tool === 'pan' ? null : tool || 'select'; setTool('pan'); }
           break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
+        case 's': setSnapOn((v) => !v); break;
         case '?': setKeysOpen((o) => !o); break;
         case '/': if (toolSearchRef.current) { e.preventDefault(); toolSearchRef.current.focus(); toolSearchRef.current.select(); } break;
         // R rotates in 15° steps: the stall about to be placed, or the selected
@@ -4317,6 +4332,7 @@ function migrateDoc(d) {
   // The offset is applied on top of alignSnap's, and wins, because landing on a
   // corner is a stronger statement than lining up with an edge.
   const groupVertexSnap = (pts, dx, dy) => {
+    if (!snapRef.current) return { dx, dy };
     const tol = 12 / view.scale;
     const targets = [];
     (doc.site || []).forEach((p) => targets.push(p));
@@ -4425,7 +4441,7 @@ function migrateDoc(d) {
     ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
     ['Pannen & zoomen', [['Rechtermuis slepen', 'Pannen'], ['Middelste muisknop', 'Pannen'], ['Spatie ingedrukt', 'Pannen'], ['Muiswiel', 'In- en uitzoomen'], ['Trackpad (2 vingers)', 'Pannen'], ['Shift + scrollen', 'Pannen'], ['Ctrl + scrollen / knijpen', 'In- en uitzoomen'], ['+ / -', 'In- en uitzoomen']]],
-    ['Weergave', [['G', 'Raster aan/uit'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
+    ['Weergave', [['G', 'Raster aan/uit'], ['S', 'Vastklikken aan/uit'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
   ];
   const keysModal = () => html`
     <div className="modal-backdrop" onClick=${() => setKeysOpen(false)}>
@@ -4705,6 +4721,15 @@ function migrateDoc(d) {
         ${vis('secDraw') && html`
         <div className="section">
           <h3>Teken (infrastructuur)</h3>
+          <div className="toggle">
+            <span>Vastklikken <span style=${{ color: 'var(--muted)', fontSize: '11px' }}>S</span></span>
+            <input type="checkbox" checked=${snapOn} onChange=${(e) => setSnapOn(e.target.checked)} />
+          </div>
+          <div className="mix-note" style=${{ marginTop: 0, marginBottom: '10px' }}>
+            ${snapOn
+              ? 'Punten klikken vast op bestaande hoekpunten, vakken langs een weg of tegen hun buren.'
+              : 'Uit — alles gaat exact waar je klikt.'}
+          </div>
           <input className="tool-search" type="search" placeholder="Zoek gereedschap…  /"
             ref=${toolSearchRef} value=${toolQuery} onInput=${(e) => setToolQuery(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Escape') { setToolQuery(''); e.target.blur(); } }} />
