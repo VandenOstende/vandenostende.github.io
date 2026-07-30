@@ -166,6 +166,16 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   category, searchable, with a separate tab for your own imported symbols.
 - **The plan has a name**, editable in the top bar; it becomes the filename when
   you save, and the bar says when you last did.
+- **A shareable link.** There is no server, so the plan travels inside the URL:
+  gzip plus base64url puts the demo plan in about 860 characters and a plan with
+  thirty hand-placed stalls in about 1 800. Delen copies the link and updates the
+  address bar; opening one restores the plan *and* the camera through the same
+  code path a saved file takes. Imported symbols do not travel — a single 512 px
+  PNG would be longer than the plan — so they and the objects placed with them
+  are dropped and the confirmation says how many; send the JSON file for those.
+- **Fold either panel away** from a chevron in the panel itself, and back from a
+  tab on the canvas edge where it was. Same state the Weergave menu and saved
+  workspaces use, so the three cannot disagree.
 - Undo/redo, save/load, layers, and hideable/resizable UI parts you can save as
   a workspace.
 
@@ -193,7 +203,7 @@ modules are enough), with an error overlay if anything does go wrong.
 ```
 files/testfit/
 ├── index.html            # vendored <script> tags + boot error overlay
-├── styles.css            # dark/light CAD-like UI
+├── styles.css            # Nocturne tokens + the CAD-like UI on top of them
 ├── tools/stamp.js        # rewrites ?v=<hash> on every import (run before commit)
 ├── vendor/               # React 18, ReactDOM, htm (UMD + ESM shims)
 └── src/
@@ -210,6 +220,7 @@ files/testfit/
     ├── map3d.js          # Mapbox drape: extrusions, textures, markings, lighting
     ├── importers.js      # GeoJSON/KML parcel rings + simplification
     ├── exporters.js      # GeoJSON, DXF, CSV
+    ├── share.js          # a plan in a URL: gzip + base64url (pure)
     ├── build.js          # the build stamp the app checks itself against
     └── app.js            # React UI (htm) + imperative canvas rendering
 ```
@@ -217,7 +228,7 @@ files/testfit/
 Map tiles (OpenStreetMap, Esri World Imagery) and geocoding (Nominatim) are the
 only outbound requests; without a network the rest keeps working.
 
-`geometry.js`, `solver.js`, `drive.js`, `sun.js` and `light.js` are
+`geometry.js`, `solver.js`, `drive.js`, `sun.js`, `light.js` and `share.js` are
 dependency-free, pure ES modules and can be tested on their own with Node — the
 last three deliberately so, since a geometric check, an almanac and a light
 calculation all deserve assertions that need no browser. It pays: the tilt gain

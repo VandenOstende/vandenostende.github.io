@@ -1210,3 +1210,77 @@ body.resizing .panel-resize { pointer-events: auto; }
   line-height: 1.45;
   color: var(--muted);
 }
+
+/* ---- The share confirmation -------------------------------------------------
+   Same pill as the stale-build bar but sitting under it, so the two can be on
+   screen at once without one hiding the other. */
+.share-bar {
+  position: absolute;
+  z-index: 8;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(92%, 640px);
+  padding: 7px 8px 7px 14px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+/* ---- Folding a panel away ---------------------------------------------------
+   The chevron sits in the panel's own top corner and the tab that brings it back
+   sits on the canvas edge where the panel was, so the way out and the way back
+   are in the same place. Both drive the same `hidden` state the Weergave menu
+   and the saved workspaces use, so the three cannot disagree. */
+.panel-fold {
+  position: absolute;
+  top: 8px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--panel);
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.panel-fold.left { right: 8px; }
+.panel-fold.right { left: 8px; }
+.panel-fold:hover { color: var(--accent); background: var(--panel-3); }
+
+.panel-reopen {
+  position: absolute;
+  top: 10px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 30px;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.panel-reopen.left { left: 0; border-left: 0; border-radius: 0 6px 6px 0; }
+.panel-reopen.right { right: 0; border-right: 0; border-radius: 6px 0 0 6px; }
+.panel-reopen:hover { border-color: var(--accent); }

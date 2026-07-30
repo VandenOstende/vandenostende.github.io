@@ -4,22 +4,23 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=37b247c1';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=f26c5b05';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=37b247c1';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=37b247c1';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=37b247c1';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=37b247c1';
-import { parseParcel, simplifyRing } from './importers.js?v=37b247c1';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=37b247c1';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=37b247c1';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=37b247c1';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=37b247c1';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=37b247c1';
-import { BUILD_ID } from './build.js?v=37b247c1';
+} from './geometry.js?v=f26c5b05';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=f26c5b05';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=f26c5b05';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=f26c5b05';
+import { parseParcel, simplifyRing } from './importers.js?v=f26c5b05';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=f26c5b05';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=f26c5b05';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=f26c5b05';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=f26c5b05';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=f26c5b05';
+import { BUILD_ID } from './build.js?v=f26c5b05';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=f26c5b05';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -353,6 +354,7 @@ export const UI_PARTS = [
   { id: 'tbUndo', group: 'Werkbalk', label: 'Undo / Redo' },
   { id: 'tbView', group: 'Werkbalk', label: '2D / 3D' },
   { id: 'tbZoom', group: 'Werkbalk', label: 'Zoom & Fit' },
+  { id: 'tbShare', group: 'Werkbalk', label: 'Delen (link)' },
   { id: 'tbFile', group: 'Werkbalk', label: 'Opslaan / Laden / Perceel' },
   { id: 'tbExport', group: 'Werkbalk', label: 'Export' },
 
@@ -2027,7 +2029,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=37b247c1', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=f26c5b05', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2394,7 +2396,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=37b247c1').then(async (m) => {
+    import('./map3d.js?v=f26c5b05').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4262,6 +4264,33 @@ function App() {
     downloadBlob(blob, slug + '.json');
     setSavedAt(new Date());
   };
+
+  // Put the plan in a link. There is no server, so the plan travels inside the
+  // URL itself — see share.js for why that fits. The link is copied to the
+  // clipboard and the address bar is updated, so a reload of this tab lands on
+  // the same plan too.
+  const [shareMsg, setShareMsg] = useState('');
+  const shareLink = async () => {
+    try {
+      const { url, chars, dropped } = await shareURL(window.location.href, doc, view);
+      try { await navigator.clipboard.writeText(url); }
+      catch (e) { /* no clipboard permission — the address bar still carries it */ }
+      window.history.replaceState(null, '', url);
+      const lost = [];
+      if (dropped.assets) lost.push(dropped.assets + ' eigen symbool' + (dropped.assets > 1 ? 'en' : ''));
+      if (dropped.objects) lost.push(dropped.objects + ' object' + (dropped.objects > 1 ? 'en' : '') + ' daarmee geplaatst');
+      setShareMsg('Link gekopieerd — ' + fmt(chars) + ' tekens'
+        + (lost.length ? '. Niet meegereisd: ' + lost.join(' en ') + '; stuur daarvoor het JSON-bestand.' : '.'));
+    } catch (e) {
+      setShareMsg('Delen lukte niet: ' + (e && e.message ? e.message : 'onbekende fout'));
+    }
+  };
+  // A link is a one-off message, not a state; it should not sit there for ever.
+  useEffect(() => {
+    if (!shareMsg) return;
+    const t = setTimeout(() => setShareMsg(''), 9000);
+    return () => clearTimeout(t);
+  }, [shareMsg]);
   // Apply a loaded file. Accepts the new wrapped format ({_pp, doc, view,
   // basemapStyle}) as well as a bare document from older saves.
 /**
@@ -4317,6 +4346,24 @@ function migrateDoc(d) {
     reader.readAsText(file);
     e.target.value = '';
   };
+
+  // A shared plan opens instead of the welcome overlay. Once, on the first
+  // render: `applyLoaded` is the same path a file takes, so a link and a file
+  // cannot drift apart in what they restore. The hash stays in the address bar
+  // so the tab can be reloaded or bookmarked.
+  const sharedRef = useRef(false);
+  useEffect(() => {
+    if (sharedRef.current) return;
+    sharedRef.current = true;
+    const code = shareCodeOf(window.location.hash);
+    if (!code) return;
+    setOnboardOpen(false);
+    decodeShare(code).then((payload) => {
+      if (payload && applyLoaded(payload)) setShareMsg('Plan uit een gedeelde link geopend.');
+      else setShareMsg('De gedeelde link is onleesbaar — hij is misschien afgekapt bij het kopiëren.');
+    });
+  }, []);
+
   // Import a real parcel boundary from GeoJSON or KML: anchor the geo frame at
   // the ring centroid, convert to local metres, simplify, and use it as the site.
   const applyParcel = (ring) => {
@@ -4612,6 +4659,19 @@ function migrateDoc(d) {
       onDoubleClick=${() => { const w = { ...panelW, [side]: PANEL_W[side].def }; setPanelW(w); persist('pp_panel_widths', w); }}
       title=${'Sleep om te verbreden · dubbelklik voor standaard'}></div>`;
 
+  // Fold a panel away from the panel itself. It could already be hidden through
+  // the Weergave menu, but a control you have to go looking for in a menu is not
+  // one you use to make room for a moment — and getting it back meant
+  // remembering which menu it was. The reopen tab is the other half.
+  const panelFold = (id, label) => html`
+    <button className=${'panel-fold ' + (id === 'panelLeft' ? 'left' : 'right')}
+      title=${label + ' inklappen'} aria-label=${label + ' inklappen'}
+      onClick=${() => togglePart(id)}>${id === 'panelLeft' ? '‹' : '›'}</button>`;
+  const panelReopen = (id, label) => html`
+    <button className=${'panel-reopen ' + (id === 'panelLeft' ? 'left' : 'right')}
+      title=${label + ' uitklappen'} aria-label=${label + ' uitklappen'}
+      onClick=${() => togglePart(id)}>${id === 'panelLeft' ? '›' : '‹'}</button>`;
+
   // Every shortcut in one place. Half of these existed but were invisible —
   // nothing on screen mentioned G, R, Esc, Delete or Cmd+D.
   const SHORTCUTS = [
@@ -4872,6 +4932,9 @@ function migrateDoc(d) {
           <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
           <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
           <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>`}
+        ${vis('tbShare') && html`
+          <button className="btn ghost" onClick=${shareLink}
+            title="Zet het hele plan in een link en kopieer die naar het klembord">🔗 Delen</button>`}
         ${vis('tbFile') && html`<button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
         <label className="btn ghost">Laden<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
         <label className="btn ghost" title="Perceelgrens importeren (GeoJSON of KML)">Perceel<input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} /></label>`}
@@ -4893,6 +4956,7 @@ function migrateDoc(d) {
       ${vis('panelLeft') && html`
       <div className="panel left" ref=${leftPanelRef}>
         ${resizer('left')}
+        ${panelFold('panelLeft', 'Linkerpaneel')}
         ${/* Options for whatever tool is active, at the very top of the panel.
               They used to sit under the palette — 2000 px below the fold, so
               the building-type choice existed and could never be found. */ ''}
@@ -5191,6 +5255,8 @@ function migrateDoc(d) {
 
       <div className="canvas-wrap" ref=${wrapRef}>
         <div id="pp-map" className="pp-map"></div>
+        ${!vis('panelLeft') && panelReopen('panelLeft', 'Linkerpaneel')}
+        ${!vis('panelRight') && panelReopen('panelRight', 'Rechterpaneel')}
         ${askJunction && viewMode === '2d' && (() => {
           const { w2s } = makeTransform(view);
           const p = w2s(askJunction.at);
@@ -5217,6 +5283,11 @@ function migrateDoc(d) {
           <button className="cross-pending" onClick=${() => setAskJunction(openCrossings[0])}>
             ${openCrossings.length} onbesliste kruising${openCrossings.length > 1 ? 'en' : ''} — beslissen
           </button>`}
+        ${shareMsg && html`
+          <div className="share-bar">
+            <span>${shareMsg}</span>
+            <button className="cross-ask-x" title="Sluiten" onClick=${() => setShareMsg('')}>✕</button>
+          </div>`}
         ${staleBuild && html`
           <div className="stale-bar">
             <span>Nieuwe versie beschikbaar — je tab draait build <b>${BUILD_ID}</b>, live staat <b>${staleBuild}</b>.</span>
@@ -5307,6 +5378,7 @@ function migrateDoc(d) {
       ${vis('panelRight') && html`
       <div className="panel right">
         ${resizer('right')}
+        ${panelFold('panelRight', 'Rechterpaneel')}
         ${multiCount > 1 && html`
         <div className="section sel-section">
           <h3>${multiCount} objecten geselecteerd</h3>
