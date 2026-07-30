@@ -730,6 +730,7 @@ select.preset {
 .scheme-info { display: flex; flex-direction: column; line-height: 1.3; }
 .scheme-label { font-size: 12px; font-weight: 600; }
 .scheme-count { font-size: 11px; color: var(--muted); }
+.scheme-warn { color: var(--danger); font-weight: 600; }
 .scheme-row .btn { padding: 4px 8px; font-size: 11px; }
 
 /* ---- Vaktypes mix table ---- */

@@ -4,24 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8f5462e6';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, buildSolveInput } from './solver.js?v=92666330';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=8f5462e6';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=8f5462e6';
-import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=8f5462e6';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8f5462e6';
-import { parseParcel, simplifyRing } from './importers.js?v=8f5462e6';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=8f5462e6';
+} from './geometry.js?v=92666330';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=92666330';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=92666330';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=92666330';
+import { parseParcel, simplifyRing } from './importers.js?v=92666330';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=92666330';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=8f5462e6';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=8f5462e6';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=8f5462e6';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=8f5462e6';
-import { BUILD_ID } from './build.js?v=8f5462e6';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=8f5462e6';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=92666330';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=92666330';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=92666330';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=92666330';
+import { BUILD_ID } from './build.js?v=92666330';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=92666330';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -963,6 +963,10 @@ function draw(ctx, opts) {
 }
 
 function pathPoly(ctx, poly, w2s, close) {
+  // A raw solver aisle is a bare quad with no `.poly`, so a caller that hands us
+  // one — or that compares `aisleSel` against an absent `.key` and finds
+  // undefined === undefined — arrives here with nothing to draw.
+  if (!poly || !poly.length) return;
   ctx.beginPath();
   poly.forEach((p, i) => {
     const s = w2s(p);
@@ -2305,7 +2309,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=8f5462e6', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=92666330', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2334,15 +2338,13 @@ function App() {
     }
     setSolving(true);
     solveTimer.current = setTimeout(() => {
-      // Align rows to the site's longest (control-point) edge when requested.
-      const base = doc.params.alignLongestEdge && doc.site.length >= 2
-        ? { ...doc.params, alignAngle: longestEdgeAngle(doc.site) }
-        : doc.params;
-      // Where people arrive, so the accessible spaces can land near it. Plain
-      // {x,y} only: this crosses postMessage into the worker.
-      const solveP = entries.length ? { ...base, entries } : base;
-      const solveObstacles = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
-      const args = [sitePoly, solveObstacles, solveP, doc.orientationIndex];
+      // One assembly, shared with every variant solve. Plain {x,y} throughout:
+      // this crosses postMessage into the worker.
+      const inp = buildSolveInput({
+        site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+        params: doc.params, orientationIndex: doc.orientationIndex, entries,
+      });
+      const args = [inp.site, inp.obstacles, inp.params, inp.orientationIndex];
       lastArgsRef.current = args;
       const reqId = ++reqRef.current;
       if (workerRef.current) {
@@ -2357,43 +2359,12 @@ function App() {
 
   // Apply manual overrides (stall type, aisle one-way) on top of the
   // solver output, keyed by position so marks survive re-solves.
-  const deco = useMemo(() => {
-    const ov = doc.overrides || {};
-    const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {}, ovAngles = ov.angles || {};
-    const locks = ov.locks || {}, lockS = locks.stalls || {}, lockA = locks.aisles || {};
-    const removed = ov.removed || {};
-    const w = doc.params.stallWidth, d = doc.params.stallDepth;
-    // Re-orient a stall to an absolute angle about its own centre (the key is
-    // centroid-based, so it's unchanged by the rotation and the override sticks).
-    const reangle = (poly, key) => {
-      const deg = ovAngles[key];
-      if (deg == null) return poly;
-      const c = polygonCentroid(poly), th = (deg * Math.PI) / 180;
-      const ux = Math.cos(th), uy = Math.sin(th), vx = -Math.sin(th), vy = Math.cos(th), hw = w / 2, hd = d / 2;
-      return [
-        { x: c.x - ux * hw - vx * hd, y: c.y - uy * hw - vy * hd },
-        { x: c.x + ux * hw - vx * hd, y: c.y + uy * hw - vy * hd },
-        { x: c.x + ux * hw + vx * hd, y: c.y + uy * hw + vy * hd },
-        { x: c.x - ux * hw + vx * hd, y: c.y - uy * hw + vy * hd },
-      ];
-    };
-    const stalls = result.stalls.map((st) => {
-      const key = stallKey(st.poly);
-      return { ...st, key, poly: reangle(st.poly, key), type: ovStalls[key] || st.type, locked: !!lockS[key], angle: ovAngles[key], manual: false };
-    }).filter((st) => !removed[st.key]);
-    // Hand-placed stalls, markable/lockable like solver stalls.
-    for (const ms of doc.manualStalls || []) {
-      const key = stallKey(ms.poly);
-      stalls.push({ poly: reangle(ms.poly, key), key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], angle: ovAngles[key], manual: true });
-    }
-    const gone = ov.aislesRemoved || {};
-    const aisles = result.aisles.map((q) => {
-      const key = aisleKey(q);
-      const o = ovAisles[key] || {};
-      return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
-    }).filter((a) => !gone[a.key]);
-    return { stalls, aisles, islands: result.islands || [], turnarounds: result.turnarounds || [], orientationCount: result.orientationCount };
-  }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
+  // The same function a variant is scored with — see solver.js. Two definitions
+  // of "the plan, with your manual decisions on it" is exactly how a comparison
+  // table ends up quoting numbers the plan never had.
+  const deco = useMemo(
+    () => decorate(result, { overrides: doc.overrides, manualStalls: doc.manualStalls, params: doc.params }),
+    [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
   // Every place two drawn ways meet, with whatever was decided about it.
   // ---------- Sun and shadow ----------
@@ -2690,7 +2661,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=8f5462e6').then(async (m) => {
+    import('./map3d.js?v=92666330').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4523,11 +4494,27 @@ function App() {
   })();
   // Design schemes: solve a handful of layout variants and compare their yield,
   // so the user can pick the best (TestFit "Design Schemes").
+  // Score one candidate exactly as the live plan is scored: the same solve
+  // input, the same decoration, the same computeMetrics. Anything less and a
+  // card quotes a number you will not get when you adopt it.
+  const scorePatch = (patch) => {
+    const inp = buildSolveInput({
+      site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+      params: doc.params, orientationIndex: doc.orientationIndex, entries, patch,
+    });
+    let res;
+    try { res = solveParking(inp.site, inp.obstacles, inp.params, inp.orientationIndex); }
+    catch (e) { res = { stalls: [], aisles: [] }; }
+    const dec = decorate(res, { overrides: doc.overrides, manualStalls: doc.manualStalls, params: inp.params });
+    const m = computeMetrics(inp.site, inp.metricObstacles, dec, inp.params, doc.annotations);
+    const pl = plausibility(dec, inp.site, inp.params);
+    return { total: m.total, physical: m.physicalStalls, areaPerStall: m.areaPerStall,
+      adaRequired: m.adaRequired, adaProvided: m.adaProvided, aisleCount: m.aisleCount, ...pl };
+  };
+
   const genSchemes = () => {
     const site = sitePoly;
     if (!site || site.length < 3) { setSchemes([]); return; }
-    const align = site.length >= 2 ? longestEdgeAngle(site) : 0;
-    const siteArea = polygonArea(site);
     const variants = [
       { label: 'Recht 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: false } },
       { label: 'Schuin 60°', patch: { layout: 'strip', angle: 60, alignLongestEdge: false } },
@@ -4539,25 +4526,19 @@ function App() {
       variants.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
       variants.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
     }
-    const out = variants.map((v) => {
-      const p = { ...doc.params, ...v.patch };
-      const solveP = p.alignLongestEdge ? { ...p, alignAngle: align } : p;
-      let res;
-      try { res = solveParking(site, doc.obstacles, solveP, 0); } catch (e) { res = { stalls: [] }; }
-      const physical = (res.stalls || []).length;
-      const density = physical > 0 ? siteArea / physical : 0; // m² of site per stall
-      return { label: v.label, patch: v.patch, physical, density };
-    });
-    // "Best" = most stalls among plausible (non-overlapping) layouts. A density
-    // below ~20 m²/stall means stalls overlap, so those never win the star.
-    const eligible = out.filter((o) => o.density >= 20);
-    const max = Math.max(1, ...(eligible.length ? eligible : out).map((o) => o.physical));
-    out.forEach((o) => { o.best = o.physical === max && (o.density >= 20 || !eligible.length); });
-    out.sort((a, b) => b.physical - a.physical);
+    const out = variants.map((v) => ({ label: v.label, patch: v.patch, ...scorePatch(v.patch) }));
+    // The star goes to the most spaces among layouts that are physically
+    // possible — no stall on a stall, and not claiming more ground than exists.
+    // The old test was "at least 20 m² of site per stall", which the concentric
+    // layout passes on the demo site while overlapping 43 pairs of stalls.
+    const eligible = out.filter((o) => o.plausible);
+    const best = eligible.length ? Math.max(...eligible.map((o) => o.total)) : null;
+    out.forEach((o) => { o.best = o.plausible && o.total === best; });
+    out.sort((a, b) => (b.plausible - a.plausible) || (b.total - a.total));
     setSchemes(out);
   };
   const applyScheme = (patch) => {
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, ...patch } }) });
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: applyPatch(d.params, patch) }) });
     setSchemes(null);
   };
 
@@ -4566,20 +4547,13 @@ function App() {
   // the highest-yield plausible layout automatically. Solves are yielded
   // between candidates so the UI stays responsive, and roads/driveways are
   // respected just like the live solve.
-  const evalPatch = (patch, siteArea) => {
-    const p = { ...doc.params, ...patch };
-    const solveP = p.alignLongestEdge ? { ...p, alignAngle: longestEdgeAngle(sitePoly) } : p;
-    const obs = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
-    let res;
-    try { res = solveParking(sitePoly, obs, solveP, 0); } catch (e) { res = { stalls: [] }; }
-    const physical = (res.stalls || []).length;
-    const spaces = (res.stalls || []).reduce((s, st) => s + (STALL_TYPES[st.type] ? STALL_TYPES[st.type].spaces || 1 : 1), 0);
-    return { physical, spaces, density: physical > 0 ? siteArea / physical : 0 };
-  };
+  // Was a second, subtly different copy of the scoring above — it folded in the
+  // road blockers where the compare table did not, so the two disagreed about
+  // the same plan. One scorer now.
+  const evalPatch = (patch) => scorePatch(patch);
   const autoOptimize = async () => {
     const site = sitePoly;
     if (!site || site.length < 3) return;
-    const siteArea = polygonArea(site);
     const before = metrics.total;
     // Phase 1 — coarse candidates (the current setup is always included so the
     // result can never be worse than what you already have).
@@ -4597,19 +4571,19 @@ function App() {
       coarse.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
     }
     const scored = [];
-    const better = (a, b) => !b || a.spaces > b.spaces; // a beats b?
-    const plausible = (r) => r.density >= 20 && r.physical > 0;
+    const better = (a, b) => !b || a.total > b.total; // a beats b?
+    const plausible = (r) => r.plausible && r.physical > 0;
     let best = null;
     // Phase 2 refine steps depend on phase-1 winner, so build the total up front.
     const totalEst = coarse.length + 4;
     for (let i = 0; i < coarse.length; i++) {
       setOptState({ running: true, i: i + 1, n: totalEst });
       await new Promise((r) => setTimeout(r, 0));
-      const r = { ...coarse[i], ...evalPatch(coarse[i].patch, siteArea) };
+      const r = { ...coarse[i], ...evalPatch(coarse[i].patch) };
       scored.push(r);
       if (plausible(r) && better(r, best)) best = r;
     }
-    if (!best) best = scored.slice().sort((a, b) => b.spaces - a.spaces)[0];
+    if (!best) best = scored.slice().sort((a, b) => b.total - a.total)[0];
     // Phase 2 — refine the angle ±5°/±10° around a straight-layout winner.
     if (best && best.patch.layout === 'strip' && !best.patch.alignLongestEdge && typeof best.patch.angle === 'number') {
       const base = best.patch.angle;
@@ -4618,13 +4592,17 @@ function App() {
         setOptState({ running: true, i: coarse.length + j + 1, n: totalEst });
         await new Promise((r) => setTimeout(r, 0));
         const patch = { layout: 'strip', angle: refine[j], alignLongestEdge: false };
-        const r = { label: `Recht ${refine[j]}°`, patch, ...evalPatch(patch, siteArea) };
+        const r = { label: `Recht ${refine[j]}°`, patch, ...evalPatch(patch) };
         if (plausible(r) && better(r, best)) best = r;
       }
     }
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, ...best.patch } }) });
+    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: applyPatch(d.params, best.patch) }) });
     setSchemes(null);
-    setOptState({ done: true, label: best.label, before, after: best.spaces });
+    // `before` and `after` are both metrics.total on a decorated result now, so
+    // the delta compares two of the same thing. It used to weigh the live plan's
+    // spaces (hand-placed stalls included, removals honoured) against a raw
+    // solver count, and report the difference as if it meant something.
+    setOptState({ done: true, label: best.label, before, after: best.total });
   };
   const zoomBy = (factor) => setView((v) => {
     const cx = sizeRef.current.w / 2, cy = sizeRef.current.h / 2;
@@ -6932,7 +6910,12 @@ function migrateDoc(d) {
                 <div key=${s.label} className=${'scheme-row' + (s.best ? ' best' : '')}>
                   <div className="scheme-info">
                     <span className="scheme-label">${s.label}${s.best ? ' ★' : ''}</span>
-                    <span className="scheme-count">${s.physical} vakken · ${Math.round(s.density)} m²/vak</span>
+                    <span className="scheme-count">
+                      ${s.total} plaatsen · ${s.areaPerStall ? s.areaPerStall.toFixed(1) : '—'} m²/vak
+                      ${!s.plausible ? html` · <span className="scheme-warn" title=${s.stallOverlaps
+                        ? s.stallOverlaps + ' vakken liggen over elkaar'
+                        : 'Beslaat ' + Math.round(s.packedRatio * 100) + '% van de bruikbare grond'}>⚠ niet haalbaar</span>` : ''}
+                    </span>
                   </div>
                   <button className="btn ghost" onClick=${() => applyScheme(s.patch)}>Toepassen</button>
                 </div>`)}

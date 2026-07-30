@@ -15,8 +15,8 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=8f5462e6';
-import { ANNOT_TYPES, runoffOf } from './annots.js?v=8f5462e6';
+} from './geometry.js?v=92666330';
+import { ANNOT_TYPES, runoffOf } from './annots.js?v=92666330';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -571,6 +571,169 @@ function assignStallTypes(stalls, params) {
     }
     for (let k = 0; k < Math.min(required, n); k++) stalls[order ? order[k] : k].type = 'ada';
   }
+}
+
+// ============================================================
+// One definition of "what the solver is asked", and one of "how good was it".
+//
+// Two features scored layouts before this — the compare table and the
+// auto-optimiser — and each assembled its own solve arguments. They disagreed:
+// one passed the road blockers and the other did not, neither passed the
+// entrance hint the live solve passes, both hard-coded orientation 0, and both
+// aligned to the tessellated ring rather than the control points the live solve
+// uses. A variant that scores differently from the plan you get when you adopt
+// it is worse than no variant at all, so the assembly lives here now and every
+// caller goes through it.
+// ============================================================
+
+/** The params keys a layout variant is allowed to touch. */
+export const VARY_KEYS = [
+  'stallWidth', 'stallDepth', 'aisleWidth', 'angle', 'setback', 'padding',
+  'maxRun', 'islandWidth', 'singleLoaded', 'deadEndTurnaround', 'turnaround',
+  'layout', 'endAisles', 'alignLongestEdge', 'ada', 'mix', 'compactRatio', 'evRatio',
+];
+
+/**
+ * Merge a patch over params. Shallow, except `mix`, which is a nested object:
+ * every other patch path in this app spreads it and would silently replace the
+ * whole table when a patch mentions one type.
+ */
+export function applyPatch(params, patch) {
+  if (!patch) return params;
+  const next = { ...params, ...patch };
+  if (patch.mix) next.mix = { ...(params.mix || {}), ...patch.mix };
+  return next;
+}
+
+/** Drop anything from a patch that is not a layout key (see VARY_KEYS). */
+export function sanitizePatch(patch) {
+  const out = {};
+  if (!patch || typeof patch !== 'object') return out;
+  for (const k of VARY_KEYS) if (patch[k] !== undefined) out[k] = patch[k];
+  return out;
+}
+
+/**
+ * Everything the solver needs, assembled once.
+ *
+ * `alignAngle` comes from the *control points* (`site`), not the tessellated
+ * ring (`sitePoly`): on a curved boundary the tessellation's longest edge is an
+ * arbitrary 1/14th of an arc, which is not an edge anybody drew.
+ */
+export function buildSolveInput({ site, sitePoly, obstacles, roadBlockers, params, orientationIndex, entries, patch }) {
+  const p = applyPatch(params, patch ? sanitizePatch(patch) : null);
+  const solveP = { ...p };
+  if (p.alignLongestEdge && site && site.length >= 2) solveP.alignAngle = longestEdgeAngle(site);
+  if (entries && entries.length) solveP.entries = entries;
+  return {
+    site: sitePoly,
+    // What the solver must drive around...
+    obstacles: roadBlockers && roadBlockers.length ? [...(obstacles || []), ...roadBlockers] : (obstacles || []),
+    // ...but roads are not buildings, so the coverage and FAR figures see only
+    // the real ones. Keeping the split here is what stops a variant card and the
+    // dealbar disagreeing for reasons that have nothing to do with the variant.
+    metricObstacles: obstacles || [],
+    params: solveP,
+    orientationIndex: orientationIndex || 0,
+  };
+}
+
+/**
+ * Layer the document's manual decisions over a raw solve, exactly as the live
+ * plan does. Metrics are computed on the result of this, so a variant's numbers
+ * and the plan's numbers come from the same function rather than from two
+ * definitions that drift.
+ */
+export function decorate(result, { overrides, manualStalls, params } = {}) {
+  const ov = overrides || {};
+  const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {}, ovAngles = ov.angles || {};
+  const locks = ov.locks || {}, lockS = locks.stalls || {}, lockA = locks.aisles || {};
+  const removed = ov.removed || {};
+  const w = (params || {}).stallWidth, d = (params || {}).stallDepth;
+  const reangle = (poly, key) => {
+    const deg = ovAngles[key];
+    if (deg == null) return poly;
+    const c = polygonCentroid(poly), th = (deg * Math.PI) / 180;
+    const ux = Math.cos(th), uy = Math.sin(th), vx = -Math.sin(th), vy = Math.cos(th), hw = w / 2, hd = d / 2;
+    return [
+      { x: c.x - ux * hw - vx * hd, y: c.y - uy * hw - vy * hd },
+      { x: c.x + ux * hw - vx * hd, y: c.y + uy * hw - vy * hd },
+      { x: c.x + ux * hw + vx * hd, y: c.y + uy * hw + vy * hd },
+      { x: c.x - ux * hw + vx * hd, y: c.y - uy * hw + vy * hd },
+    ];
+  };
+  const stalls = (result.stalls || []).map((st) => {
+    const key = stallKey(st.poly);
+    return { ...st, key, poly: reangle(st.poly, key), type: ovStalls[key] || st.type, locked: !!lockS[key], angle: ovAngles[key], manual: false };
+  }).filter((st) => !removed[st.key]);
+  for (const ms of manualStalls || []) {
+    const key = stallKey(ms.poly);
+    stalls.push({ poly: reangle(ms.poly, key), key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], angle: ovAngles[key], manual: true });
+  }
+  const gone = ov.aislesRemoved || {};
+  const aisles = (result.aisles || []).map((q) => {
+    const key = aisleKey(q);
+    const o = ovAisles[key] || {};
+    return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
+  }).filter((a) => !gone[a.key]);
+  return { stalls, aisles, islands: result.islands || [], turnarounds: result.turnarounds || [], orientationCount: result.orientationCount };
+}
+
+/**
+ * Is this layout physically possible?
+ *
+ * The old test was "at least 20 m² of site per stall", a threshold on a
+ * dimensioned quantity with no basis behind it. Measured on the demo site, the
+ * concentric layout passes it at 21.7 m²/stall while overlapping 43 pairs of
+ * stalls and covering 1.80× the ground that exists; on a curved site the
+ * optimiser picked the hybrid layout at 1.12× and applied it without asking.
+ *
+ *  - `stallOverlaps` — a stall on a stall is never acceptable. Hard reject.
+ *  - `packedRatio`   — paved area over buildable area. Dimensionless, so it does
+ *                      not care how big the site is.
+ *
+ * The 1.05 tolerance is empirical rather than principled, and the number matters:
+ * a clean strip pack on a 16-gon measures 1.02, because `computeBuildable` is a
+ * polygon offset and the offset of a many-sided near-circle is slightly generous.
+ * Anything under that is noise; 1.12 is a layout claiming ground it does not have.
+ *
+ * Known bias, stated rather than hidden: the denominator does not subtract
+ * building footprints, because `computeBuildable` does not either and this
+ * project deliberately carries no boolean polygon clipping. A site with a large
+ * building therefore reads lower than the truth — the check under-flags, which
+ * is the safe direction for a test that demotes candidates.
+ */
+export const PACKED_LIMIT = 1.05;
+
+export function plausibility(decorated, site, params) {
+  const buildable = computeBuildable(site, params.setback);
+  const bArea = buildable ? polygonArea(buildable) : 0;
+  let paved = 0;
+  for (const s of decorated.stalls) paved += polygonArea(s.poly);
+  for (const a of decorated.aisles || []) paved += polygonArea(a.poly || a);
+  for (const t of decorated.turnarounds || []) paved += polygonArea(t.poly || t);
+
+  // Stall-on-stall, via a grid bucket so this stays linear on a 7000-stall plan.
+  const lim = 0.75 * Math.min(params.stallWidth, params.stallDepth);
+  const cell = Math.max(lim, 1e-6);
+  const grid = new Map();
+  let stallOverlaps = 0;
+  for (const s of decorated.stalls) {
+    const c = polygonCentroid(s.poly);
+    const gx = Math.floor(c.x / cell), gy = Math.floor(c.y / cell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const bucket = grid.get((gx + dx) + ':' + (gy + dy));
+        if (!bucket) continue;
+        for (const o of bucket) if (Math.hypot(o.x - c.x, o.y - c.y) < lim) stallOverlaps++;
+      }
+    }
+    const k = gx + ':' + gy;
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(c);
+  }
+  const packedRatio = bArea > 0 ? paved / bArea : 0;
+  return { packedRatio, stallOverlaps, plausible: stallOverlaps === 0 && packedRatio <= PACKED_LIMIT };
 }
 
 /** Aggregate live metrics for the dashboard. */
