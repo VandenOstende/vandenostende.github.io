@@ -163,7 +163,18 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
 - **Drawing library** (`T`) — the whole catalogue as browsable cards, each with a
   one-line description and a thumbnail painted by the app's own drawing code, so
   a preview can never show something the plan would not draw. Grouped by
-  category, searchable, with a separate tab for your own imported symbols.
+  category, searchable, and one click picks a tool up and gets out of the way.
+  Three tabs: infrastructure, your imported symbols, and building styles.
+- **Ten building styles** over three generators — one volume (retail, big box,
+  warehouse, bare shed), rows of houses (with gardens, with deep gardens, a
+  closed terrace with none), and a block (office, office without a forecourt,
+  apartments). A style is a *parameter set*, not code: floors, floor height,
+  facade, canopy, loading yard, gardens, set-back storey. That is what makes it
+  **importable** — export the whole catalogue to JSON, change the numbers, import
+  it back. Every field is clamped on the way in, so a file cannot put a negative
+  floor height into the geometry. Imported styles are kept per browser *and*
+  copied into the plans that use them, so a saved file or a shared link draws its
+  warehouses as warehouses on a machine that never imported anything.
 - **The plan has a name**, editable in the top bar; it becomes the filename when
   you save, and the bar says when you last did.
 - **A shareable link.** There is no server, so the plan travels inside the URL:
@@ -240,7 +251,7 @@ files/testfit/
     ├── light.js          # illuminance, annual irradiance, PV yield (pure)
     ├── pictos.js         # the unit-box painters: markings, pictograms, signage
     ├── annots.js         # the annotation type catalogue
-    ├── buildings.js      # deterministic building exteriors per use
+    ├── buildings.js      # building styles + deterministic exteriors (pure)
     ├── basemap.js        # slippy-map tiles (OSM/Esri) + geocoding + geo↔metres
     ├── map3d.js          # Mapbox drape: extrusions, textures, markings, lighting
     ├── importers.js      # GeoJSON/KML parcel rings + simplification
@@ -253,7 +264,8 @@ files/testfit/
 Map tiles (OpenStreetMap, Esri World Imagery) and geocoding (Nominatim) are the
 only outbound requests; without a network the rest keeps working.
 
-`geometry.js`, `solver.js`, `drive.js`, `sun.js`, `light.js` and `share.js` are
+`geometry.js`, `solver.js`, `drive.js`, `sun.js`, `light.js`, `buildings.js` and
+`share.js` are
 dependency-free, pure ES modules and can be tested on their own with Node — the
 last three deliberately so, since a geometric check, an almanac and a light
 calculation all deserve assertions that need no browser. It pays: the tilt gain
