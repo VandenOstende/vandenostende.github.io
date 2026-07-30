@@ -4,25 +4,25 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, buildSolveInput } from './solver.js?v=5757c07f';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, sanitizePatch, buildSolveInput } from './solver.js?v=fd27eff2';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=5757c07f';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=5757c07f';
-import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=5757c07f';
-import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=5757c07f';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=5757c07f';
-import { parseParcel, simplifyRing } from './importers.js?v=5757c07f';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=5757c07f';
+} from './geometry.js?v=fd27eff2';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=fd27eff2';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=fd27eff2';
+import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=fd27eff2';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=fd27eff2';
+import { parseParcel, simplifyRing } from './importers.js?v=fd27eff2';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=fd27eff2';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=5757c07f';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=5757c07f';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=5757c07f';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=5757c07f';
-import { BUILD_ID } from './build.js?v=5757c07f';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=5757c07f';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=fd27eff2';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=fd27eff2';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=fd27eff2';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=fd27eff2';
+import { BUILD_ID } from './build.js?v=fd27eff2';
+import { shareURL, decodeShare, shareCodeOf, MAX_SHARED_VARIANTS } from './share.js?v=fd27eff2';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -246,6 +246,7 @@ const initialDoc = {
   manualStalls: [], // hand-placed stalls: { poly, type }
   assets: [], // imported symbols used by this plan: { id, name, src, w, h, height }
   buildingStyles: [], // imported building styles used by this plan (see buildings.js)
+  variants: [], // kept layout alternatives: { id, label, patch, gen } — patches only, never geometry
 };
 
 // Simple history wrapper: { past[], present, future[] }.
@@ -2425,7 +2426,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=5757c07f', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=fd27eff2', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2446,7 +2447,7 @@ function App() {
   // sharing the live one would leave the canvas stale while a sweep runs.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./variants.worker.js?v=5757c07f', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./variants.worker.js?v=fd27eff2', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2798,7 +2799,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=5757c07f').then(async (m) => {
+    import('./map3d.js?v=fd27eff2').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4885,6 +4886,7 @@ function App() {
       const lost = [];
       if (dropped.assets) lost.push(dropped.assets + ' eigen symbool' + (dropped.assets > 1 ? 'en' : ''));
       if (dropped.objects) lost.push(dropped.objects + ' object' + (dropped.objects > 1 ? 'en' : '') + ' daarmee geplaatst');
+      if (dropped.variants) lost.push(dropped.variants + ' variant' + (dropped.variants > 1 ? 'en' : '') + ' boven de ' + MAX_SHARED_VARIANTS);
       setShareMsg('Link gekopieerd — ' + fmt(chars) + ' tekens'
         + (lost.length ? '. Niet meegereisd: ' + lost.join(' en ') + '; stuur daarvoor het JSON-bestand.' : '.'));
     } catch (e) {
@@ -4907,14 +4909,60 @@ function App() {
  * such a plan exactly the shape it was — the alternative is that it silently
  * takes a default size the first time anything touches it.
  */
+// A variant id that is unique within this document and stable across saves.
+// Not `Date.now()`: that would make every save of an unchanged plan differ, for
+// no benefit — uniqueness is only ever needed inside one file.
+//
+// Not exported, and it cannot be: `migrateDoc` and everything around it is
+// written at column zero but lives *inside* the component function, where
+// indentation says nothing about scope and `export` is a syntax error.
+function nextVariantId(doc) {
+  let max = 0;
+  for (const v of (doc && doc.variants) || []) {
+    const m = /^v(\d+)$/.exec(String((v && v.id) || ''));
+    if (m) max = Math.max(max, +m[1]);
+  }
+  return 'v' + (max + 1);
+}
+
+// Everything a file can say about its variants, made safe. The important line is
+// `sanitizePatch`: without it a hand-edited or future-format file could put
+// `designVehicle` or `sunHour` in a patch, and adopting that variant would
+// quietly change what the drivability check fits or when the shadow study is
+// taken — settings that have nothing to do with a layout.
+function migrateVariants(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const v of list) {
+    if (!v || typeof v !== 'object' || !v.patch || typeof v.patch !== 'object') continue;
+    let id = String(v.id || '');
+    if (!/^v\d+$/.test(id) || seen.has(id)) id = 'v' + (out.length + 1);
+    while (seen.has(id)) id = 'v' + (parseInt(id.slice(1), 10) + 1);
+    seen.add(id);
+    out.push({
+      id,
+      label: String(v.label == null ? 'Variant' : v.label).slice(0, 60),
+      patch: sanitizePatch(v.patch),
+      gen: typeof v.gen === 'string' ? v.gen.slice(0, 32) : 'manual',
+    });
+    if (out.length >= MAX_SHARED_VARIANTS) break;
+  }
+  return out;
+}
+
 function migrateDoc(d) {
+  const vars = migrateVariants(d.variants);
   const anns = (d.annotations || []).map((a) => {
     if (!a || a.kind !== 'road' || a.shape || !a.closed) return a;
     if (!Array.isArray(a.points) || a.points.length !== 4) return a;
     const q = roadRectParams(a);
     return { ...a, shape: 'object', at: q.at, width: q.width, length: q.length, rot: q.rot };
   });
-  return anns === d.annotations ? d : { ...d, annotations: anns };
+  const sameVars = Array.isArray(d.variants) && vars.length === d.variants.length
+    && vars.every((v, i) => v === d.variants[i]);
+  if (anns === d.annotations && sameVars) return d;
+  return { ...d, annotations: anns, variants: vars };
 }
 
   const applyLoaded = (payload) => {

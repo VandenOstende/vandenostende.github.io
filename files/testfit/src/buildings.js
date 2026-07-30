@@ -14,7 +14,7 @@
 // treats as blocked, and a design that grew past it would silently change the
 // parking result the moment you picked a type.
 // ============================================================
-import { polygonCentroid, polygonArea } from './geometry.js?v=5757c07f';
+import { polygonCentroid, polygonArea } from './geometry.js?v=fd27eff2';
 
 /**
  * The building catalogue.

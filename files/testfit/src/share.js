@@ -23,7 +23,17 @@ const DOC_FIELDS = [
   // — a few hundred bytes each — so they can travel, and without them a shared
   // plan would silently redraw its warehouses as the default shed.
   'buildingStyles',
+  // Variants are patches — a label and a handful of layout parameters, tens of
+  // bytes each, and near-identical to one another, which is the best case gzip
+  // has. Measured on the demo plan: 544 chars with none, 714 with eight. What
+  // they deliberately do not carry is solved geometry; that is hundreds of
+  // stalls apiece against a budget of about 860 characters for the whole plan,
+  // so a shared variant is re-solved on arrival instead.
+  'variants',
 ];
+// Past this the link stops being a link. Anything beyond is reported as dropped
+// rather than silently truncated.
+export const MAX_SHARED_VARIANTS = 24;
 
 /**
  * The part of a document that can travel in a URL, and an honest account of
@@ -41,9 +51,15 @@ export function shareable(doc) {
   const anns = out.annotations || [];
   const kept = anns.filter((a) => !(a && typeof a.kind === 'string' && a.kind.startsWith('asset:')));
   out.annotations = kept;
+  const vars = Array.isArray(out.variants) ? out.variants : [];
+  out.variants = vars.slice(0, MAX_SHARED_VARIANTS);
   return {
     doc: out,
-    dropped: { assets: (doc.assets || []).length, objects: anns.length - kept.length },
+    dropped: {
+      assets: (doc.assets || []).length,
+      objects: anns.length - kept.length,
+      variants: Math.max(0, vars.length - MAX_SHARED_VARIANTS),
+    },
   };
 }
 
