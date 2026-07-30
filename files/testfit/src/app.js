@@ -4,24 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=d4f790f9';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=978eaca4';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=d4f790f9';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=d4f790f9';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=d4f790f9';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d4f790f9';
-import { parseParcel, simplifyRing } from './importers.js?v=d4f790f9';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=d4f790f9';
+} from './geometry.js?v=978eaca4';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=978eaca4';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=978eaca4';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=978eaca4';
+import { parseParcel, simplifyRing } from './importers.js?v=978eaca4';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=978eaca4';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=d4f790f9';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=d4f790f9';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=d4f790f9';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=d4f790f9';
-import { BUILD_ID } from './build.js?v=d4f790f9';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=d4f790f9';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=978eaca4';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=978eaca4';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=978eaca4';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=978eaca4';
+import { BUILD_ID } from './build.js?v=978eaca4';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=978eaca4';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -2130,7 +2130,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=d4f790f9', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=978eaca4', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2515,7 +2515,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=d4f790f9').then(async (m) => {
+    import('./map3d.js?v=978eaca4').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -5029,7 +5029,7 @@ function migrateDoc(d) {
           </div>
         </header>
 
-        <div className="dialog-body">
+        <div className="dialog-body tk-scroll">
           ${libTab === 'assets' && html`
             <div className="lib-assets-head">
               <label className="btn asset-import">
@@ -5084,7 +5084,7 @@ function migrateDoc(d) {
                         <span className="lib-card-desc">${u.desc || note}</span>
                         ${u.imported && html`
                           <span className="lib-card-actions">
-                            <span className="tag-imported">geïmporteerd</span>
+                            <span className="tag tag-imported">geïmporteerd</span>
                             <button className="btn ghost" onClick=${(e) => { e.stopPropagation(); dropStyle(u.key); }}>Verwijderen</button>
                           </span>`}
                       </div>`)}
@@ -5372,7 +5372,7 @@ function migrateDoc(d) {
       </div>
 
       ${vis('panelLeft') && html`
-      <div className="panel left" ref=${leftPanelRef}>
+      <div className="panel left tk-scroll" ref=${leftPanelRef}>
         ${resizer('left')}
         ${panelFold('panelLeft', 'Linkerpaneel')}
         ${/* Options for whatever tool is active, at the very top of the panel.
@@ -5757,7 +5757,7 @@ function migrateDoc(d) {
       </div>
 
       ${vis('panelRight') && html`
-      <div className="panel right">
+      <div className="panel right tk-scroll">
         ${resizer('right')}
         ${panelFold('panelRight', 'Rechterpaneel', html`
           <input className="panel-search" type="search" placeholder="Zoek in dit paneel…"
