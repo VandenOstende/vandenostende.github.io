@@ -11,8 +11,8 @@
 // that need no browser, and every number below is checked with bare Node.
 // ============================================================
 
-import { boundingBox, pointInPolygon, polyOf } from './geometry.js?v=d71b1ba0';
-import { sunPosition, momentUTC, buildingHeight, shadowPolys } from './sun.js?v=d71b1ba0';
+import { boundingBox, pointInPolygon, polyOf } from './geometry.js?v=c398da1a';
+import { sunPosition, momentUTC, buildingHeight, shadowPolys } from './sun.js?v=c398da1a';
 
 const RAD = Math.PI / 180;
 

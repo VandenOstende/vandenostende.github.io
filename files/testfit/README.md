@@ -169,6 +169,24 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   specific yield and the shading loss your own buildings cost. Buildings block
   the canopy only where they rise above it. A carport adds **no** impervious
   area: it stands over paving that is already counted.
+### Comparing layouts
+
+- **Variants** (⚖️) — pick one or two axes (angle, layout, bay width, setback,
+  row axis, …) and the plan is re-solved for every combination and laid out side
+  by side, each with a real plan thumbnail painted by the app's own drawing code.
+  *Huidig* is always the first card, so a candidate can never look better than
+  something you cannot see.
+- The solves run **off the main thread** in their own worker, streamed one card
+  at a time and cancellable, so the canvas stays live while a sweep runs.
+- A candidate is judged on whether it is **physically possible**, not on a
+  threshold: a bay on top of another bay is rejected outright, and a layout
+  covering more ground than exists is badged and never wins. The previous rule —
+  at least 20 m² of site per bay — passed the concentric layout on the demo site
+  while it overlapped 43 pairs of bays and claimed 1.8× the available ground.
+- Adopt one and it is a single undo step. Keep one and it travels with the plan,
+  in saves and in a shared link — as parameters, not as a drawing, so it is
+  re-solved on arrival.
+
 - **Metrics** — stall count, site area, built %, m²/stall, impervious %, FAR,
   per-type counts, an automatic accessible-stall table (2010 ADA Standards,
   Table 208.2 plus the 1-in-6 van rule), and a programme/parking-ratio panel
@@ -347,6 +365,19 @@ There is nothing to install. Serve the folder and open it:
 ```sh
 python3 -m http.server 8199        # from files/testfit/
 ```
+
+```sh
+node tools/selftest.js            # assertions for the pure modules, no deps
+```
+
+`selftest.js` is not coverage — it pins the things that have been wrong, or that
+would be expensive to get wrong later: the nested-`mix` merge, the patch
+allowlist that stops a layout variant changing the drivability settings, the two
+different definitions of m² per stall, the plausibility gate that used to pass
+layouts covering 1.8× the available ground, the share budget that decides whether
+a variant may carry geometry, and the zone verge that vanished on any outline
+`offsetPolygon` reshaped. `tools/` is outside the stamp hash, so it perturbs no
+cache stamps.
 
 `src/*.js` are imported with a `?v=<hash>` query so a stale browser cache can
 never serve a half-updated app. **Run `node tools/stamp.js` before every

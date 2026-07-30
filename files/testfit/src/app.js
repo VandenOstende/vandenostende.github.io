@@ -4,25 +4,25 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, sanitizePatch, buildSolveInput, VARY_AXES, ORIENT_KEY, axisOf, axisValueLabel, expandSweep, stableStringify, fnv1a } from './solver.js?v=d71b1ba0';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, sanitizePatch, buildSolveInput, VARY_AXES, ORIENT_KEY, axisOf, axisValueLabel, expandSweep, stableStringify, fnv1a } from './solver.js?v=c398da1a';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=d71b1ba0';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=d71b1ba0';
-import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=d71b1ba0';
-import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=d71b1ba0';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d71b1ba0';
-import { parseParcel, simplifyRing } from './importers.js?v=d71b1ba0';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=d71b1ba0';
+} from './geometry.js?v=c398da1a';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=c398da1a';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=c398da1a';
+import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=c398da1a';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=c398da1a';
+import { parseParcel, simplifyRing } from './importers.js?v=c398da1a';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=c398da1a';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=d71b1ba0';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=d71b1ba0';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=d71b1ba0';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=d71b1ba0';
-import { BUILD_ID } from './build.js?v=d71b1ba0';
-import { shareURL, decodeShare, shareCodeOf, MAX_SHARED_VARIANTS } from './share.js?v=d71b1ba0';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=c398da1a';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=c398da1a';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=c398da1a';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=c398da1a';
+import { BUILD_ID } from './build.js?v=c398da1a';
+import { shareURL, decodeShare, shareCodeOf, MAX_SHARED_VARIANTS } from './share.js?v=c398da1a';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -2473,7 +2473,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=d71b1ba0', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=c398da1a', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2494,7 +2494,7 @@ function App() {
   // sharing the live one would leave the canvas stale while a sweep runs.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./variants.worker.js?v=d71b1ba0', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./variants.worker.js?v=c398da1a', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2521,14 +2521,39 @@ function App() {
       setSolving(false);
       return;
     }
+    // One assembly, shared with every variant solve. Plain {x,y} throughout:
+    // this crosses postMessage into the worker.
+    const inp = buildSolveInput({
+      site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+      params: doc.params, orientationIndex: doc.orientationIndex, entries,
+    });
+
+    // Adopting a variant used to solve the winner twice: once to score the card,
+    // once because `doc.params` had changed. The variants batch caches its
+    // results under exactly the key this solve would ask for, so when one is
+    // there the answer is already known — and there is nothing to debounce,
+    // because there is nothing to wait for. Adopting lands in the same frame.
+    //
+    // `decorate` runs on top of whatever comes out of here, so the cache has to
+    // give back a RAW result. It stores the decorated one for the thumbnails, so
+    // the raw stalls and bare aisle quads are recovered from it: hand-placed
+    // stalls are dropped (decorate will add them back from the document) and
+    // each aisle goes back to being the bare quad solveParking returned.
+    const hit = varCache.current.get(solveKey(inp.params, inp.orientationIndex));
+    if (hit && hit.result) {
+      reqRef.current++; // anything still in flight is now stale
+      setResult({
+        stalls: hit.result.stalls.filter((st) => !st.manual).map((st) => ({ poly: st.poly, type: st.type })),
+        aisles: hit.result.aisles.map((a) => a.poly),
+        islands: hit.result.islands || [], turnarounds: hit.result.turnarounds || [],
+        orientationCount: hit.result.orientationCount || 0,
+      });
+      setSolving(false);
+      return;
+    }
+
     setSolving(true);
     solveTimer.current = setTimeout(() => {
-      // One assembly, shared with every variant solve. Plain {x,y} throughout:
-      // this crosses postMessage into the worker.
-      const inp = buildSolveInput({
-        site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
-        params: doc.params, orientationIndex: doc.orientationIndex, entries,
-      });
       const args = [inp.site, inp.obstacles, inp.params, inp.orientationIndex];
       lastArgsRef.current = args;
       const reqId = ++reqRef.current;
@@ -2846,7 +2871,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=d71b1ba0').then(async (m) => {
+    import('./map3d.js?v=c398da1a').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4737,10 +4762,22 @@ function App() {
     sitePoly, obstacles: doc.obstacles, roadBlockers, annotations: doc.annotations,
     overrides: doc.overrides, manualStalls: doc.manualStalls, entries,
   })), [sitePoly, doc.obstacles, roadBlockers, doc.annotations, doc.overrides, doc.manualStalls, entries]);
-  const varKey = (patch, orient) => planHash + '|' + fnv1a(stableStringify({
-    p: applyPatch(doc.params, sanitizePatch(patch || {})),
-    o: orient == null ? doc.orientationIndex : orient,
-  }));
+  // The key is what the SOLVER is asked, not what the user picked. Those are not
+  // the same object: `buildSolveInput` injects `alignAngle` and the entrance
+  // hint, so keying a variant on `applyPatch(params, patch)` while the live
+  // solve keys on the resolved params would mean the two never agree and the
+  // cache never hits — the failure would be silent and would look exactly like
+  // "the cache does not help much".
+  const solveKey = (params, orient) => planHash + '|' + fnv1a(stableStringify({ p: params, o: orient }));
+  const resolveFor = (patch, orient) => buildSolveInput({
+    site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+    params: doc.params, orientationIndex: orient == null ? doc.orientationIndex : orient,
+    entries, patch,
+  });
+  const varKey = (patch, orient) => {
+    const inp = resolveFor(patch, orient);
+    return solveKey(inp.params, inp.orientationIndex);
+  };
   const cachedScore = (patch, orient) => varCache.current.get(varKey(patch, orient)) || null;
 
   const runBatch = (patches, onEach) => new Promise((resolve) => {
@@ -4764,7 +4801,7 @@ function App() {
     const batchId = ++batchRef.current;
     const w = varWorkerRef.current;
     const remember = (i, score) => {
-      if (score) varCache.current.set(varKey(items[i].patch, items[i].orient), score);
+      if (score) varCache.current.set(solveKey(jobs[i].params, jobs[i].orientationIndex), score);
     };
 
     if (!w) {

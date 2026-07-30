@@ -28,7 +28,7 @@
 //    and nothing else, and a variant's numbers cannot drift from the plan's
 //    because they are not computed by different code.
 // ============================================================
-import { solveParking, decorate, computeMetrics, plausibility } from './solver.js?v=d71b1ba0';
+import { solveParking, decorate, computeMetrics, plausibility } from './solver.js?v=c398da1a';
 
 // Above this, the geometry stays here. Twelve results of a 6800-stall plan is
 // megabytes of structuredClone traffic and just as much retained memory on the
