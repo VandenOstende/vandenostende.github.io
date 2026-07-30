@@ -176,10 +176,23 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
 - **Fold either panel away** from a chevron in the panel itself, and back from a
   tab on the canvas edge where it was. Same state the Weergave menu and saved
   workspaces use, so the three cannot disagree.
-- **One toolbar row.** The file, history and help actions are square icon
-  buttons, each with a title and an `aria-label`; spelled out they took a second
-  row on a 1900 px screen, and a row holding only file actions reads as a
-  different toolbar rather than the same one.
+- **One toolbar row**, in the design's order: the named tools, the measure icon,
+  the library as the single accent button, then a spacer and the view cluster
+  (row axis, 2D/3D, Fit, Weergave, undo/redo, plan, export, help). Everything
+  that reads or writes a file sits in one Plan menu — save, load, parcel import,
+  the shareable link, a new empty site. The row-axis reset only appears once you
+  have moved off the default. Icon buttons all carry a title and an `aria-label`.
+- **Each right-panel section folds on its own**, with a search at the top of the
+  panel that keeps only the sections that match. The search covers words people
+  would type rather than the heading again: "schaduw" finds *Zon en schaduw* and
+  "regenwater" finds the runoff figure, which no heading mentions. A hit is shown
+  open — a result you still have to unfold is not a result.
+- **Name any object in the list.** The pencil on a row turns it into a field; the
+  name is written onto the record, so it travels with save, undo and a shared
+  link, and the object search matches it. An aisle is derived, so its name goes
+  in the position-keyed override where its other manual decisions live. Clear the
+  field and the type name comes back. Solver stall groups are a *type* rather
+  than an object and are deliberately not renameable.
 - **The left panel holds what you are working in**: the active tool's options,
   with one line saying what the tool is for and the snapping switch, and the
   object list. Locatie, Lagen and the dimension preset moved into the Weergave
