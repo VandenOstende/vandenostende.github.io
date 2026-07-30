@@ -4,24 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, buildSolveInput } from './solver.js?v=92666330';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, buildSolveInput } from './solver.js?v=cad5baee';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=92666330';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=92666330';
-import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=92666330';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=92666330';
-import { parseParcel, simplifyRing } from './importers.js?v=92666330';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=92666330';
+} from './geometry.js?v=cad5baee';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=cad5baee';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=cad5baee';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=cad5baee';
+import { parseParcel, simplifyRing } from './importers.js?v=cad5baee';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=cad5baee';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=92666330';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=92666330';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=92666330';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=92666330';
-import { BUILD_ID } from './build.js?v=92666330';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=92666330';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=cad5baee';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=cad5baee';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=cad5baee';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=cad5baee';
+import { BUILD_ID } from './build.js?v=cad5baee';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=cad5baee';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -2240,6 +2240,9 @@ function App() {
   const workerRef = useRef(null);  // solver web worker (null → inline solve)
   const reqRef = useRef(0);        // latest solve request id (stale-drop)
   const lastArgsRef = useRef(null); // last solve args (for worker-error fallback)
+  const varWorkerRef = useRef(null);  // the batch worker (null → inline fallback)
+  const batchRef = useRef(0);         // latest batch id (stale-drop, like reqRef)
+  const batchCbRef = useRef(null);    // handler for the batch in flight
 
   // Once mounted, cancel the index.html boot-failure fallback.
   useEffect(() => {
@@ -2309,7 +2312,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=92666330', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=cad5baee', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2324,6 +2327,27 @@ function App() {
       workerRef.current = w;
     }
     return () => { if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; } };
+  }, []);
+
+  // The batch worker. Its own thread on purpose — see variants.worker.js for why
+  // sharing the live one would leave the canvas stale while a sweep runs.
+  useEffect(() => {
+    let w;
+    try { w = new Worker(new URL('./variants.worker.js?v=cad5baee', import.meta.url), { type: 'module' }); }
+    catch (e) { w = null; }
+    if (w) {
+      w.onmessage = (e) => {
+        const m = e.data || {};
+        const cb = batchCbRef.current;
+        // Same stale-drop discipline as reqRef, one level up: a reply from a
+        // batch nobody is waiting for any more must not touch the UI.
+        if (!cb || m.batchId !== cb.batchId) return;
+        cb.onMsg(m);
+      };
+      w.onerror = () => { varWorkerRef.current = null; };
+      varWorkerRef.current = w;
+    }
+    return () => { if (varWorkerRef.current) { varWorkerRef.current.terminate(); varWorkerRef.current = null; } };
   }, []);
 
   // Debounced solve whenever inputs change.
@@ -2661,7 +2685,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=92666330').then(async (m) => {
+    import('./map3d.js?v=cad5baee').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4497,6 +4521,65 @@ function App() {
   // Score one candidate exactly as the live plan is scored: the same solve
   // input, the same decoration, the same computeMetrics. Anything less and a
   // card quotes a number you will not get when you adopt it.
+  //
+  // Off-thread version: one batch, streamed. `onEach(index, scored)` fires as
+  // each job lands, so the twelve cards fill in one by one rather than all at
+  // once thirty seconds later. Resolves with the whole list, nulls for failures.
+  const runBatch = (patches, onEach) => new Promise((resolve) => {
+    const shared = buildSolveInput({
+      site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+      params: doc.params, orientationIndex: doc.orientationIndex, entries,
+    });
+    const jobs = patches.map((patch, i) => {
+      const inp = buildSolveInput({
+        site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+        params: doc.params, orientationIndex: doc.orientationIndex, entries, patch,
+      });
+      return { jobId: i, params: inp.params, orientationIndex: inp.orientationIndex };
+    });
+    const out = new Array(patches.length).fill(null);
+    const batchId = ++batchRef.current;
+    const w = varWorkerRef.current;
+
+    if (!w) {
+      // No worker — solve inline, but yield between candidates so the tab still
+      // paints. Same posture as the live solve's own onerror fallback.
+      (async () => {
+        for (let i = 0; i < patches.length; i++) {
+          if (batchRef.current !== batchId) return resolve(out);
+          out[i] = { ...scorePatch(patches[i]), inline: true };
+          if (onEach) onEach(i, out[i]);
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        resolve(out);
+      })();
+      return;
+    }
+
+    batchCbRef.current = {
+      batchId,
+      onMsg: (m) => {
+        if (m.done) { batchCbRef.current = null; resolve(out); return; }
+        if (m.error) { out[m.jobId] = null; return; }
+        out[m.jobId] = { ...m.score, result: m.result, heavy: !!m.heavy, ms: m.ms };
+        if (onEach) onEach(m.jobId, out[m.jobId]);
+      },
+    };
+    w.postMessage({
+      batchId, site: shared.site, obstacles: shared.obstacles,
+      metricObstacles: shared.metricObstacles, annotations: doc.annotations,
+      overrides: doc.overrides, manualStalls: doc.manualStalls, jobs,
+    });
+  });
+  // Give up on whatever is in flight. Bumping the id is what makes late replies
+  // stale; the message only saves the worker from finishing work nobody wants.
+  const cancelBatch = () => {
+    const id = batchRef.current;
+    batchRef.current++;
+    batchCbRef.current = null;
+    if (varWorkerRef.current) varWorkerRef.current.postMessage({ cancel: id });
+  };
+
   const scorePatch = (patch) => {
     const inp = buildSolveInput({
       site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
@@ -4512,7 +4595,7 @@ function App() {
       adaRequired: m.adaRequired, adaProvided: m.adaProvided, aisleCount: m.aisleCount, ...pl };
   };
 
-  const genSchemes = () => {
+  const genSchemes = async () => {
     const site = sitePoly;
     if (!site || site.length < 3) { setSchemes([]); return; }
     const variants = [
@@ -4526,7 +4609,13 @@ function App() {
       variants.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
       variants.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
     }
-    const out = variants.map((v) => ({ label: v.label, patch: v.patch, ...scorePatch(v.patch) }));
+    setSchemes(variants.map((v) => ({ label: v.label, patch: v.patch, pending: true })));
+    setOptState({ running: true, i: 0, n: variants.length, batch: true });
+    const scored = await runBatch(variants.map((v) => v.patch), (i) => {
+      setOptState({ running: true, i: i + 1, n: variants.length, batch: true });
+    });
+    setOptState(null);
+    const out = variants.map((v, i) => ({ label: v.label, patch: v.patch, ...(scored[i] || { total: 0, plausible: false }) }));
     // The star goes to the most spaces among layouts that are physically
     // possible — no stall on a stall, and not claiming more ground than exists.
     // The old test was "at least 20 m² of site per stall", which the concentric
@@ -4570,31 +4659,32 @@ function App() {
       coarse.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
       coarse.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
     }
-    const scored = [];
     const better = (a, b) => !b || a.total > b.total; // a beats b?
     const plausible = (r) => r.plausible && r.physical > 0;
     let best = null;
     // Phase 2 refine steps depend on phase-1 winner, so build the total up front.
     const totalEst = coarse.length + 4;
-    for (let i = 0; i < coarse.length; i++) {
+    // One batch off-thread rather than nine blocking solves. The count is real:
+    // it advances as each job actually lands.
+    const phase1 = await runBatch(coarse.map((c) => c.patch), (i) => {
       setOptState({ running: true, i: i + 1, n: totalEst });
-      await new Promise((r) => setTimeout(r, 0));
-      const r = { ...coarse[i], ...evalPatch(coarse[i].patch) };
-      scored.push(r);
-      if (plausible(r) && better(r, best)) best = r;
-    }
+    });
+    const scored = coarse.map((c, i) => ({ ...c, ...(phase1[i] || { total: 0, physical: 0, plausible: false }) }));
+    for (const r of scored) if (plausible(r) && better(r, best)) best = r;
     if (!best) best = scored.slice().sort((a, b) => b.total - a.total)[0];
     // Phase 2 — refine the angle ±5°/±10° around a straight-layout winner.
     if (best && best.patch.layout === 'strip' && !best.patch.alignLongestEdge && typeof best.patch.angle === 'number') {
       const base = best.patch.angle;
       const refine = [base - 10, base - 5, base + 5, base + 10].filter((a) => a >= 30 && a <= 90);
-      for (let j = 0; j < refine.length; j++) {
+      const patches = refine.map((a) => ({ layout: 'strip', angle: a, alignLongestEdge: false }));
+      const phase2 = await runBatch(patches, (j) => {
         setOptState({ running: true, i: coarse.length + j + 1, n: totalEst });
-        await new Promise((r) => setTimeout(r, 0));
-        const patch = { layout: 'strip', angle: refine[j], alignLongestEdge: false };
-        const r = { label: `Recht ${refine[j]}°`, patch, ...evalPatch(patch) };
+      });
+      phase2.forEach((sc, j) => {
+        if (!sc) return;
+        const r = { label: `Recht ${refine[j]}°`, patch: patches[j], ...sc };
         if (plausible(r) && better(r, best)) best = r;
-      }
+      });
     }
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: applyPatch(d.params, best.patch) }) });
     setSchemes(null);
@@ -6896,6 +6986,9 @@ function migrateDoc(d) {
             <button className="btn" style=${{ flex: 1, justifyContent: 'center' }} disabled=${!!(optState && optState.running)} onClick=${autoOptimize}>
               ${optState && optState.running ? `Bezig… ${optState.i}/${optState.n}` : '✨ Optimaliseer'}
             </button>
+            ${optState && optState.running && html`
+              <button className="btn ghost" title="Stoppen" aria-label="Stoppen"
+                onClick=${() => { cancelBatch(); setOptState(null); }}>✕</button>`}
           </div>
           ${optState && optState.done && html`
             <div className="opt-result">
