@@ -4,24 +4,25 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, buildSolveInput } from './solver.js?v=cad5baee';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, buildSolveInput } from './solver.js?v=5757c07f';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=cad5baee';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=cad5baee';
-import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=cad5baee';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=cad5baee';
-import { parseParcel, simplifyRing } from './importers.js?v=cad5baee';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=cad5baee';
+} from './geometry.js?v=5757c07f';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=5757c07f';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=5757c07f';
+import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=5757c07f';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=5757c07f';
+import { parseParcel, simplifyRing } from './importers.js?v=5757c07f';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=5757c07f';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=cad5baee';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=cad5baee';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=cad5baee';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=cad5baee';
-import { BUILD_ID } from './build.js?v=cad5baee';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=cad5baee';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=5757c07f';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=5757c07f';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=5757c07f';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=5757c07f';
+import { BUILD_ID } from './build.js?v=5757c07f';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=5757c07f';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -419,6 +420,7 @@ const TOOL_HELP = {
   obstacle: 'Gebouw of uitsluitingszone als rechthoek.',
   obstaclepoly: 'Gebouw of uitsluitingszone in vrije vorm.',
   placestall: 'Zet losse parkeervakken neer, ook buiten wat de solver bedacht.',
+  autopark: 'Teken een zone; de parking verschijnt terwijl je tekent. Dubbelklik legt hem vast.',
   measure: 'Meet een afstand of een reeks afstanden op de plattegrond.',
   pan: 'Sleep om de plattegrond te verschuiven.',
 };
@@ -448,6 +450,8 @@ const PRIMARY_TOOLS = [
     desc: 'Klik punten; dubbelklik sluit. Een hoek verslepen hertekent het exterieur.' },
   { id: 'placestall', label: 'Parkeervak plaatsen', key: 'K', color: '#2563eb',
     desc: 'Losse vakken plaatsen; ze snappen aan bestaande vakken en aan wegen.' },
+  { id: 'autopark', label: 'Auto-park zone', key: 'A', color: '#6a5bc4',
+    desc: 'Teken een zone en de parking verschijnt terwijl je tekent — met groen, licht en belijning.' },
 ];
 // The keyboard letters that really exist, for the card badges. Only these three
 // annotations have one; the rest of the catalogue has none, and the design
@@ -940,6 +944,13 @@ function draw(ctx, opts) {
     }
   }
 
+  // The auto-park proposal, above the plan it is not part of yet.
+  if (opts.zonePreview !== undefined && opts.drawing) {
+    const zpts = opts.drawing.points || [];
+    const live = opts.hover && zpts.length >= 2 ? [...zpts, opts.hover] : zpts;
+    drawZonePreview(ctx, opts.zonePreview, live, w2s, view.scale);
+  }
+
   // Knelpunten last of all — they are a verdict on the plan, not part of it.
   if (opts.driveIssues && opts.driveIssues.length) {
     drawIssues(ctx, opts.driveIssues, opts.focusIssue == null ? -1 : opts.focusIssue, w2s, view.scale);
@@ -1047,6 +1058,24 @@ function drawPrimaryPreview(ctx, id, w, h) {
     ctx.closePath();
     ctx.fillStyle = 'rgba(100,116,139,0.42)'; ctx.fill();
     ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1.6; ctx.stroke();
+    return;
+  }
+  if (id === 'autopark') {
+    // What the tool makes: a green edge, a row of bays, a lamp.
+    ctx.fillStyle = 'rgba(63,155,70,0.55)';
+    ctx.fillRect(pad * 0.5, pad * 0.5, w - pad, h - pad);
+    ctx.fillStyle = 'rgba(111,114,133,0.35)';
+    ctx.fillRect(pad * 1.8, pad * 1.8, w - pad * 3.6, h - pad * 3.6);
+    const bw2 = (w - pad * 3.6) / 6;
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = i === 1 ? '#6366f1' : 'rgba(37,99,235,0.30)';
+      ctx.fillRect(pad * 1.8 + bw2 * (i + 0.3), pad * 2.2, bw2 * 0.72, h * 0.3);
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1;
+      ctx.strokeRect(pad * 1.8 + bw2 * (i + 0.3), pad * 2.2, bw2 * 0.72, h * 0.3);
+    }
+    ctx.strokeStyle = '#6a5bc4'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+    ctx.strokeRect(pad * 0.5, pad * 0.5, w - pad, h - pad);
+    ctx.setLineDash([]);
     return;
   }
   // placestall — a short run of bays off an aisle, which is what one click gives
@@ -1942,6 +1971,52 @@ function drawAnnotations(ctx, anns, w2s, scale, under, selIdx) {
   }
 }
 
+// The auto-park zone as it is being drawn: the outline, the tarmac, the bays and
+// everything that will be dropped with them. Painted with the app's own
+// annotation painters rather than stand-ins, so the preview cannot show
+// something the plan would not draw — the same promise the tool library makes.
+//
+// Drawn at reduced opacity and over the top of everything: this is a proposal,
+// not yet part of the plan, and it should read that way.
+function drawZonePreview(ctx, zp, zone, w2s, scale) {
+  if (!zone || zone.length < 3) return;
+  ctx.save();
+
+  // The outline you are dragging.
+  pathPoly(ctx, zone, w2s, true);
+  ctx.fillStyle = 'rgba(106,91,196,0.07)';
+  ctx.fill();
+  ctx.setLineDash([7, 5]);
+  ctx.strokeStyle = TH.sel;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (!zp || !zp.stalls.length) { ctx.restore(); return; }
+
+  ctx.globalAlpha = 0.85;
+  // Everything that goes under the parking first (grass, bike parking), then
+  // the tarmac and bays, then what lies on top (trees, lamps, markings, signs).
+  drawAnnotations(ctx, zp.annotations, w2s, scale, true, null);
+
+  for (const a of zp.aisles || []) {
+    pathPoly(ctx, a.poly || a, w2s, true);
+    ctx.fillStyle = TH.aisle;
+    ctx.fill();
+  }
+  const lw = Math.max(1, 0.12 * scale);
+  for (const st of zp.stalls) {
+    const info = STALL_TYPES[st.type] || STALL_TYPES.standard;
+    pathPoly(ctx, st.poly, w2s, true);
+    if (st.type !== 'standard') { ctx.fillStyle = hexA(info.color, 0.5); ctx.fill(); }
+    ctx.strokeStyle = TH.onStall;
+    ctx.lineWidth = lw;
+    ctx.stroke();
+  }
+  drawAnnotations(ctx, zp.annotations, w2s, scale, false, null);
+  ctx.restore();
+}
+
 // Measuring tape: each leg labelled, the running total at the cursor, and the
 // enclosed area once three points make a shape. Deliberately drawn last and in
 // the accent colour so it reads as a tool, not as part of the plan.
@@ -2040,6 +2115,19 @@ function App() {
   // the thing is placed rather than corrected afterwards. Null for the tools
   // that have no such number.
   const [annotValue, setAnnotValue] = useState(null);
+  // Auto-park: what the zone tool should generate along with the bays. Kept in
+  // localStorage rather than the document — it is how you like to work, not a
+  // property of this plan.
+  const [zoneDress, setZoneDress] = useState(() => {
+    try { return { ...DRESS_DEFAULTS, ...(JSON.parse(localStorage.getItem('pp_zone_dress') || '{}') || {}) }; }
+    catch (e) { return { ...DRESS_DEFAULTS }; }
+  });
+  const [zoneMsg, setZoneMsg] = useState('');
+  const toggleDress = (id) => setZoneDress((d) => {
+    const next = { ...d, [id]: !d[id] };
+    try { localStorage.setItem('pp_zone_dress', JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' (object) | 'multi'
   const [annotLength, setAnnotLength] = useState(20); // m — the road object's length
@@ -2290,6 +2378,17 @@ function App() {
   // nearest the parking — a stand-in for the shop door, since buildings have no
   // modelled entrance. Empty means "nothing said", and the solver then behaves
   // exactly as it always did.
+  // ---------- Auto-park zone ----------
+  // The outline as it stands this instant: the points you have clicked, closed
+  // through wherever the cursor is. That is what makes the parking appear while
+  // you are still drawing rather than after you finish.
+  const zonePoly = useMemo(() => {
+    if (tool !== 'autopark' || !drawing) return null;
+    const pts = drawing.points || [];
+    const live = hover && pts.length >= 2 ? [...pts, hover] : pts;
+    return live.length >= 3 ? live : null;
+  }, [tool, drawing, hover]);
+
   const entries = useMemo(() => {
     const anns = doc.annotations || [];
     const acc = anns.filter((a) => a.kind === 'access' && a.points && a.points[0]).map((a) => ({ x: a.points[0].x, y: a.points[0].y }));
@@ -2308,11 +2407,25 @@ function App() {
     return [{ x: best.x, y: best.y }];
   }, [doc.annotations, doc.obstacles, sitePoly]);
 
+  // Generated on every change of the outline. `generateZone` is pure and
+  // measures ~9 ms on a 60x40 zone, so this runs inline: routing it through a
+  // worker would add a round trip to something already faster than a frame, and
+  // the preview has to keep up with the mouse.
+  const zonePreview = useMemo(() => {
+    if (!zonePoly) return null;
+    const obs = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
+    // Where people arrive from, so the entrance faces the site rather than the
+    // back fence: a real access point if the plan has one, else the site centre.
+    const from = entries.length ? entries[0] : (sitePoly.length ? polygonCentroid(sitePoly) : null);
+    try { return generateZone(zonePoly, { params: doc.params, obstacles: obs, entryFrom: from }, zoneDress); }
+    catch (e) { return null; }
+  }, [zonePoly, doc.obstacles, roadBlockers, doc.params, zoneDress, entries, sitePoly]);
+
   // Solve off the main thread via a web worker, so big sites don't freeze
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=cad5baee', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=5757c07f', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2333,7 +2446,7 @@ function App() {
   // sharing the live one would leave the canvas stale while a sweep runs.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./variants.worker.js?v=cad5baee', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./variants.worker.js?v=5757c07f', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2571,7 +2684,7 @@ function App() {
     else {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
-        drawing, hover, selection, size: sizeRef.current,
+        drawing, hover, selection, size: sizeRef.current, zonePreview,
         showHandles: tool === 'select', measure, guides: guidesRef.current,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel, shadows,
         lightField, lightGrid,
@@ -2582,7 +2695,7 @@ function App() {
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid, pickArm]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid, pickArm, zonePreview]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -2685,7 +2798,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=cad5baee').then(async (m) => {
+    import('./map3d.js?v=5757c07f').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -3496,6 +3609,17 @@ function App() {
       return;
     }
 
+    if (tool === 'autopark') {
+      const first = drawing && drawing.points[0];
+      const { w2s } = makeTransform(view);
+      if (first && drawing.points.length >= 3 && dist(w2s(first), sp) < 12) {
+        commitZone(drawing.points); return;
+      }
+      const pt = drawPoint(sp, e.shiftKey);
+      setDrawing((d) => ({ points: [...(d ? d.points : []), pt] }));
+      return;
+    }
+
     if (tool === 'obstacle') {
       dragRef.current = { mode: 'rect', start: wp, cur: wp };
       return;
@@ -3608,7 +3732,7 @@ function App() {
         setMeasure({ points: pts, cur: at });
         return;
       }
-      if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
+      if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly' || tool === 'autopark') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') { const s = snapStall(wp); setHover({ stallPreview: stallAt(s.center, s.theta), onRoad: s.onRoad }); }
       return;
     }
@@ -3868,7 +3992,9 @@ function App() {
 
   const onDoubleClick = (e) => {
     if (tool === 'measure') { setMeasure((m) => (m ? { points: m.points, done: true } : m)); return; }
-    if (tool === 'site' && drawing && drawing.points.length >= 3) {
+    if (tool === 'autopark' && drawing && drawing.points.length >= 3) {
+      commitZone(drawing.points);
+    } else if (tool === 'site' && drawing && drawing.points.length >= 3) {
       commitSite(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'obstaclepoly' && drawing && drawing.points.length >= 3) {
       commitObstaclePoly(drawing.points); setDrawing(null); setTool('select');
@@ -3925,6 +4051,37 @@ function App() {
 
   const commitSite = (points) =>
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: points, obstacles: [] }) });
+  // Bake the zone into the plan. Everything generated becomes an ordinary object:
+  // the bays join `manualStalls` so they can be marked, locked and renamed like
+  // any hand-placed bay, and the trees, grass, lamps and markings join
+  // `annotations` where they are indistinguishable from ones you drew yourself.
+  // One COMMIT, so one Cmd+Z takes the whole zone back out again.
+  //
+  // Site-wide automatic parking is switched off at the same time. You have just
+  // said where the parking goes; leaving the solver to fill the rest of the
+  // parcel would lay bays straight through what you drew.
+  const commitZone = (points) => {
+    const done = () => { setDrawing(null); setHover(null); setTool('select'); };
+    if (!points || points.length < 3) { done(); return; }
+    const obs = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
+    const from = entries.length ? entries[0] : (sitePoly.length ? polygonCentroid(sitePoly) : null);
+    let gen;
+    try { gen = generateZone(points, { params: doc.params, obstacles: obs, entryFrom: from }, zoneDress); }
+    catch (e) { gen = null; }
+    if (!gen || !gen.stalls.length) {
+      setZoneMsg('Hier past geen parking in — maak de zone groter of zet de vakmaten kleiner.');
+      done();
+      return;
+    }
+    dispatch({ type: 'COMMIT', updater: (d) => ({
+      ...d,
+      autoParking: false,
+      manualStalls: [...(d.manualStalls || []), ...gen.stalls],
+      annotations: [...(d.annotations || []), ...gen.annotations],
+    }) });
+    setZoneMsg(`${gen.metrics.stalls} vakken en ${gen.annotations.length} objecten geplaatst.`);
+    done();
+  };
   const commitObstaclePoly = (points) => {
     if (!points || points.length < 3) return;
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, newBuilding(points.slice())] }) });
@@ -4419,6 +4576,7 @@ function App() {
         case 'b': setTool('obstacle'); break;
         case 'n': setTool('obstaclepoly'); setDrawing({ points: [] }); break;
         case 'k': setTool('placestall'); break;
+        case 'a': setTool('autopark'); setDrawing({ points: [] }); break;
         case 'm': setTool('measure'); setMeasure({ points: [] }); setDrawing(null); break;
         // The three ways in and out. The design puts a letter on these cards, so
         // the letter has to do something — a badge for a key that does not exist
@@ -5331,7 +5489,7 @@ function migrateDoc(d) {
   // Every shortcut in one place. Half of these existed but were invisible —
   // nothing on screen mentioned G, R, Esc, Delete or Cmd+D.
   const SHORTCUTS = [
-    ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['T', 'Bibliotheek'], ['Spatie', 'Pannen']]],
+    ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['A', 'Auto-park zone'], ['M', 'Meetlint'], ['T', 'Bibliotheek'], ['Spatie', 'Pannen']]],
     ['Infrastructuur', [['W', 'Weg'], ['I', 'In/uitrit'], ['D', 'Drive-thru']]],
     ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Cmd/Ctrl + S', 'Plan opslaan'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
@@ -5404,7 +5562,7 @@ function migrateDoc(d) {
   // tool carries its number, and a primary tool is just a tool.
   const libTake = (e) => {
     if (!e) return;
-    if (e.prim) { setTool(e.kind); if (e.kind === 'site' || e.kind === 'obstaclepoly') setDrawing({ points: [] }); clearSel(); }
+    if (e.prim) { setTool(e.kind); if (e.kind === 'site' || e.kind === 'obstaclepoly' || e.kind === 'autopark') setDrawing({ points: [] }); clearSel(); }
     else startAnnot(e.kind, valueOf(e));
     setLibOpen(false);
   };
@@ -5784,6 +5942,9 @@ function migrateDoc(d) {
     obstaclepoly: 'Klik punten voor een gebouw in vrije vorm · Shift = 15° · klik beginpunt of dubbelklik om te sluiten · Esc annuleert',
     pan: 'Sleep om te verschuiven',
     placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
+    autopark: zonePreview && zonePreview.metrics.stalls
+      ? `${zonePreview.metrics.stalls} vakken · ${Math.round(zonePreview.metrics.area)} m² · dubbelklik of klik het beginpunt om vast te leggen`
+      : 'Klik punten om de zone af te bakenen · de parking verschijnt zodra er drie punten staan · Esc annuleert',
     measure: 'Klik punten om af te meten · Shift = 15° · dubbelklik of Esc sluit af · toont lengte, totaal en oppervlak',
     annot: annotKind === 'road' && roadShape === 'rect'
       ? 'Weg-object: sleep een rechthoek · selecteer daarna en sleep de hoeken om te vergroten'
@@ -5849,6 +6010,7 @@ function migrateDoc(d) {
           ${toolBtn('obstacle', 'Gebouw ▭', 'B', tool, setTool, setDrawing)}
           ${toolBtn('obstaclepoly', 'Gebouw ⬠', 'N', tool, setTool, setDrawing)}
           ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
+          ${toolBtn('autopark', 'Auto-park', 'A', tool, setTool, setDrawing)}
           ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
           <button className=${'btn icon' + (tool === 'measure' ? ' active' : '')} aria-label="Meetlint"
             title="Meetlint (M)"
@@ -6049,6 +6211,29 @@ function migrateDoc(d) {
                   <input type="checkbox" checked=${annotCurved} onChange=${(e) => setAnnotCurved(e.target.checked)} />
                 </label>`}
             </div>`}
+        </div>`}
+        ${tool === 'autopark' && html`
+        <div className="section">
+          <h3>Auto-park genereert</h3>
+          <div className="mix-note" style=${{ marginTop: 0 }}>
+            Vink aan wat er bij de vakken hoort. De tekening volgt meteen.
+          </div>
+          ${DRESS_OPTIONS.map((o) => html`
+            <label className="toggle dress-row" key=${o.id} title=${o.desc}>
+              <span>${o.label}</span>
+              <input type="checkbox" checked=${!!zoneDress[o.id]}
+                onChange=${() => toggleDress(o.id)} />
+            </label>`)}
+          ${zonePreview && zonePreview.metrics.stalls > 0 && html`
+            <div className="deal-rows">
+              <div className="deal-row"><span>Vakken</span><b>${zonePreview.metrics.stalls}</b></div>
+              <div className="deal-row"><span>Oppervlak</span><b>${fmt(zonePreview.metrics.area)} m²</b></div>
+              <div className="deal-row"><span>Objecten</span><b>${zonePreview.annotations.length}</b></div>
+            </div>`}
+          <div className="mix-note">
+            Vastleggen zet site-breed automatisch parkeren uit — je hebt zelf
+            aangewezen waar de parking komt.
+          </div>
         </div>`}
         ${vis('secDraw') && html`
         <div className="section">

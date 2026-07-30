@@ -1658,3 +1658,8 @@ body.resizing .panel-resize { pointer-events: auto; }
   border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .lib-card-actions { align-items: center; }
+
+/* The auto-park tick list. `.toggle` already lays a label out with its control
+   on the right; this only tightens the run of them. */
+.dress-row { margin-bottom: 2px; cursor: pointer; }
+.dress-row:hover span { color: var(--accent); }
