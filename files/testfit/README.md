@@ -35,6 +35,25 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   the rows to the longest site edge.
 - **Presets** — US standard, US SUV, EU metric, compact.
 
+### Auto-park: draw a zone, get a car park
+
+- **Pick Auto-park (`A`), click an outline, and the parking appears while you
+  are still drawing** — the outline closes through the cursor, so the bays, the
+  greenery and the markings inside it follow the mouse. Double-click, or click
+  the first point, to keep it.
+- Underneath it is the same solver: the zone is handed to it as if it were the
+  site, so your angles, bay sizes, layout and accessible-bay rules apply, and
+  buildings and drawn roads are still avoided. The setback becomes the verge.
+- **A tick list says what comes with the bays** — trees and grass, lighting,
+  markings and pictograms, a way in, and optionally bike parking, solar carports
+  and a crossing. Untick one and it leaves the drawing while you are still
+  drawing it.
+- Everything it makes is an **ordinary object**: a generated tree is a tree,
+  selectable, movable, exported, extruded in 3D and counted in the metrics. One
+  Cmd+Z takes the whole zone back out again.
+- Keeping a zone switches site-wide automatic parking off — you have just said
+  where the parking goes.
+
 ### Editing what the solver produced
 
 - **Mark stalls** — click one, or drag a marquee over many, and tag them EV,
@@ -282,6 +301,8 @@ files/testfit/
     ├── importers.js      # GeoJSON/KML parcel rings + simplification
     ├── exporters.js      # GeoJSON, DXF, CSV
     ├── share.js          # a plan in a URL: gzip + base64url (pure)
+    ├── autopark.js       # draw a zone, get a car park (pure)
+    ├── variants.worker.js # N solves off the main thread, streamed
     ├── build.js          # the build stamp the app checks itself against
     └── app.js            # React UI (htm) + imperative canvas rendering
 ```
@@ -305,7 +326,8 @@ against the optimum tilt for the latitude, which is a fact and not an opinion.
 | `P` | Draw site | `M` | Measure |
 | `B` | Draw building | `N` | Draw building (polygon) |
 | `Del` | Delete selection | `Esc` | Cancel |
-| `K` | Place stall | `/` | Focus the tool search |
+| `K` | Place stall | `A` | Auto-park zone |
+| `/` | Focus the tool search | | |
 | `W` | Road | `I` | Driveway |
 | `D` | Drive-thru | `Ctrl/⌘+S` | Save the plan |
 | `R` / `Shift+R` | Rotate in 15° steps | `?` | Shortcut list |
