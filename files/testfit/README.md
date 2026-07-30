@@ -163,8 +163,22 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
 - **Drawing library** (`T`) — the whole catalogue as browsable cards, each with a
   one-line description and a thumbnail painted by the app's own drawing code, so
   a preview can never show something the plan would not draw. Grouped by
-  category, searchable, and one click picks a tool up and gets out of the way.
-  Three tabs: infrastructure, your imported symbols, and building styles.
+  category and searchable. A card selects and **Tekenen** draws; double-click
+  does both at once. Three tabs: infrastructure, your imported symbols, and
+  building styles — and the first of those now opens with **Site & gebouw**, the
+  four tools that draw the parcel and the buildings themselves, which a library
+  promising "everything you can draw here" had no business omitting.
+- **A card can carry a choice.** Eight arrow directions are eight kinds but one
+  decision — which movements a lane permits — so they ride on a single
+  *Richtingpijl* card as a row of **Combinatie** pills, three of which the app
+  could not draw at all before: links + rechts, alle richtingen, and keren. And
+  a tool with a number — a speed marking, a lamp post's mounting height — sets
+  it **before** it is placed, with the thumbnail repainting as you change it,
+  rather than being corrected thirty times afterwards.
+- **File your own symbols the way you want them.** The assets tab groups by
+  categories you name, with filter chips, a category on every card, and a column
+  to add and remove them. Removing a category keeps its symbols; they fall back
+  to *Ongecategoriseerd*.
 - **Ten building styles** over three generators — one volume (retail, big box,
   warehouse, bare shed), rows of houses (with gardens, with deep gardens, a
   closed terrace with none), and a block (office, office without a forecourt,
@@ -208,12 +222,23 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   with one line saying what the tool is for and the snapping switch, and the
   object list. Locatie, Lagen and the dimension preset moved into the Weergave
   menu — they answer "what am I looking at", not "what am I drawing", and in the
-  panel they pushed the other two below the fold. The tool palette and the asset
-  importer are off by default, both being fully covered by the library; they stay
-  switchable, since typing a name in the side list is still the fastest route
-  once you know it.
+  panel they pushed the other two below the fold. The asset importer stays off,
+  being fully covered by the library's own assets tab. The **tool palette is
+  back**, as a shortlist: each group shows its first few tools with the group's
+  real count beside it, *Toon alle N* reveals the rest, and a search shows
+  everything it matched. That is what makes it affordable again — the long tails
+  (thirteen markings, eight signs) are what pushed everything below the fold, not
+  the palette itself.
+- **The object list folds** like every section in the right panel, and the
+  right panel is in the design's order: Metrics, Vak & rijstrook, Bereikbaarheid,
+  Vaktypes, Zon, Licht, Programma, Schema's. Setback and the green islands sit
+  with the sliders they constrain rather than in a section of their own.
 - Undo/redo, save/load, layers, and hideable/resizable UI parts you can save as
   a workspace.
+- **It says what it is.** Every slider carries a name a screen reader can read —
+  the visible label was never tied to its input, so twelve of them announced as
+  nothing at all. The overlays measure the tabulatiebalk rather than assuming it
+  is 96 px tall, which it is not.
 
 ## The solver pipeline
 
@@ -281,6 +306,8 @@ against the optimum tilt for the latitude, which is a fact and not an opinion.
 | `B` | Draw building | `N` | Draw building (polygon) |
 | `Del` | Delete selection | `Esc` | Cancel |
 | `K` | Place stall | `/` | Focus the tool search |
+| `W` | Road | `I` | Driveway |
+| `D` | Drive-thru | `Ctrl/⌘+S` | Save the plan |
 | `R` / `Shift+R` | Rotate in 15° steps | `?` | Shortcut list |
 | `S` | Snapping on/off | `T` | Drawing library |
 | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo | | |
