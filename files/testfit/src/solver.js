@@ -15,8 +15,8 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=fd27eff2';
-import { ANNOT_TYPES, runoffOf } from './annots.js?v=fd27eff2';
+} from './geometry.js?v=d71b1ba0';
+import { ANNOT_TYPES, runoffOf } from './annots.js?v=d71b1ba0';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -734,6 +734,115 @@ export function plausibility(decorated, site, params) {
   }
   const packedRatio = bArea > 0 ? paved / bArea : 0;
   return { packedRatio, stallOverlaps, plausible: stallOverlaps === 0 && packedRatio <= PACKED_LIMIT };
+}
+
+/**
+ * The axes a sweep may vary, as a table rather than a comment so it cannot rot.
+ * The same list gates what a patch is allowed to contain (VARY_KEYS above), so
+ * the generator and the file validator cannot drift apart.
+ *
+ * `@orientationIndex` is prefixed because it is a solve *input*, not a params
+ * key — it picks among the ranked row directions rather than changing any
+ * dimension. Both of the features this replaces hard-coded it to 0, which is
+ * why the row axis you had chosen was silently ignored by every comparison.
+ */
+export const VARY_AXES = [
+  { key: 'angle', label: 'Parkeerhoek', unit: '°', values: [30, 45, 60, 75, 90] },
+  { key: 'layout', label: 'Layout', values: ['strip', 'hybrid', 'perimeter'],
+    labels: { strip: 'Recht', hybrid: 'Rand+midden', perimeter: 'Concentrisch' } },
+  { key: 'alignLongestEdge', label: 'Uitlijnen op rand', values: [false, true],
+    labels: { false: 'vrij', true: 'uitgelijnd' } },
+  { key: 'stallWidth', label: 'Vakbreedte', unit: 'm', values: [2.4, 2.5, 2.7, 3.0] },
+  { key: 'stallDepth', label: 'Vakdiepte', unit: 'm', values: [4.9, 5.0, 5.5, 6.0] },
+  { key: 'aisleWidth', label: 'Rijstrook', unit: 'm', values: [6.0, 6.5, 7.3, 8.0] },
+  { key: 'setback', label: 'Setback', unit: 'm', values: [0, 3, 6, 10] },
+  { key: 'maxRun', label: 'Max. rijlengte', unit: 'vak', values: [8, 12, 20, 0] },
+  { key: 'islandWidth', label: 'Groeneilanden', unit: 'm', values: [0, 1.5, 3] },
+  { key: 'endAisles', label: 'Kopse rijbaan', values: ['none', 'one', 'both'],
+    labels: { none: 'geen', one: 'één kant', both: 'beide' } },
+  { key: 'singleLoaded', label: 'Single-loaded', values: [false, true],
+    labels: { false: 'uit', true: 'aan' } },
+  { key: 'deadEndTurnaround', label: 'Keerruimte', values: [false, true],
+    labels: { false: 'uit', true: 'aan' } },
+  { key: '@orientationIndex', label: 'Rij-as', values: [0, 1, 2],
+    labels: { 0: '1e', 1: '2e', 2: '3e' } },
+];
+export const ORIENT_KEY = '@orientationIndex';
+export const axisOf = (key) => VARY_AXES.find((a) => a.key === key) || null;
+
+/** How one axis value reads on a card. */
+export function axisValueLabel(axis, v) {
+  if (!axis) return String(v);
+  if (axis.labels && axis.labels[String(v)] != null) return axis.labels[String(v)];
+  const n = typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+  if (!axis.unit) return n;
+  // Degrees close up against the number; every other unit takes a space.
+  return axis.unit === '°' ? n + '°' : n + ' ' + axis.unit;
+}
+
+/**
+ * Turn one or two chosen axes into the candidates to solve.
+ *
+ * The seed — the parameters exactly as they are — is always first and always
+ * present, so the comparison can never tell you that something is better than
+ * what you have without showing you what you have. That was `autoOptimize`'s one
+ * good invariant; it was just invisible.
+ *
+ * Duplicates are removed by patch identity rather than by label, because two
+ * axes can legitimately produce the same combination (aligning a concentric
+ * layout changes nothing), and solving it twice would put the same plan on two
+ * cards with two different names.
+ */
+export function expandSweep(chosen, cap = 12) {
+  const axes = (chosen || []).filter((c) => c && c.key && (c.values || []).length).slice(0, 2);
+  const out = [{ patch: {}, orient: null, label: 'Huidig', gen: 'seed' }];
+  const seen = new Set(['{}|null']);
+  if (!axes.length) return { jobs: out, dropped: 0 };
+
+  const combos = axes.length === 1
+    ? axes[0].values.map((v) => [[axes[0].key, v]])
+    : axes[0].values.flatMap((a) => axes[1].values.map((b) => [[axes[0].key, a], [axes[1].key, b]]));
+
+  let dropped = 0;
+  for (const combo of combos) {
+    const patch = {};
+    let orient = null;
+    for (const [key, v] of combo) {
+      if (key === ORIENT_KEY) orient = v; else patch[key] = v;
+    }
+    const id = stableStringify(patch) + '|' + orient;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (out.length >= cap) { dropped++; continue; }
+    out.push({
+      patch, orient, gen: 'sweep:' + axes.map((a) => a.key).join('×'),
+      label: combo.map(([key, v]) => axisValueLabel(axisOf(key), v)).join(' · '),
+    });
+  }
+  return { jobs: out, dropped };
+}
+
+/**
+ * JSON with the keys in a fixed order, so two objects that mean the same thing
+ * hash the same. Insertion order is not meaning: `applyPatch` adding a key puts
+ * it at the end, and without this that would read as a different plan and throw
+ * away a perfectly good cached score.
+ */
+export function stableStringify(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(v).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+}
+
+/** FNV-1a, 32-bit. Short, fast, and good enough to key a cache on. */
+export function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
 }
 
 /** Aggregate live metrics for the dashboard. */

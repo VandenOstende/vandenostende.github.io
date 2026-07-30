@@ -23,8 +23,8 @@
 import {
   polygonArea, polygonCentroid, offsetPolygon, pointInPolygon, boundingBox,
   rectPoly, distPointToPolygonBoundary,
-} from './geometry.js?v=fd27eff2';
-import { solveParking, aisleAxis, STALL_TYPES } from './solver.js?v=fd27eff2';
+} from './geometry.js?v=d71b1ba0';
+import { solveParking, aisleAxis, STALL_TYPES } from './solver.js?v=d71b1ba0';
 
 /**
  * What the tool can add, in the order the panel lists it. `def` is whether it

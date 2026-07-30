@@ -4,25 +4,25 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, sanitizePatch, buildSolveInput } from './solver.js?v=fd27eff2';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, sanitizePatch, buildSolveInput, VARY_AXES, ORIENT_KEY, axisOf, axisValueLabel, expandSweep, stableStringify, fnv1a } from './solver.js?v=d71b1ba0';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=fd27eff2';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=fd27eff2';
-import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=fd27eff2';
-import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=fd27eff2';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=fd27eff2';
-import { parseParcel, simplifyRing } from './importers.js?v=fd27eff2';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=fd27eff2';
+} from './geometry.js?v=d71b1ba0';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=d71b1ba0';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=d71b1ba0';
+import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=d71b1ba0';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d71b1ba0';
+import { parseParcel, simplifyRing } from './importers.js?v=d71b1ba0';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=d71b1ba0';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=fd27eff2';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=fd27eff2';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=fd27eff2';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=fd27eff2';
-import { BUILD_ID } from './build.js?v=fd27eff2';
-import { shareURL, decodeShare, shareCodeOf, MAX_SHARED_VARIANTS } from './share.js?v=fd27eff2';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=d71b1ba0';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=d71b1ba0';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=d71b1ba0';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=d71b1ba0';
+import { BUILD_ID } from './build.js?v=d71b1ba0';
+import { shareURL, decodeShare, shareCodeOf, MAX_SHARED_VARIANTS } from './share.js?v=d71b1ba0';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -354,6 +354,7 @@ export const UI_PARTS = [
   { id: 'tbProject', group: 'Werkbalk', label: 'Plannaam' },
   { id: 'tbTools', group: 'Werkbalk', label: 'Gereedschappen' },
   { id: 'tbLibrary', group: 'Werkbalk', label: 'Bibliotheek' },
+  { id: 'tbVariants', group: 'Werkbalk', label: 'Varianten' },
   { id: 'tbNewSite', group: 'Werkbalk', label: 'Nieuwe site' },
   { id: 'tbAxis', group: 'Werkbalk', label: 'Rij-as & Reset' },
   { id: 'tbUndo', group: 'Werkbalk', label: 'Undo / Redo' },
@@ -374,7 +375,7 @@ const WORKSPACE_PRESETS = {
   Alles: null, // null = everything visible
   Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
   Tekenen: ['panelLeft', 'secToolOpts', 'secObjects', 'secSiteShape', 'tbTools', 'tbLibrary', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
-  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'secSchemes', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
+  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'secSchemes', 'tbTools', 'tbVariants', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
 };
 const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
 
@@ -1233,6 +1234,41 @@ function BuildPreview({ styleKey }) {
     try { drawBuildStyle(ctx, styleKey, w, h); } catch (e) {}
   }, [styleKey]);
   return html`<canvas ref=${ref} className="lib-prev"></canvas>`;
+}
+
+// A candidate's plan, painted by the app's own `draw()` rather than a stand-in,
+// so a card cannot show something the plan would not. Its own effect per card,
+// so React spreads twelve canvases across commits instead of one long burst.
+//
+// `result` must be a DECORATED result: `draw` reads `.poly` and `.key` off every
+// aisle, which a raw solver quad does not have. The three selection fields are
+// passed explicitly as null rather than left undefined — `undefined === undefined`
+// would make every aisle read as the selected one.
+function VariantPreview({ result, doc, sitePoly, heavy }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth || 220, h = c.clientHeight || 74;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!result || heavy) return;
+    const view = fitView(sitePoly, w, h, 4);
+    if (!view) return;
+    try {
+      draw(ctx, {
+        view, doc, result, sitePoly, size: { w, h }, dpr,
+        layers: { site: true, setback: false, building: true, parking: true,
+          infra: true, grid: false, shadow: false, lightmap: false, context: false },
+        drawing: null, hover: null, selection: null, stallSel: [], aisleSel: null,
+        measure: null, showHandles: false,
+      });
+    } catch (e) { /* a thumbnail is never worth taking the dialog down for */ }
+  }, [result, heavy, sitePoly, doc.params.stallWidth]);
+  return html`<canvas ref=${ref} className="lib-prev var-prev"></canvas>`;
 }
 
 // A canvas that paints itself once from drawToolPreview, at device resolution.
@@ -2163,6 +2199,19 @@ function App() {
   // Which member of each combo family is chosen, family id → kind. Remembered
   // across opens: having to re-pick "keren" every time would defeat the card.
   const [comboPick, setComboPick] = useState({});
+  // ---------- Variants ----------
+  const [varOpen, setVarOpen] = useState(false);
+  const [varAxes, setVarAxes] = useState(['angle', '']);   // one or two axis keys
+  const [varJobs, setVarJobs] = useState([]);              // what the sweep produced
+  const [varRun, setVarRun] = useState(null);              // { i, n } while solving
+  const [varSort, setVarSort] = useState('total');
+  const [varHidePoor, setVarHidePoor] = useState(false);
+  // Scores and geometry, keyed by content. Derived data, so a ref rather than
+  // state or the document: when the plan changes the keys simply stop matching
+  // and every card goes back to "—". There is nothing to remember to clear,
+  // which is the whole point — a stale number cannot be displayed because it
+  // cannot be looked up.
+  const varCache = useRef(new Map());
   // The value the next placement carries, edited on the card before drawing.
   const [libValue, setLibValue] = useState({}); // kind → number
   // When the plan was last written to a file. Not stored in the document: it is
@@ -2275,8 +2324,6 @@ function App() {
   const [fileOpen, setFileOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
-  const [schemes, setSchemes] = useState(null);           // generated layout variants
-  const [optState, setOptState] = useState(null);         // { running, i, n } | { done, label, before, after }
   const [dealbarOpen, setDealbarOpen] = useState(true);   // bottom deal-tabulation bar
   // The overlays sit above the tabulatiebalk, and 96px was a guess at how tall
   // it is. Five columns wrap on a narrow window and the bar grows past it, which
@@ -2426,7 +2473,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=fd27eff2', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=d71b1ba0', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2447,7 +2494,7 @@ function App() {
   // sharing the live one would leave the canvas stale while a sweep runs.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./variants.worker.js?v=fd27eff2', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./variants.worker.js?v=d71b1ba0', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2799,7 +2846,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=fd27eff2').then(async (m) => {
+    import('./map3d.js?v=d71b1ba0').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4622,6 +4669,7 @@ function App() {
           // Menus first, outermost thing last: Escape should undo the most
           // recent layer, and an open dropdown stayed open through it.
           if (viewMenuOpen || exportOpen || fileOpen) { setViewMenuOpen(false); setExportOpen(false); setFileOpen(false); break; }
+          if (varOpen) { setVarOpen(false); break; }
           if (libOpen) { setLibOpen(false); break; }
           if (placingRef.current) { cancelPlacing(); break; }
           setDrawing(null); setMeasure(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
@@ -4657,7 +4705,7 @@ function App() {
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
-  }, [selection, stallSel, aisleSel, tool, multiSel, placing, libOpen, viewMenuOpen, exportOpen, fileOpen]);
+  }, [selection, stallSel, aisleSel, tool, multiSel, placing, libOpen, varOpen, viewMenuOpen, exportOpen, fileOpen]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -4675,8 +4723,6 @@ function App() {
     const fv = fitView(sitePoly, sizeRef.current.w, sizeRef.current.h);
     return fv && fv.scale > 0 ? Math.round((view.scale / fv.scale) * 100) : null;
   })();
-  // Design schemes: solve a handful of layout variants and compare their yield,
-  // so the user can pick the best (TestFit "Design Schemes").
   // Score one candidate exactly as the live plan is scored: the same solve
   // input, the same decoration, the same computeMetrics. Anything less and a
   // card quotes a number you will not get when you adopt it.
@@ -4684,29 +4730,51 @@ function App() {
   // Off-thread version: one batch, streamed. `onEach(index, scored)` fires as
   // each job lands, so the twelve cards fill in one by one rather than all at
   // once thirty seconds later. Resolves with the whole list, nulls for failures.
+  // Everything the plan contributes to a score, hashed once per change rather
+  // than once per candidate — otherwise a twelve-job sweep would stringify a
+  // 64-gon and two hundred annotations twelve times over.
+  const planHash = useMemo(() => fnv1a(stableStringify({
+    sitePoly, obstacles: doc.obstacles, roadBlockers, annotations: doc.annotations,
+    overrides: doc.overrides, manualStalls: doc.manualStalls, entries,
+  })), [sitePoly, doc.obstacles, roadBlockers, doc.annotations, doc.overrides, doc.manualStalls, entries]);
+  const varKey = (patch, orient) => planHash + '|' + fnv1a(stableStringify({
+    p: applyPatch(doc.params, sanitizePatch(patch || {})),
+    o: orient == null ? doc.orientationIndex : orient,
+  }));
+  const cachedScore = (patch, orient) => varCache.current.get(varKey(patch, orient)) || null;
+
   const runBatch = (patches, onEach) => new Promise((resolve) => {
     const shared = buildSolveInput({
       site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
       params: doc.params, orientationIndex: doc.orientationIndex, entries,
     });
-    const jobs = patches.map((patch, i) => {
+    // A candidate is a patch and, optionally, its own row axis — which is a
+    // solve input rather than a parameter, so it travels beside the patch.
+    const items = patches.map((x) => (x && x.patch !== undefined ? x : { patch: x, orient: null }));
+    const jobs = items.map((it, i) => {
       const inp = buildSolveInput({
         site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
-        params: doc.params, orientationIndex: doc.orientationIndex, entries, patch,
+        params: doc.params,
+        orientationIndex: it.orient == null ? doc.orientationIndex : it.orient,
+        entries, patch: it.patch,
       });
       return { jobId: i, params: inp.params, orientationIndex: inp.orientationIndex };
     });
-    const out = new Array(patches.length).fill(null);
+    const out = new Array(items.length).fill(null);
     const batchId = ++batchRef.current;
     const w = varWorkerRef.current;
+    const remember = (i, score) => {
+      if (score) varCache.current.set(varKey(items[i].patch, items[i].orient), score);
+    };
 
     if (!w) {
       // No worker — solve inline, but yield between candidates so the tab still
       // paints. Same posture as the live solve's own onerror fallback.
       (async () => {
-        for (let i = 0; i < patches.length; i++) {
+        for (let i = 0; i < items.length; i++) {
           if (batchRef.current !== batchId) return resolve(out);
-          out[i] = { ...scorePatch(patches[i]), inline: true };
+          out[i] = { ...scorePatch(items[i].patch, items[i].orient), inline: true };
+          remember(i, out[i]);
           if (onEach) onEach(i, out[i]);
           await new Promise((r) => setTimeout(r, 0));
         }
@@ -4721,6 +4789,7 @@ function App() {
         if (m.done) { batchCbRef.current = null; resolve(out); return; }
         if (m.error) { out[m.jobId] = null; return; }
         out[m.jobId] = { ...m.score, result: m.result, heavy: !!m.heavy, ms: m.ms };
+        remember(m.jobId, out[m.jobId]);
         if (onEach) onEach(m.jobId, out[m.jobId]);
       },
     };
@@ -4739,10 +4808,12 @@ function App() {
     if (varWorkerRef.current) varWorkerRef.current.postMessage({ cancel: id });
   };
 
-  const scorePatch = (patch) => {
+  const scorePatch = (patch, orient) => {
     const inp = buildSolveInput({
       site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
-      params: doc.params, orientationIndex: doc.orientationIndex, entries, patch,
+      params: doc.params,
+      orientationIndex: orient == null ? doc.orientationIndex : orient,
+      entries, patch,
     });
     let res;
     try { res = solveParking(inp.site, inp.obstacles, inp.params, inp.orientationIndex); }
@@ -4751,108 +4822,114 @@ function App() {
     const m = computeMetrics(inp.site, inp.metricObstacles, dec, inp.params, doc.annotations);
     const pl = plausibility(dec, inp.site, inp.params);
     return { total: m.total, physical: m.physicalStalls, areaPerStall: m.areaPerStall,
-      adaRequired: m.adaRequired, adaProvided: m.adaProvided, aisleCount: m.aisleCount, ...pl };
+      adaRequired: m.adaRequired, adaProvided: m.adaProvided, aisleCount: m.aisleCount,
+      imperviousPct: m.imperviousPct, result: dec, ...pl };
   };
 
-  const genSchemes = async () => {
-    const site = sitePoly;
-    if (!site || site.length < 3) { setSchemes([]); return; }
-    const variants = [
-      { label: 'Recht 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: false } },
-      { label: 'Schuin 60°', patch: { layout: 'strip', angle: 60, alignLongestEdge: false } },
-      { label: 'Schuin 45°', patch: { layout: 'strip', angle: 45, alignLongestEdge: false } },
-      { label: 'Uitgelijnd op rand', patch: { layout: 'strip', angle: 90, alignLongestEdge: true } },
-    ];
-    // Curved layouts only make sense (and only pack cleanly) on curved sites.
-    if (doc.siteCurved) {
-      variants.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
-      variants.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
-    }
-    setSchemes(variants.map((v) => ({ label: v.label, patch: v.patch, pending: true })));
-    setOptState({ running: true, i: 0, n: variants.length, batch: true });
-    const scored = await runBatch(variants.map((v) => v.patch), (i) => {
-      setOptState({ running: true, i: i + 1, n: variants.length, batch: true });
+  // ---------- Variants: generate, adopt, keep ----------
+  const varAxisSpecs = () => varAxes.filter(Boolean).map((k) => {
+    const a = axisOf(k);
+    if (!a) return null;
+    // The row axis only has as many values as this plan has orientations, so a
+    // three-value axis on a two-orientation site would solve the same layout
+    // twice under two names.
+    const vals = k === ORIENT_KEY
+      ? a.values.filter((v) => v < Math.max(1, result.orientationCount || 1))
+      : a.values;
+    return { key: k, values: vals };
+  }).filter(Boolean);
+
+  const runSweep = async () => {
+    const raw = expandSweep(varAxisSpecs());
+    // `expandSweep` dedupes by patch, which it must — it is pure and knows
+    // nothing about this plan. But a patch of `{angle: 90}` against a plan
+    // already at 90° resolves to the seed, and showing the same layout twice
+    // under two names is noise. Dedupe again here, on what the solver would
+    // actually be asked, which is the only definition that means anything.
+    const seen = new Set();
+    const jobs = raw.jobs.filter((j) => {
+      const id = stableStringify(applyPatch(doc.params, sanitizePatch(j.patch)))
+        + '|' + (j.orient == null ? doc.orientationIndex : j.orient);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
     });
-    setOptState(null);
-    const out = variants.map((v, i) => ({ label: v.label, patch: v.patch, ...(scored[i] || { total: 0, plausible: false }) }));
-    // The star goes to the most spaces among layouts that are physically
-    // possible — no stall on a stall, and not claiming more ground than exists.
-    // The old test was "at least 20 m² of site per stall", which the concentric
-    // layout passes on the demo site while overlapping 43 pairs of stalls.
-    const eligible = out.filter((o) => o.plausible);
-    const best = eligible.length ? Math.max(...eligible.map((o) => o.total)) : null;
-    out.forEach((o) => { o.best = o.plausible && o.total === best; });
-    out.sort((a, b) => (b.plausible - a.plausible) || (b.total - a.total));
-    setSchemes(out);
-  };
-  const applyScheme = (patch) => {
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: applyPatch(d.params, patch) }) });
-    setSchemes(null);
+    const dropped = raw.dropped;
+    setVarJobs(jobs.map((j) => ({ ...j, score: cachedScore(j.patch, j.orient) })));
+    setVarRun({ i: 0, n: jobs.length, dropped });
+    const scored = await runBatch(jobs, (i) => setVarRun((r) => (r ? { ...r, i: i + 1 } : r)));
+    setVarJobs(jobs.map((j, i) => ({ ...j, score: scored[i] || null })));
+    setVarRun(null);
   };
 
-  // Automatic optimisation: search the parameter space (angle sweep + a fine
-  // refinement pass, alignment, and curved layouts where applicable) and apply
-  // the highest-yield plausible layout automatically. Solves are yielded
-  // between candidates so the UI stays responsive, and roads/driveways are
-  // respected just like the live solve.
-  // Was a second, subtly different copy of the scoring above — it folded in the
-  // road blockers where the compare table did not, so the two disagreed about
-  // the same plan. One scorer now.
-  const evalPatch = (patch) => scorePatch(patch);
-  const autoOptimize = async () => {
-    const site = sitePoly;
-    if (!site || site.length < 3) return;
-    const before = metrics.total;
-    // Phase 1 — coarse candidates (the current setup is always included so the
-    // result can never be worse than what you already have).
-    const coarse = [
-      { label: 'Huidig', patch: {} },
-      { label: 'Recht 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: false } },
-      { label: 'Schuin 75°', patch: { layout: 'strip', angle: 75, alignLongestEdge: false } },
-      { label: 'Schuin 60°', patch: { layout: 'strip', angle: 60, alignLongestEdge: false } },
-      { label: 'Schuin 45°', patch: { layout: 'strip', angle: 45, alignLongestEdge: false } },
-      { label: 'Schuin 30°', patch: { layout: 'strip', angle: 30, alignLongestEdge: false } },
-      { label: 'Uitgelijnd 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: true } },
-    ];
-    if (doc.siteCurved) {
-      coarse.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
-      coarse.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
-    }
-    const better = (a, b) => !b || a.total > b.total; // a beats b?
-    const plausible = (r) => r.plausible && r.physical > 0;
+  // Adopting is one COMMIT of the parameters and the row axis, so one Cmd+Z puts
+  // it back. The list is deliberately left alone: keeping your alternatives is
+  // the point of having them.
+  const adoptVariant = (v) => {
+    dispatch({ type: 'COMMIT', updater: (d) => ({
+      ...d,
+      params: applyPatch(d.params, sanitizePatch(v.patch)),
+      orientationIndex: v.orient == null ? d.orientationIndex : v.orient,
+    }) });
+  };
+  // Is this candidate what the plan already is? Derived rather than stored — a
+  // "currently adopted" flag goes stale the moment a slider moves.
+  const isLiveVariant = (v) => {
+    const next = applyPatch(doc.params, sanitizePatch(v.patch));
+    const sameOrient = v.orient == null || v.orient === doc.orientationIndex;
+    return sameOrient && stableStringify(next) === stableStringify(doc.params);
+  };
+  const keepVariant = (v) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const patch = sanitizePatch(v.patch);
+    const key = stableStringify(patch) + '|' + v.orient;
+    if ((d.variants || []).some((x) => stableStringify(x.patch) + '|' + (x.orient == null ? null : x.orient) === key)) return d;
+    return { ...d, variants: [...(d.variants || []), {
+      id: nextVariantId(d), label: v.label, patch, gen: v.gen || 'manual',
+    }].slice(0, MAX_SHARED_VARIANTS) };
+  } });
+  const dropVariant = (id) => dispatch({ type: 'COMMIT',
+    updater: (d) => ({ ...d, variants: (d.variants || []).filter((v) => v.id !== id) }) });
+
+  // Refine: the old optimiser's second phase, now visible and repeatable. Seeds
+  // an angle sweep around whatever this card is, rather than only around the
+  // winner of a search you could not see.
+  const refineVariant = async (v) => {
+    const base = applyPatch(doc.params, sanitizePatch(v.patch)).angle;
+    if (typeof base !== 'number') return;
+    const vals = [base - 10, base - 5, base, base + 5, base + 10].filter((a) => a >= 30 && a <= 90);
+    const jobs = vals.map((a) => ({
+      patch: { ...sanitizePatch(v.patch), angle: a }, orient: v.orient,
+      label: a + '°', gen: 'refine:angle',
+    }));
+    setVarJobs(jobs.map((j) => ({ ...j, score: cachedScore(j.patch, j.orient) })));
+    setVarRun({ i: 0, n: jobs.length, dropped: 0 });
+    const scored = await runBatch(jobs, (i) => setVarRun((r) => (r ? { ...r, i: i + 1 } : r)));
+    setVarJobs(jobs.map((j, i) => ({ ...j, score: scored[i] || null })));
+    setVarRun(null);
+  };
+
+  // Ranked for display. Implausible candidates sink whatever the sort, because
+  // "most spaces" is not a recommendation when the spaces overlap.
+  const varRanked = useMemo(() => {
+    const list = varJobs.filter((j) => !varHidePoor || !j.score || j.score.plausible);
+    const key = (j) => (j.score ? j.score[varSort === 'area' ? 'areaPerStall' : 'total'] : -1);
+    return list.slice().sort((a, b) => {
+      const pa = a.score ? (a.score.plausible ? 1 : 0) : 0.5;
+      const pb = b.score ? (b.score.plausible ? 1 : 0) : 0.5;
+      if (pa !== pb) return pb - pa;
+      if (varSort === 'name') return String(a.label).localeCompare(String(b.label), 'nl');
+      return varSort === 'area' ? key(a) - key(b) : key(b) - key(a);
+    });
+  }, [varJobs, varSort, varHidePoor]);
+  const varBest = useMemo(() => {
     let best = null;
-    // Phase 2 refine steps depend on phase-1 winner, so build the total up front.
-    const totalEst = coarse.length + 4;
-    // One batch off-thread rather than nine blocking solves. The count is real:
-    // it advances as each job actually lands.
-    const phase1 = await runBatch(coarse.map((c) => c.patch), (i) => {
-      setOptState({ running: true, i: i + 1, n: totalEst });
-    });
-    const scored = coarse.map((c, i) => ({ ...c, ...(phase1[i] || { total: 0, physical: 0, plausible: false }) }));
-    for (const r of scored) if (plausible(r) && better(r, best)) best = r;
-    if (!best) best = scored.slice().sort((a, b) => b.total - a.total)[0];
-    // Phase 2 — refine the angle ±5°/±10° around a straight-layout winner.
-    if (best && best.patch.layout === 'strip' && !best.patch.alignLongestEdge && typeof best.patch.angle === 'number') {
-      const base = best.patch.angle;
-      const refine = [base - 10, base - 5, base + 5, base + 10].filter((a) => a >= 30 && a <= 90);
-      const patches = refine.map((a) => ({ layout: 'strip', angle: a, alignLongestEdge: false }));
-      const phase2 = await runBatch(patches, (j) => {
-        setOptState({ running: true, i: coarse.length + j + 1, n: totalEst });
-      });
-      phase2.forEach((sc, j) => {
-        if (!sc) return;
-        const r = { label: `Recht ${refine[j]}°`, patch: patches[j], ...sc };
-        if (plausible(r) && better(r, best)) best = r;
-      });
+    for (const j of varJobs) {
+      if (!j.score || !j.score.plausible) continue;
+      if (!best || j.score.total > best.score.total) best = j;
     }
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: applyPatch(d.params, best.patch) }) });
-    setSchemes(null);
-    // `before` and `after` are both metrics.total on a decorated result now, so
-    // the delta compares two of the same thing. It used to weigh the live plan's
-    // spaces (hand-placed stalls included, removals honoured) against a raw
-    // solver count, and report the difference as if it meant something.
-    setOptState({ done: true, label: best.label, before, after: best.total });
-  };
+    return best;
+  }, [varJobs]);
+
   const zoomBy = (factor) => setView((v) => {
     const cx = sizeRef.current.w / 2, cy = sizeRef.current.h / 2;
     const s = Math.max(1, Math.min(60, v.scale * factor));
@@ -5693,6 +5770,147 @@ function migrateDoc(d) {
       </div>
       <div className="lib-grid">${items.map(libCard)}</div>
     </section>`);
+  const variantsModal = () => {
+    const busy = !!varRun;
+    const fmt1 = (n) => (n == null ? '—' : (+n).toFixed(1).replace('.', ','));
+    const card = (j, i) => {
+      const sc = j.score;
+      const live = isLiveVariant(j);
+      const delta = sc ? sc.total - metrics.total : null;
+      return html`
+        <div key=${j.label + i} className=${'lib-card var-card' + (live ? ' active' : '')}>
+          <${VariantPreview} result=${sc && sc.result} doc=${doc} sitePoly=${sitePoly} heavy=${sc && sc.heavy} />
+          <span className="lib-card-h">
+            <span className="lib-card-name">${j.label}</span>
+            <span className="lib-card-gap"></span>
+            ${live && html`<span className="tag tag-outline">huidig</span>`}
+          </span>
+          ${!sc ? html`<span className="lib-card-desc">${busy ? 'rekenen…' : '—'}</span>` : html`
+            <span className="var-head">
+              <b>${sc.total}</b> plaatsen
+              ${delta !== 0 && html`<span className=${'var-delta ' + (delta > 0 ? 'ok' : 'bad')}>
+                ${(delta > 0 ? '+' : '') + delta}</span>`}
+            </span>
+            <span className="deal-rows">
+              <span className="deal-row"><span>m² per vak</span><b>${fmt1(sc.areaPerStall)}</b></span>
+              <span className="deal-row"><span>Minder-valide</span><b>${sc.adaProvided}/${sc.adaRequired}</b></span>
+              <span className="deal-row"><span>Rijstroken</span><b>${sc.aisleCount}</b></span>
+              <span className="deal-row"><span>Verhard</span><b>${Math.round((sc.imperviousPct || 0) * 100)}%</b></span>
+            </span>
+            ${!sc.plausible && html`<span className="var-warn" title=${sc.stallOverlaps
+              ? sc.stallOverlaps + ' vakken liggen over elkaar'
+              : 'Beslaat ' + Math.round(sc.packedRatio * 100) + '% van de bruikbare grond'}>
+              ⚠ niet haalbaar</span>`}
+            ${sc.heavy && html`<span className="lib-card-desc">Te groot voor een voorbeeld — de cijfers kloppen wel.</span>`}`}
+          <span className="lib-card-actions">
+            <button className="btn ghost" disabled=${busy || live} onClick=${() => adoptVariant(j)}>Toepassen</button>
+            <button className="btn ghost" disabled=${busy} onClick=${() => refineVariant(j)}>Verfijn</button>
+            <button className="btn ghost" disabled=${busy} title="Bewaren bij het plan" onClick=${() => keepVariant(j)}>Bewaar</button>
+          </span>
+        </div>`;
+    };
+
+    return html`
+    <div className="dialog-backdrop" onClick=${() => setVarOpen(false)}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-label="Varianten"
+        onClick=${(e) => e.stopPropagation()}>
+        <header className="dialog-h">
+          <div className="dialog-h-row">
+            <div>
+              <span className="dialog-eyebrow">Schema's</span>
+              <h2 className="dialog-title">Varianten</h2>
+              <p className="dialog-sub">
+                Kies één of twee assen; het plan wordt voor elke combinatie opnieuw
+                opgelost en naast elkaar gezet. Elke plattegrond is met de tekenaars
+                van de app zelf gemaakt — wat je hier ziet, krijg je.
+              </p>
+            </div>
+            <button className="btn ghost dialog-x" aria-label="Sluiten" onClick=${() => setVarOpen(false)}>✕</button>
+          </div>
+          <div className="var-axes">
+            ${[0, 1].map((slot) => html`
+              <label key=${slot} className="var-axis">
+                <span>${slot === 0 ? 'As' : 'Tweede as'}</span>
+                <select className="input" value=${varAxes[slot] || ''} disabled=${busy}
+                  aria-label=${slot === 0 ? 'As' : 'Tweede as'}
+                  onChange=${(e) => setVarAxes((a) => (slot === 0 ? [e.target.value, a[1]] : [a[0], e.target.value]))}>
+                  <option value="">${slot === 0 ? '— kies —' : '— geen —'}</option>
+                  ${VARY_AXES.filter((a) => a.key !== varAxes[1 - slot]).map((a) => html`
+                    <option key=${a.key} value=${a.key}>${a.label}</option>`)}
+                </select>
+              </label>`)}
+            <button className="btn primary" disabled=${busy || !varAxes[0]} onClick=${runSweep}>
+              ${busy ? `Bezig… ${varRun.i}/${varRun.n}` : 'Genereer'}
+            </button>
+            ${busy && html`<button className="btn ghost" onClick=${() => { cancelBatch(); setVarRun(null); }}>Stoppen</button>`}
+            <span className="dialog-tabs-gap"></span>
+            <label className="var-axis">
+              <span>Sorteer</span>
+              <select className="input" value=${varSort} aria-label="Sorteer"
+                onChange=${(e) => setVarSort(e.target.value)}>
+                <option value="total">Meeste plaatsen</option>
+                <option value="area">Laagste m² per vak</option>
+                <option value="name">Naam</option>
+              </select>
+            </label>
+            <label className="toggle var-filter">
+              <span>Verberg onhaalbare</span>
+              <input type="checkbox" checked=${varHidePoor} onChange=${(e) => setVarHidePoor(e.target.checked)} />
+            </label>
+          </div>
+        </header>
+
+        <div className="dialog-body tk-scroll">
+          ${varRun && varRun.dropped > 0 && html`<p className="mix-note" style=${{ marginTop: 0 }}>
+            ${varRun.dropped} combinatie${varRun.dropped > 1 ? 's' : ''} boven de twaalf overgeslagen —
+            kies kortere waardelijsten of één as.
+          </p>`}
+          ${!varJobs.length && html`<p className="mix-note">
+            Kies een as en druk op Genereer. "Huidig" staat altijd als eerste kaart,
+            zodat een variant nooit beter kan lijken dan iets wat je niet ziet.
+          </p>`}
+          ${varRanked.length > 0 && html`<div className="lib-grid">${varRanked.map(card)}</div>`}
+
+          ${(doc.variants || []).length > 0 && html`
+            <section className="lib-sec" style=${{ marginTop: 'var(--space-6)' }}>
+              <div className="lib-sec-h">
+                <span className="lib-sec-tick"></span>
+                <h3>Bewaard bij dit plan</h3>
+                <span className="lib-sec-n">${doc.variants.length}</span>
+                <span className="lib-sec-rule"></span>
+              </div>
+              <div className="var-kept">
+                ${doc.variants.map((v) => html`
+                  <div key=${v.id} className="var-kept-row">
+                    <span className="var-kept-name">${v.label}</span>
+                    <span className="var-kept-gen">${v.gen}</span>
+                    <button className="btn ghost" onClick=${() => adoptVariant(v)}>Toepassen</button>
+                    <button className="btn ghost" title="Verwijderen" aria-label="Verwijderen"
+                      onClick=${() => dropVariant(v.id)}>✕</button>
+                  </div>`)}
+              </div>
+              <div className="mix-note">
+                Bewaarde varianten reizen mee in opslaan en in een deel-link — als
+                parameters, niet als plattegrond, dus ze worden bij het openen
+                opnieuw opgelost.
+              </div>
+            </section>`}
+        </div>
+
+        <footer className="dialog-f">
+          <span className="dialog-f-sel">
+            ${varJobs.length ? `${varJobs.length} varianten` : 'Nog niets gegenereerd'}
+            ${varBest ? html` · beste: <strong>${varBest.label}</strong>` : ''}
+          </span>
+          <span className="dialog-f-gap"></span>
+          <button className="btn ghost" onClick=${() => setVarOpen(false)}>Sluiten</button>
+          <button className="btn primary" disabled=${!varBest || busy || isLiveVariant(varBest)}
+            onClick=${() => { adoptVariant(varBest); setVarOpen(false); }}>Beste toepassen</button>
+        </footer>
+      </div>
+    </div>`;
+  };
+
   const libraryModal = () => html`
     <div className="dialog-backdrop" onClick=${() => setLibOpen(false)}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label="Teken infrastructuur"
@@ -6064,6 +6282,9 @@ function migrateDoc(d) {
             title="Meetlint (M)"
             onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>${icon('measure')}</button>`}
         <span className="tb-sep"></span>
+        ${vis('tbVariants') && html`
+          <button className=${'btn icon' + (varOpen ? ' active' : '')} onClick=${() => setVarOpen((o) => !o)}
+            aria-label="Varianten vergelijken" title="Varianten vergelijken — los het plan meerdere keren op en zet de plattegronden naast elkaar">⚖️</button>`}
         ${vis('tbLibrary') && html`
           <button className=${'btn primary icon' + (libOpen ? ' active' : '')} onClick=${() => libOpenRef.current()}
             aria-label="Teken infrastructuur" title="Teken infrastructuur (T) — alles wat je kunt tekenen, met voorbeeldweergave">${icon('library', 18)}</button>`}
@@ -7211,47 +7432,30 @@ function migrateDoc(d) {
           ${secHead('secSchemes', "Schema's")}
           ${secIsOpen('secSchemes') && html`
           <div className="mix-note" style=${{ marginTop: 0 }}>
-            Los het plan een aantal keer op met andere parameters en zet de uitkomsten
-            naast elkaar.
+            Los het plan een aantal keer op met andere parameters en zet de
+            plattegronden naast elkaar.
           </div>
-          <div className="field" style=${{ display: 'flex', gap: '6px' }}>
-            <button className="btn ghost" style=${{ flex: 1, justifyContent: 'center' }} onClick=${genSchemes}>⚖️ Vergelijk</button>
-            <button className="btn" style=${{ flex: 1, justifyContent: 'center' }} disabled=${!!(optState && optState.running)} onClick=${autoOptimize}>
-              ${optState && optState.running ? `Bezig… ${optState.i}/${optState.n}` : '✨ Optimaliseer'}
-            </button>
-            ${optState && optState.running && html`
-              <button className="btn ghost" title="Stoppen" aria-label="Stoppen"
-                onClick=${() => { cancelBatch(); setOptState(null); }}>✕</button>`}
+          <div className="field">
+            <button className="btn primary" style=${{ width: '100%', justifyContent: 'center' }}
+              onClick=${() => setVarOpen(true)}>⚖️ Varianten vergelijken</button>
           </div>
-          ${optState && optState.done && html`
-            <div className="opt-result">
-              Beste layout: <b>${optState.label}</b> —
-              ${optState.after} plaatsen${optState.after > optState.before ? html` <span className="opt-up">(+${optState.after - optState.before})</span>`
-                : optState.after < optState.before ? ` (${optState.after - optState.before})` : ' — al optimaal'}
+          ${varJobs.length > 0 && html`
+            <div className="deal-rows">
+              <div className="deal-row"><span>Gegenereerd</span><b>${varJobs.length}</b></div>
+              ${varBest && html`<div className="deal-row"><span>Beste</span><b>${varBest.label}</b></div>`}
+              ${varBest && varBest.score && html`
+                <div className="deal-row"><span>Plaatsen</span>
+                  <b className=${varBest.score.total >= metrics.total ? 'ok' : ''}>${varBest.score.total}</b></div>`}
             </div>`}
-          ${schemes && html`
-            <div className="schemes">
-              ${schemes.length === 0 ? html`<div className="scheme-empty">Teken eerst een site.</div>` : ''}
-              ${schemes.map((s) => html`
-                <div key=${s.label} className=${'scheme-row' + (s.best ? ' best' : '')}>
-                  <div className="scheme-info">
-                    <span className="scheme-label">${s.label}${s.best ? ' ★' : ''}</span>
-                    <span className="scheme-count">
-                      ${s.total} plaatsen · ${s.areaPerStall ? s.areaPerStall.toFixed(1) : '—'} m²/vak
-                      ${!s.plausible ? html` · <span className="scheme-warn" title=${s.stallOverlaps
-                        ? s.stallOverlaps + ' vakken liggen over elkaar'
-                        : 'Beslaat ' + Math.round(s.packedRatio * 100) + '% van de bruikbare grond'}>⚠ niet haalbaar</span>` : ''}
-                    </span>
-                  </div>
-                  <button className="btn ghost" onClick=${() => applyScheme(s.patch)}>Toepassen</button>
-                </div>`)}
-            </div>`}
+          ${(doc.variants || []).length > 0 && html`
+            <div className="mix-note">${doc.variants.length} bewaard bij dit plan.</div>`}
           `}
         </div>`}
 
       </div>`}
 
       ${libOpen && libraryModal()}
+      ${varOpen && variantsModal()}
       ${keysOpen && keysModal()}
       ${summaryOpen && html`
         <div className="modal-backdrop" onClick=${() => setSummaryOpen(false)}>
