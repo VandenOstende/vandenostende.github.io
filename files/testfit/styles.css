@@ -1450,6 +1450,26 @@ body.resizing .panel-resize { pointer-events: auto; }
 .proj-name:hover { border-color: var(--border); }
 .proj-name:focus { outline: none; border-color: var(--accent); background: var(--panel-2); }
 .proj-name::placeholder { color: var(--muted); font-weight: 400; }
+/* The same box while it is still text, so opening it for editing does not make
+   the toolbar jump. `cursor: text` is the hint that it can be. */
+.proj-name-text {
+  display: block;
+  width: 160px;
+  max-width: 22vw;
+  padding: 2px 4px;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proj-name-text:hover { border-color: var(--border); }
+.proj-name-text:focus-visible { outline: none; border-color: var(--accent); }
 .proj-meta { padding-left: 5px; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* One line under the tool's name saying what it is for — the same sentence the

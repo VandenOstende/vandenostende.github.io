@@ -188,3 +188,29 @@ export async function geocode(query, token) {
   }
   return geocodeNominatim(query);
 }
+
+/**
+ * The other direction: what place is this, for the coordinates the plan is
+ * anchored at. Returns a short "Gent, Wondelgem" rather than Nominatim's full
+ * display_name, which runs to a postcode and a country and does not fit beside
+ * the numbers.
+ *
+ * Returns '' on any failure — no network, a rate limit, an ocean. A place name
+ * is a nicety next to the coordinates, which are the actual answer, so it must
+ * never be the reason the panel shows nothing.
+ */
+export async function reverseGeocode(lat, lon) {
+  const url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1'
+    + '&lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon);
+  try {
+    const d = await fetchJSON(url, { headers: { 'Accept-Language': 'nl' } });
+    const a = (d && d.address) || {};
+    // Most specific first, then the municipality it sits in. Nominatim names the
+    // settlement differently depending on what kind of place it is, hence the
+    // run of alternatives rather than one field.
+    const local = a.suburb || a.village || a.town || a.city_district || a.hamlet || a.neighbourhood || '';
+    const city = a.city || a.town || a.municipality || a.village || a.county || '';
+    const parts = [...new Set([city, local].filter(Boolean))];
+    return parts.length ? parts.join(', ') : (d && d.name) || '';
+  } catch (e) { return ''; }
+}

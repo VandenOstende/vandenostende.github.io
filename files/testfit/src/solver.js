@@ -15,8 +15,8 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=cc8c8db3';
-import { ANNOT_TYPES, runoffOf } from './annots.js?v=cc8c8db3';
+} from './geometry.js?v=8f5462e6';
+import { ANNOT_TYPES, runoffOf } from './annots.js?v=8f5462e6';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {

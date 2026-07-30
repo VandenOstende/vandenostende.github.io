@@ -4,24 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=cc8c8db3';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=8f5462e6';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=cc8c8db3';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=cc8c8db3';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=cc8c8db3';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=cc8c8db3';
-import { parseParcel, simplifyRing } from './importers.js?v=cc8c8db3';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=cc8c8db3';
+} from './geometry.js?v=8f5462e6';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=8f5462e6';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=8f5462e6';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=8f5462e6';
+import { parseParcel, simplifyRing } from './importers.js?v=8f5462e6';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=8f5462e6';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=cc8c8db3';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=cc8c8db3';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=cc8c8db3';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=cc8c8db3';
-import { BUILD_ID } from './build.js?v=cc8c8db3';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=cc8c8db3';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=8f5462e6';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=8f5462e6';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=8f5462e6';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=8f5462e6';
+import { BUILD_ID } from './build.js?v=8f5462e6';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=8f5462e6';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -391,6 +391,27 @@ const BUILD_FAMILIES = [
 // without its styles, or one whose style was deleted since. Every lookup goes
 // through here, because the one that did not crashed the whole canvas.
 const styleOf = (key) => BUILDING_USES[key] || BUILDING_USES[DEFAULT_USE];
+
+// ---------- Toolbar icons ----------
+// The stroked 24px glyphs the design draws, path data taken from the mock. They
+// replace emoji, which render at whatever size and weight the platform font
+// feels like and looked nothing like the rest of the bar on Windows. Only the
+// four the design actually draws as SVG: it keeps the eye, the Fit arrows and
+// the undo/redo hooks as glyphs, so those stay glyphs here too.
+const ICON_PATHS = {
+  measure: ['M2 8h20v8H2z', 'M7 8v3M12 8v4M17 8v3'],
+  library: ['M8 21 5 3M16 21l3-18', 'M12 5v3M12 11v3M12 17v3'],
+  save: ['M4 4h11l5 5v11H4z', 'M8 4v5h7', 'M8 13h8v7H8z'],
+  export: ['M12 15V3', 'm8 7 4-4 4 4', 'M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4'],
+};
+function icon(name, size = 17) {
+  const paths = ICON_PATHS[name];
+  if (!paths) return '';
+  return html`<svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" aria-hidden="true"
+    stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    ${paths.map((d, i) => html`<path key=${i} d=${d}></path>`)}
+  </svg>`;
+}
 
 const TOOL_HELP = {
   select: 'Klik iets aan om het te bewerken, of sleep een kader voor meerdere objecten. Kies een gereedschap in de bibliotheek.',
@@ -2124,6 +2145,22 @@ function App() {
   const [result, setResult] = useState({ stalls: [], aisles: [], islands: [], turnarounds: [], orientationCount: 0 });
   const [solving, setSolving] = useState(false);
   const [geoSearch, setGeoSearch] = useState('');
+  // The design prints "51.0536 N · 3.7253 E — Gent, Wondelgem". The numbers are
+  // the answer; the name is what makes them readable at a glance. Debounced and
+  // best-effort: Nominatim rate-limits, and a plan whose place name is missing is
+  // in no way worse off than one that never asked.
+  const [editingName, setEditingName] = useState(false);
+  const [geoPlace, setGeoPlace] = useState('');
+  useEffect(() => {
+    const g = doc.geo;
+    if (!g || !isFinite(g.lat) || !isFinite(g.lon)) { setGeoPlace(''); return; }
+    let live = true;
+    const t = setTimeout(async () => {
+      const name = await reverseGeocode(g.lat, g.lon);
+      if (live) setGeoPlace(name);
+    }, 700);
+    return () => { live = false; clearTimeout(t); };
+  }, [doc.geo && doc.geo.lat, doc.geo && doc.geo.lon]);
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoMsg, setGeoMsg] = useState('');
   const [viewMode, setViewMode] = useState('2d');            // '2d' (flat map) | '3d' (tilted map)
@@ -2268,7 +2305,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=cc8c8db3', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=8f5462e6', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2653,7 +2690,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=cc8c8db3').then(async (m) => {
+    import('./map3d.js?v=8f5462e6').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -2744,6 +2781,17 @@ function App() {
     if (!p) return;
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, stallWidth: p.stallWidth, stallDepth: p.stallDepth, aisleWidth: p.aisleWidth } }) });
   };
+  // Which preset the current dimensions are, if any — derived rather than
+  // stored, so moving a slider off a preset shows that immediately instead of
+  // leaving a stale name selected. The tolerance is half of the sliders' own
+  // 0.1 m step, so a value that came from a preset always matches it back.
+  const activePreset = useMemo(() => {
+    const near = (a, b) => Math.abs(a - b) < 0.05;
+    const { stallWidth, stallDepth, aisleWidth } = doc.params;
+    const hit = Object.entries(PRESETS).find(([, p]) =>
+      near(p.stallWidth, stallWidth) && near(p.stallDepth, stallDepth) && near(p.aisleWidth, aisleWidth));
+    return hit ? hit[0] : '';
+  }, [doc.params.stallWidth, doc.params.stallDepth, doc.params.aisleWidth]);
 
   // ---------- Pointer interactions ----------
   const getWorld = (e) => {
@@ -4465,6 +4513,14 @@ function App() {
     const fv = fitView(sitePoly, sizeRef.current.w, sizeRef.current.h);
     if (fv) setView(fv);
   };
+  // 100 % is "the whole site fits", which is the only reference on a plan view
+  // that means anything — there is no natural 1:1 for a drawing in metres. Not
+  // memoised: fitView is a bounding box, and this recomputes on the same renders
+  // the HUD does anyway.
+  const zoomPct = (() => {
+    const fv = fitView(sitePoly, sizeRef.current.w, sizeRef.current.h);
+    return fv && fv.scale > 0 ? Math.round((view.scale / fv.scale) * 100) : null;
+  })();
   // Design schemes: solve a handful of layout variants and compare their yield,
   // so the user can pick the best (TestFit "Design Schemes").
   const genSchemes = () => {
@@ -5293,7 +5349,7 @@ function migrateDoc(d) {
             would slam the dialog shut before you could set either. Double-click
             is the shortcut for when there is nothing to set. */ ''}
       onClick=${() => setLibPick(e.k)}
-      onDblClick=${() => libTake(e)}
+      onDoubleClick=${() => libTake(e)}
       onKeyDown=${(ev) => {
         if (ev.key === 'Enter') { ev.preventDefault(); libTake(e); }
         else if (ev.key === ' ') { ev.preventDefault(); setLibPick(e.k); }
@@ -5552,7 +5608,7 @@ function migrateDoc(d) {
         <button type="submit" className="btn" disabled=${geoBusy}>${geoBusy ? '…' : 'Ga'}</button>
       </form>
       ${geoMsg && html`<div className="geo-msg">${geoMsg}</div>`}
-      <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
+      <div className="geo-coord">📍 ${Math.abs(doc.geo.lat).toFixed(4)} ${doc.geo.lat >= 0 ? 'N' : 'Z'} · ${Math.abs(doc.geo.lon).toFixed(4)} ${doc.geo.lon >= 0 ? 'O' : 'W'}${geoPlace ? ' — ' + geoPlace : ''}</div>
       <div className="geo-coord" style=${{ marginTop: '6px' }}>
         ${mbToken ? html`🗺️ Kaart-token ✓ · <a href="#" onClick=${(e) => { e.preventDefault(); clearMbToken(); }} style=${{ color: 'var(--accent)' }}>wijzigen</a>` : '🗺️ Geen kaart-token'}
       </div>
@@ -5582,7 +5638,9 @@ function migrateDoc(d) {
     </div>`;
   const vmLayers = () => html`
     <div className="vm-group vm-wide">
-      <div className="vm-h">Lagen <span className="vm-n">${Object.values(layers).filter(Boolean).length}</span></div>
+      ${/* on/total, as the design has it. The bare on-count read "7" whether that
+            was seven of seven or seven of nine. */ ''}
+      <div className="vm-h">Lagen <span className="vm-n">${Object.values(layers).filter(Boolean).length}/${Object.keys(layers).length}</span></div>
       ${layerRow('grid', 'Raster', '#3b4453', layers, setLayers)}
       ${layerRow('site', 'Site-grens', '#f8b500', layers, setLayers)}
       ${layerRow('setback', 'Setback', '#6ee7ff', layers, setLayers)}
@@ -5597,8 +5655,12 @@ function migrateDoc(d) {
   const vmPreset = () => html`
     <div className="vm-group vm-wide">
       <div className="vm-h">Afmetingen-preset</div>
-      <select className="preset" onChange=${(e) => applyPreset(e.target.value)}>
-        <option value="">— kies afmetingen —</option>
+      ${/* Bound to the dimensions actually in force, so it stops claiming nothing
+            is chosen the moment after you choose. It reads "— aangepast —" once a
+            slider has moved off a preset, which is the honest third state. */ ''}
+      <select className="preset" aria-label="Afmetingen-preset" value=${activePreset}
+        onChange=${(e) => applyPreset(e.target.value)}>
+        <option value="">${activePreset ? '— kies afmetingen —' : '— aangepast —'}</option>
         ${Object.entries(PRESETS).map(([k, p]) => html`<option key=${k} value=${k}>${p.label}</option>`)}
       </select>
     </div>`;
@@ -5686,9 +5748,21 @@ function migrateDoc(d) {
         <div className="brand"><span className="brand-name">ParkPlanner</span></div>
         ${vis('tbProject') && html`
           <div className="tb-project">
-            <input className="proj-name" type="text" value=${doc.name || ''} placeholder="Naamloos plan" aria-label="Projectnaam"
-              title="Naam van dit plan — komt terug in de bestandsnaam bij Opslaan"
-              onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, name: e.target.value.slice(0, 60) }) })} />
+            ${/* A name you read, not a field you might type into by accident. The
+                  always-live input sat one stray click away from the canvas and
+                  looked like somewhere to start typing; the design makes it text
+                  until you ask, which is also how the object list renames. */ ''}
+            ${editingName
+              ? html`<input className="proj-name" type="text" autoFocus aria-label="Projectnaam"
+                  value=${doc.name || ''} placeholder="Naamloos plan"
+                  onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, name: e.target.value.slice(0, 60) }) })}
+                  onBlur=${() => setEditingName(false)}
+                  onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.stopPropagation(); setEditingName(false); e.target.blur(); } }} />`
+              : html`<span className="proj-name-text" tabIndex="0" role="button"
+                  title="Dubbelklik om de projectnaam te wijzigen"
+                  onDoubleClick=${() => setEditingName(true)}
+                  onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); setEditingName(true); } }}
+                  >${doc.name || 'Naamloos plan'}</span>`}
             <span className="proj-meta">
               ${savedAt
                 ? 'Laatst opgeslagen om ' + savedAt.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })
@@ -5696,8 +5770,11 @@ function migrateDoc(d) {
             </span>
           </div>`}
         ${/* The order is the design's: named tools, the measure icon, the library
-              as the one accent button, then a spacer and the view cluster. No
-              rules between groups — the spacer does that work. */ ''}
+              as the one accent button, then a spacer and the view cluster. The
+              design draws two hairlines in this run — after the plan's name and
+              before the library — and they earn their keep: without them the
+              accent button reads as the seventh tool rather than a thing apart. */ ''}
+        <span className="tb-sep"></span>
         ${vis('tbTools') && html`
           ${toolBtn('select', 'Selecteren', 'V', tool, setTool, setDrawing)}
           ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
@@ -5707,10 +5784,11 @@ function migrateDoc(d) {
           ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
           <button className=${'btn icon' + (tool === 'measure' ? ' active' : '')} aria-label="Meetlint"
             title="Meetlint (M)"
-            onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>📏</button>`}
+            onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>${icon('measure')}</button>`}
+        <span className="tb-sep"></span>
         ${vis('tbLibrary') && html`
           <button className=${'btn primary icon' + (libOpen ? ' active' : '')} onClick=${() => libOpenRef.current()}
-            aria-label="Teken infrastructuur" title="Teken infrastructuur (T) — alles wat je kunt tekenen, met voorbeeldweergave">▦</button>`}
+            aria-label="Teken infrastructuur" title="Teken infrastructuur (T) — alles wat je kunt tekenen, met voorbeeldweergave">${icon('library', 18)}</button>`}
         <div className="tb-spacer"></div>
         ${vis('tbAxis') && html`
           <button className="btn ghost" onClick=${cycleAxis} title="Wissel rij-oriëntatie">↻ Rij-as${result.orientationCount ? html` <span className="tb-n">${doc.orientationIndex + 1}/${result.orientationCount}</span>` : ''}</button>
@@ -5738,7 +5816,7 @@ function migrateDoc(d) {
         ${vis('tbFile') && html`
         <div className="dropdown">
           <button className=${'btn ghost icon' + (fileOpen ? ' active' : '')} onClick=${() => setFileOpen((o) => !o)}
-            title="Plan — opslaan, laden, delen, nieuw" aria-label="Plan">💾</button>
+            title="Plan — opslaan (⌘S), laden, delen, nieuw" aria-label="Plan">${icon('save')}</button>
           ${fileOpen && html`
             <div className="menu" onMouseLeave=${() => setFileOpen(false)}>
               <button onClick=${() => { saveJSON(); setFileOpen(false); }}>Opslaan als JSON</button>
@@ -5754,7 +5832,7 @@ function migrateDoc(d) {
         ${vis('tbExport') && html`
         <div className="dropdown">
           <button className=${'btn ghost icon' + (exportOpen ? ' active' : '')} onClick=${() => setExportOpen((o) => !o)}
-            title="Export (PNG, GeoJSON, DXF, CSV)" aria-label="Export">⬆</button>
+            title="Export (PNG, JSON, GeoJSON, DXF, CSV)" aria-label="Export">${icon('export')} ▾</button>
           ${exportOpen && html`
             <div className="menu" onMouseLeave=${() => setExportOpen(false)}>
               <button onClick=${() => { exportPNG(); setExportOpen(false); }}>PNG-afbeelding</button>
@@ -6092,7 +6170,9 @@ function migrateDoc(d) {
           <span>·</span>
           <span>schaal <b>${ratioScale(view.scale)}</b></span>
           <span>·</span>
-          <span title=${view.scale.toFixed(2) + ' px/m'}>${view.scale.toFixed(1)} px/m</span>
+          ${/* The design reads "Zoom 62 %". px/m is what the trade says out loud,
+                so it stays — in the tooltip, where it does not cost a column. */ ''}
+          <span title=${view.scale.toFixed(2) + ' px/m'}>zoom <b>${zoomPct == null ? '—' : zoomPct + ' %'}</b></span>
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
           ${tool === 'placestall' && html`
@@ -7018,7 +7098,14 @@ function clockToHours(v) {
   if (h > 23 || mi > 59) return null;
   return h + mi / 60;
 }
-function fmt(n) { return n >= 10000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toLocaleString('nl-NL'); }
+// Grouped, not abbreviated: the design prints 18.640 m². `18.6k` dropped three
+// digits off an area on a screen whose entire job is the figures, and there was
+// room for them. Anything past a million keeps the short form — that is a
+// takeoff error rather than a site, and it should look like one.
+function fmt(n) {
+  const v = Math.round(+n || 0);
+  return Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v.toLocaleString('nl-NL');
+}
 
 // px/m as the drawing scale everyone in the trade actually says out loud.
 //
