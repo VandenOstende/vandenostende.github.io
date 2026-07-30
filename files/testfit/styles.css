@@ -1,48 +1,72 @@
-/* ParkPlanner. Light by default; the dark set is opt-in via [data-theme]. */
+/* ParkPlanner — Nocturne.
+   Tokens taken from the design system in files/design: the scale, radii,
+   shadows and type come from _ds/.../styles.css, and the light values from the
+   override the design file itself carries. One theme, deliberately: the design
+   is light, and a second palette nobody designed is a liability rather than a
+   feature. */
 :root {
-  --bg: #f6f8fb;
-  --panel: #ffffff;
-  --panel-2: #f0f3f8;
-  --panel-3: #e6ebf3;
-  --border: #d8dfea;
-  --text: #16202e;
-  --muted: #5b6879;
-  --accent: #2563eb;
+  /* -- Nocturne -- */
+  --color-bg: #f5f5f8;
+  --color-surface: #ffffff;
+  --color-text: #1c1d29;
+  --color-divider: #e3e3ea;
+  --color-neutral-100: #161826;
+  --color-neutral-200: #24263a;
+  --color-neutral-300: #3a3d52;
+  --color-neutral-500: #6f7285;
+  --color-neutral-700: #dcdce5;
+  --color-neutral-800: #ececf2;
+  --color-neutral-900: #f5f5f8;
+  --color-accent: #6a5bc4;
+  --color-accent-300: #4a3d99;
+  --color-accent-400: #56489f;
+  --color-accent-600: #8579d6;
+  --color-accent-900: #ece9f8;
+
+  --font-heading: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-heading-weight: 500;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(28, 29, 41, 0.07);
+  --shadow-md: 0 4px 12px rgba(28, 29, 41, 0.09);
+  --shadow-lg: 0 18px 44px rgba(28, 29, 41, 0.16);
+
+  /* -- The app's own names, mapped onto the system above. Keeping them means
+     the eleven hundred lines below did not have to be rewritten in one go, and
+     every one of them moves when a token moves. -- */
+  --bg: var(--color-bg);
+  --panel: var(--color-surface);
+  --panel-2: var(--color-neutral-900);
+  --panel-3: var(--color-neutral-800);
+  --border: var(--color-divider);
+  --text: var(--color-text);
+  --muted: var(--color-neutral-500);
+  --accent: var(--color-accent);
   --accent-2: #16a34a;
   --danger: #dc2626;
   --site: #b8860b;
   --setback: #0891b2;
   --building: #64748b;
   --aisle: #cbd5e1;
-  --canvas-1: #eef2f7;
-  --canvas-2: #e3e9f2;
+  --canvas-1: #eef0f6;
+  --canvas-2: #e6e8f1;
   --hud-bg: rgba(255, 255, 255, 0.92);
-  --scrim: rgba(15, 23, 42, 0.45);
-  --radius: 8px;
-  --shadow: 0 6px 24px rgba(15, 23, 42, 0.12);
+  --scrim: rgba(28, 29, 41, 0.45);
+  --radius: var(--radius-md);
+  --shadow: var(--shadow-md);
 }
 
-:root[data-theme='dark'] {
-  --bg: #0f1216;
-  --panel: #171b21;
-  --panel-2: #1e232b;
-  --panel-3: #262d37;
-  --border: #2a313b;
-  --text: #e6eaef;
-  --muted: #97a2b0;
-  --accent: #3b82f6;
-  --accent-2: #22c55e;
-  --danger: #ef4444;
-  --site: #f8b500;
-  --setback: #6ee7ff;
-  --building: #64748b;
-  --aisle: #2b3340;
-  --canvas-1: #12161c;
-  --canvas-2: #0c0f13;
-  --hud-bg: rgba(15, 18, 22, 0.85);
-  --scrim: rgba(0, 0, 0, 0.55);
-  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
-}
 
 * { box-sizing: border-box; }
 
@@ -438,7 +462,20 @@ select.preset {
 .metric .v { font-size: 19px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .metric .v small { font-size: 11px; color: var(--muted); font-weight: 500; }
 .metric.big { grid-column: 1 / -1; }
-.metric.big .v { font-size: 30px; color: var(--accent); }
+/* The hero tile. The one number a reviewer looks for first gets the accent and
+   the space; the sub-line carries the two figures that qualify it, so the big
+   number never has to be read alone. */
+.metric.big {
+  background: var(--color-accent-900);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.metric.big .v { font-size: 32px; line-height: 1.05; color: var(--accent); }
+.metric .sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 
 .legend { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .legend .row {
@@ -968,11 +1005,8 @@ body.resizing .panel-resize { pointer-events: auto; }
    inverted copy of the light ramp would read backwards. */
 .ramp { margin-top: 10px; }
 .ramp-bar {
-  height: 8px; border-radius: 4px; border: 1px solid var(--line);
+  height: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border);
   background: linear-gradient(to right, #fef3c7, #fde68a, #fcd34d, #fbbf24, #f59e0b, #d97706);
-}
-:root[data-theme='dark'] .ramp-bar {
-  background: linear-gradient(to right, #78350f, #92400e, #b45309, #d97706, #f59e0b, #fbbf24);
 }
 .ramp-ends {
   display: flex; justify-content: space-between;
@@ -984,3 +1018,195 @@ body.resizing .panel-resize { pointer-events: auto; }
 .mat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 6px; }
 .mat-grid .type-btn { display: flex; align-items: center; gap: 6px; justify-content: flex-start; }
 .mat-grid .dot { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+
+/* ---- A primary button ----------------------------------------------------
+   One accent-filled button per bar, for the action the bar exists to offer.
+   `.active` still wins, so a primary that is also the current state reads the
+   same as any other active control. */
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn.primary:hover { background: var(--color-accent-400); border-color: var(--color-accent-400); }
+.btn.primary kbd { color: rgba(255, 255, 255, 0.78); border-color: rgba(255, 255, 255, 0.35); }
+
+/* ---- The library dialog -------------------------------------------------
+   Wider than `.modal`, and it scrolls in its middle only: the tabs and the
+   footer have to stay put, otherwise "Tekenen" wanders off the bottom of a
+   forty-card list. */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: var(--scrim);
+  display: grid;
+  place-items: center;
+  padding: 28px;
+}
+.dialog {
+  width: min(1120px, 100%);
+  max-height: min(860px, 92vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.dialog-h { padding: var(--space-4) var(--space-6) 0; }
+.dialog-h-row { display: flex; align-items: flex-start; gap: var(--space-4); }
+.dialog-eyebrow {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.dialog-title { margin: 6px 0 0; font-size: 19px; }
+.dialog-sub {
+  margin: 6px 0 0;
+  max-width: 66ch;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.dialog-x { flex: none; padding: 4px 9px; }
+
+.dialog-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.dialog-tabs-gap { flex: 1; }
+.dialog-tab {
+  padding: 9px 2px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.dialog-tab span { opacity: 0.65; }
+.dialog-tab:hover { color: var(--text); }
+.dialog-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.lib-search {
+  width: 240px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12.5px;
+}
+.lib-search::placeholder { color: var(--muted); }
+
+.dialog-body { flex: 1; overflow: auto; padding: var(--space-6); }
+.lib-assets-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.lib-sec { margin-bottom: var(--space-6); }
+.lib-sec-h { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.lib-sec-tick { width: 28px; height: 1px; background: var(--accent); flex: none; }
+.lib-sec-h h3 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.lib-sec-n { font-size: 11.5px; color: var(--muted); }
+.lib-sec-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--border), transparent);
+}
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+  gap: var(--space-3);
+}
+.lib-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.lib-card:hover { border-color: var(--accent); box-shadow: var(--shadow-md); }
+.lib-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+/* The preview is a canvas painted by the app's own drawing code; the fixed
+   height is what the painter is told, so it must not be left to the content. */
+.lib-prev {
+  display: block;
+  width: 100%;
+  height: 74px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.lib-card-h { display: flex; align-items: center; gap: 8px; }
+.lib-card-h .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.lib-card-name { font-size: 13.5px; font-weight: 500; }
+.lib-card-gap { flex: 1; }
+.lib-card-key {
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.lib-card-desc { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.lib-card-actions { display: flex; gap: 6px; }
+.lib-card-actions .btn { padding: 3px 8px; font-size: 11.5px; }
+
+.dialog-f {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 12px var(--space-6);
+  border-top: 1px solid var(--border);
+}
+.dialog-f-sel { font-size: 12.5px; color: var(--muted); }
+.dialog-f-sel strong { font-weight: 500; color: var(--text); }
+.dialog-f-hint { font-size: 11.5px; color: var(--muted); }
+.dialog-f-gap { flex: 1; }
+
+/* ---- The plan's name, in the bar --------------------------------------------
+   An input that does not look like one until you reach for it: the name is
+   usually something to read, not something to fill in. */
+.tb-project { display: flex; flex-direction: column; gap: 1px; min-width: 0; margin-right: 4px; }
+.proj-name {
+  width: 190px;
+  max-width: 34vw;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+.proj-name:hover { border-color: var(--border); }
+.proj-name:focus { outline: none; border-color: var(--accent); background: var(--panel-2); }
+.proj-name::placeholder { color: var(--muted); font-weight: 400; }
+.proj-meta { padding-left: 5px; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* One line under the tool's name saying what it is for — the same sentence the
+   library card shows. */
+.tool-help {
+  margin: -4px 0 10px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}

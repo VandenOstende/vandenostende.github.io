@@ -160,8 +160,14 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   the object list, copy/paste, the exporters and (extruded) the 3D view.
 - **Object list** with search: everything you placed, grouped, selectable and
   deletable from one panel.
-- Undo/redo, save/load, layers, light and dark themes, and hideable/resizable
-  UI parts you can save as a workspace.
+- **Drawing library** (`T`) — the whole catalogue as browsable cards, each with a
+  one-line description and a thumbnail painted by the app's own drawing code, so
+  a preview can never show something the plan would not draw. Grouped by
+  category, searchable, with a separate tab for your own imported symbols.
+- **The plan has a name**, editable in the top bar; it becomes the filename when
+  you save, and the bar says when you last did.
+- Undo/redo, save/load, layers, and hideable/resizable UI parts you can save as
+  a workspace.
 
 ## The solver pipeline
 
@@ -228,7 +234,8 @@ against the optimum tilt for the latitude, which is a fact and not an opinion.
 | `Del` | Delete selection | `Esc` | Cancel |
 | `K` | Place stall | `/` | Focus the tool search |
 | `R` / `Shift+R` | Rotate in 15° steps | `?` | Shortcut list |
-| `S` | Snapping on/off | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo |
+| `S` | Snapping on/off | `T` | Drawing library |
+| `Ctrl/⌘+Z` / `+Shift` | Undo / Redo | | |
 | `Space` | Pan (hold) | `Ctrl/⌘+D` | Duplicate |
 | `Ctrl/⌘+C` / `+V` | Copy / Paste | `?` | Shortcut list |
 

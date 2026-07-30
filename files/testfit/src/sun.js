@@ -7,8 +7,8 @@
 // Node.
 // ============================================================
 
-import { polyOf, pointInPolygon } from './geometry.js?v=3d74081d';
-import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=3d74081d';
+import { polyOf, pointInPolygon } from './geometry.js?v=37b247c1';
+import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=37b247c1';
 
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
