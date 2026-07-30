@@ -4,24 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=c8e60896';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=a06fdcc4';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=c8e60896';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=c8e60896';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=c8e60896';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=c8e60896';
-import { parseParcel, simplifyRing } from './importers.js?v=c8e60896';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=c8e60896';
+} from './geometry.js?v=a06fdcc4';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=a06fdcc4';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=a06fdcc4';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=a06fdcc4';
+import { parseParcel, simplifyRing } from './importers.js?v=a06fdcc4';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=a06fdcc4';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=c8e60896';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=c8e60896';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=c8e60896';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=c8e60896';
-import { BUILD_ID } from './build.js?v=c8e60896';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=c8e60896';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=a06fdcc4';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=a06fdcc4';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=a06fdcc4';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=a06fdcc4';
+import { BUILD_ID } from './build.js?v=a06fdcc4';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=a06fdcc4';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1280,6 +1280,25 @@ const ASSET_LIB_MAX_CHARS = 2 * 1024 * 1024; // whole library
 const ASSET_DEF_H = 2.5;               // default height in metres, for 3D
 const ASSETS_KEY = 'pp_assets';
 
+// ---------- Asset categories ----------
+// Your own filing for your own symbols, and only that: the category groups the
+// assets tab, it does not become the annotation's `group`. ANNOT_GROUPS is a
+// fixed list and the palette filters against it, so an asset filed under
+// "Bomen" would match no group at all and vanish from the side palette
+// entirely. Assets stay in 'Eigen' there; this is the dialog's own axis.
+const ASSET_CATS_KEY = 'pp_asset_cats';
+const ASSET_CAT_NONE = 'Ongecategoriseerd';
+const catOf = (a) => (a && a.cat) || ASSET_CAT_NONE;
+function readAssetCats() {
+  try {
+    const v = JSON.parse(localStorage.getItem(ASSET_CATS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim()) : [];
+  } catch (e) { return []; }
+}
+function writeAssetCats(list) {
+  try { localStorage.setItem(ASSET_CATS_KEY, JSON.stringify(list)); } catch (e) {}
+}
+
 const ASSET_IMAGES = new Map(); // id → HTMLImageElement
 let assetRepaint = () => {};    // wired to the canvas renderer once it exists
 
@@ -2034,6 +2053,12 @@ function App() {
   // Imported symbols. The library is per-browser; a document carries its own
   // copies so a shared plan is not full of holes.
   const [assetLib, setAssetLib] = useState(() => readAssetLib());
+  // Categories you named yourself. Kept separately from the assets so a category
+  // survives being emptied — otherwise creating one and then moving its last
+  // symbol out would silently delete it.
+  const [assetCats, setAssetCats] = useState(() => readAssetCats());
+  const [assetCatFilter, setAssetCatFilter] = useState(''); // '' = alles
+  const [newCat, setNewCat] = useState('');
   // Imported building styles. Same shape as the symbol library: kept per browser
   // so they are there for the next plan, and copied into the document so a saved
   // or shared plan renders its buildings even for someone who never imported
@@ -2211,7 +2236,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=c8e60896', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=a06fdcc4', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2596,7 +2621,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=c8e60896').then(async (m) => {
+    import('./map3d.js?v=a06fdcc4').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4727,6 +4752,32 @@ function migrateDoc(d) {
     // Placed instances stay: the document keeps its own copy of the definition.
     if (tool === 'annot' && annotKind === assetKindOf(id)) setTool('select');
   };
+  // Every category that exists: the ones you named, plus any an asset still
+  // refers to. The second half matters after an import — a file can carry a
+  // category this browser has never heard of, and it should not go missing.
+  const assetCatList = useMemo(() => {
+    const seen = new Set(assetCats);
+    for (const a of assetLib) if (a.cat) seen.add(a.cat);
+    const out = [...seen].sort((x, y) => x.localeCompare(y, 'nl'));
+    if (assetLib.some((a) => !a.cat)) out.push(ASSET_CAT_NONE);
+    return out;
+  }, [assetCats, assetLib]);
+  const assetCatCount = (name) => assetLib.filter((a) => catOf(a) === name).length;
+  const saveAssetCats = (list) => { setAssetCats(list); writeAssetCats(list); };
+  const addAssetCat = (raw) => {
+    const name = String(raw || '').trim().slice(0, 40);
+    if (!name || name === ASSET_CAT_NONE || assetCats.includes(name)) return;
+    saveAssetCats([...assetCats, name]);
+  };
+  // Removing a category is not removing its symbols. They fall back to
+  // Ongecategoriseerd, which is the whole reason that bucket is a real name
+  // rather than an empty string shown as a dash.
+  const removeAssetCat = (name) => {
+    saveAssetCats(assetCats.filter((c) => c !== name));
+    const members = assetLib.filter((a) => a.cat === name);
+    if (members.length) saveAssetLib(assetLib.map((a) => (a.cat === name ? { ...a, cat: '' } : a)));
+    if (assetCatFilter === name) setAssetCatFilter('');
+  };
   const importParcel = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -4818,6 +4869,26 @@ function migrateDoc(d) {
     const q = libQuery.trim().toLowerCase();
     const hay = (k, t) => (t.label + ' ' + k + ' ' + (t.keywords || '') + ' ' + descOf(k)).toLowerCase();
     const out = [];
+    // Your own symbols file under your own categories, so this tab groups by
+    // those rather than by ANNOT_GROUPS — where every asset sits in the single
+    // bucket 'Eigen' and the grouping tells you nothing.
+    if (libTab === 'assets') {
+      for (const cat of assetCatList) {
+        if (assetCatFilter && cat !== assetCatFilter) continue;
+        const items = [];
+        for (const a of assetLib) {
+          if (catOf(a) !== cat) continue;
+          const kind = assetKindOf(a.id);
+          const t = ANNOT_TYPES[kind];
+          if (!t || t.hidden) continue;
+          if (q && !hay(kind, t).includes(q) && !cat.toLowerCase().includes(q)) continue;
+          items.push({ k: kind, kind, t, prim: false, fam: null, asset: a,
+            label: t.label, desc: descOf(kind), color: t.color, key: '' });
+        }
+        if (items.length) out.push([cat, items]);
+      }
+      return out;
+    }
     if (libTab === 'infra') {
       const prims = PRIMARY_TOOLS
         .filter((p) => !q || (p.label + ' ' + p.id + ' ' + p.desc).toLowerCase().includes(q))
@@ -4852,20 +4923,25 @@ function migrateDoc(d) {
       if (items.length) out.push([grp, items]);
     }
     return out;
-  }, [libQuery, libTab, assetLib, comboPick]);
+  }, [libQuery, libTab, assetLib, comboPick, assetCatList, assetCatFilter]);
   // Cards, not kinds — a combo folds eight arrows onto one, and a tab total that
   // did not agree with the group counts beside it would just look like a bug.
   const libCounts = useMemo(() => {
-    let infra = PRIMARY_TOOLS.length, assets = 0;
+    let infra = PRIMARY_TOOLS.length;
     const fams = new Set();
     for (const [k, t] of Object.entries(ANNOT_TYPES)) {
-      if (t.hidden) continue;
-      if (t.asset) { assets++; continue; }
+      if (t.hidden || t.asset) continue;
       const member = comboOf(k);
       if (member) { fams.add(member.id); continue; }
       infra++;
     }
-    return { infra: infra + fams.size, assets };
+    // The asset count comes from the library, not from ANNOT_TYPES. Assets are
+    // registered into that catalogue by an effect that runs *after* first
+    // render, so counting them there read 0 for a library that was already on
+    // screen — and since `assetLib` never changed again, the memo never
+    // recomputed and it stayed 0. The library's own length is both correct and
+    // exactly what this tab renders.
+    return { infra: infra + fams.size, assets: assetLib.length };
   }, [assetLib]);
 
   const paletteGroups = useMemo(() => {
@@ -5158,6 +5234,85 @@ function migrateDoc(d) {
     else startAnnot(e.kind, valueOf(e));
     setLibOpen(false);
   };
+  // One card, so the infrastructure tab and the assets tab cannot drift apart.
+  const libCard = (e) => html`
+    <div key=${e.k} role="button" tabIndex="0" aria-pressed=${libPick === e.k}
+      className=${'lib-card' + (libPick === e.k ? ' active' : '')}
+      ${/* A card selects; Tekenen in the footer draws. A card can now carry a
+            direction and a value, and picking one up the instant you touch it
+            would slam the dialog shut before you could set either. Double-click
+            is the shortcut for when there is nothing to set. */ ''}
+      onClick=${() => setLibPick(e.k)}
+      onDblClick=${() => libTake(e)}
+      onKeyDown=${(ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); libTake(e); }
+        else if (ev.key === ' ') { ev.preventDefault(); setLibPick(e.k); }
+      }}>
+      <${ToolPreview} kind=${e.kind} value=${valueOf(e)} />
+      <span className="lib-card-h">
+        <span className="dot" style=${e.t ? dotStyle(e.t) : { background: e.color }}></span>
+        <span className="lib-card-name">${e.label}</span>
+        <span className="lib-card-gap"></span>
+        ${badgeOf(e) && html`<span className="lib-card-key">${badgeOf(e)}</span>`}
+      </span>
+      <span className="lib-card-desc">${e.desc}</span>
+      ${e.fam && html`
+        <span className="lib-combo">
+          <span className="lib-combo-h">Combinatie</span>
+          <span className="lib-combo-pills">
+            ${e.fam.members.map((m) => html`
+              <button key=${m.kind} type="button"
+                className=${'tag lib-pill' + (e.kind === m.kind ? ' on' : '')}
+                title=${(ANNOT_TYPES[m.kind] || {}).label || m.label}
+                aria-pressed=${e.kind === m.kind}
+                onClick=${(ev) => {
+                  ev.stopPropagation();
+                  setComboPick((c) => ({ ...c, [e.famId]: m.kind }));
+                  setLibPick(e.k);
+                }}>
+                <span className="lib-pill-g">${m.glyph}</span><span>${m.label}</span>
+              </button>`)}
+          </span>
+        </span>`}
+      ${e.t && e.t.value != null && html`
+        <span className="lib-card-val">
+          <input className="input" type="number" aria-label=${e.t.valueLabel || 'Waarde'}
+            min=${e.t.valueMin == null ? 5 : e.t.valueMin}
+            max=${e.t.valueMax == null ? 130 : e.t.valueMax}
+            step=${e.t.valueStep == null ? 5 : e.t.valueStep}
+            value=${valueOf(e)}
+            onClick=${(ev) => ev.stopPropagation()}
+            onChange=${(ev) => {
+              const v = parseFloat(ev.target.value);
+              if (isFinite(v)) setLibValue((s) => ({ ...s, [e.kind]: v }));
+            }} />
+          <span className="lib-card-val-u">${e.t.valueUnit || ''} — aanpasbaar bij plaatsen</span>
+        </span>`}
+      ${e.asset && html`
+        <span className="lib-card-cat">
+          <select className="input" aria-label="Categorie"
+            value=${e.asset.cat || ''}
+            onClick=${(ev) => ev.stopPropagation()}
+            onChange=${(ev) => patchAsset(e.asset.id, { cat: ev.target.value })}>
+            <option value="">${ASSET_CAT_NONE}</option>
+            ${assetCats.map((c) => html`<option key=${c} value=${c}>${c}</option>`)}
+          </select>
+        </span>`}
+      ${e.t && e.t.asset && html`
+        <span className="lib-card-actions">
+          <button className="btn ghost" onClick=${(ev) => { ev.stopPropagation(); removeAsset(assetIdOf(e.kind)); }}>Verwijderen</button>
+        </span>`}
+    </div>`;
+  const libSections = () => libGroups.map(([grp, items]) => html`
+    <section className="lib-sec" key=${grp}>
+      <div className="lib-sec-h">
+        <span className="lib-sec-tick"></span>
+        <h3>${grp}</h3>
+        <span className="lib-sec-n">${items.length}</span>
+        <span className="lib-sec-rule"></span>
+      </div>
+      <div className="lib-grid">${items.map(libCard)}</div>
+    </section>`);
   const libraryModal = () => html`
     <div className="dialog-backdrop" onClick=${() => setLibOpen(false)}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label="Teken infrastructuur"
@@ -5190,17 +5345,69 @@ function migrateDoc(d) {
 
         <div className="dialog-body tk-scroll">
           ${libTab === 'assets' && html`
-            <div className="lib-assets-head">
-              <label className="btn asset-import">
-                Symbool importeren…
-                <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                  onChange=${importAsset} style=${{ display: 'none' }} />
-              </label>
-              <span className="mix-note" style=${{ margin: 0 }}>
-                PNG, JPG, WebP of SVG — verkleind tot ${ASSET_MAX_PX} px en daarna gewoon een gereedschap.
-              </span>
-            </div>
-            ${assetMsg && html`<div className="asset-msg">${assetMsg}</div>`}`}
+            <div className="lib-assets">
+              <div className="lib-assets-main">
+                ${assetCatList.length > 1 && html`
+                  <div className="lib-chips">
+                    <button type="button" className=${'tag tag-outline' + (assetCatFilter ? '' : ' on')}
+                      aria-pressed=${!assetCatFilter} onClick=${() => setAssetCatFilter('')}>
+                      Alles <span className="lib-chip-n">${assetLib.length}</span>
+                    </button>
+                    ${assetCatList.map((c) => html`
+                      <button key=${c} type="button" className=${'tag tag-outline' + (assetCatFilter === c ? ' on' : '')}
+                        aria-pressed=${assetCatFilter === c}
+                        onClick=${() => setAssetCatFilter(assetCatFilter === c ? '' : c)}>
+                        ${c} <span className="lib-chip-n">${assetCatCount(c)}</span>
+                      </button>`)}
+                  </div>`}
+                ${assetMsg && html`<div className="asset-msg">${assetMsg}</div>`}
+                ${libSections()}
+                ${/* The drop target is a card in the grid rather than a button
+                      above it: importing is the same act as picking something,
+                      and it belongs among the things it produces. */ ''}
+                <label className="lib-drop">
+                  <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    onChange=${importAsset} style=${{ display: 'none' }} />
+                  <span className="lib-drop-plus">+</span>
+                  <span className="lib-drop-h">Asset importeren</span>
+                  <span className="lib-drop-s">
+                    PNG, JPG, WebP of SVG — verkleind tot ${ASSET_MAX_PX} px en daarna gewoon een gereedschap.
+                  </span>
+                </label>
+              </div>
+
+              <aside className="lib-cats">
+                <h4>Eigen categorieën</h4>
+                ${assetCatList.length === 0 && html`<p className="mix-note" style=${{ margin: 0 }}>
+                  Nog geen categorieën. Maak er een en kies hem op een kaart.
+                </p>`}
+                ${assetCatList.map((c) => html`
+                  <div className="lib-cat-row" key=${c}>
+                    <span className="lib-cat-name">${c}</span>
+                    <span className="lib-cat-n">${assetCatCount(c)}</span>
+                    ${c === ASSET_CAT_NONE
+                      ? html`<span className="lib-cat-x-gap"></span>`
+                      : html`<button className="btn ghost lib-cat-x" title=${'"' + c + '" verwijderen'}
+                          aria-label=${'"' + c + '" verwijderen'}
+                          onClick=${() => removeAssetCat(c)}>✕</button>`}
+                  </div>`)}
+                <p className="mix-note">
+                  Een categorie verwijderen laat de symbolen staan; ze vallen terug op
+                  ${' ' + ASSET_CAT_NONE}.
+                </p>
+                <div className="lib-cat-add">
+                  <input className="input" type="text" placeholder="Nieuwe categorie…"
+                    aria-label="Nieuwe categorie" value=${newCat} maxLength="40"
+                    onInput=${(e) => setNewCat(e.target.value)}
+                    onKeyDown=${(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); addAssetCat(newCat); setNewCat(''); }
+                      else if (e.key === 'Escape') { e.stopPropagation(); setNewCat(''); }
+                    }} />
+                  <button className="btn" disabled=${!newCat.trim()}
+                    onClick=${() => { addAssetCat(newCat); setNewCat(''); }}>Voeg toe</button>
+                </div>
+              </aside>
+            </div>`}
           ${libTab === 'build' && html`
             <div className="lib-assets-head">
               <label className="btn asset-import">
@@ -5250,83 +5457,10 @@ function migrateDoc(d) {
                   </div>
                 </section>`;
             })}`}
-          ${libTab !== 'build' && libGroups.length === 0 && html`<p className="mix-note">
-            ${libQuery
-              ? html`Niets gevonden voor "${libQuery}".`
-              : libTab === 'assets'
-                ? 'Nog geen eigen symbolen geïmporteerd.'
-                : 'Niets in deze categorie.'}
+          ${libTab === 'infra' && libGroups.length === 0 && html`<p className="mix-note">
+            ${libQuery ? html`Niets gevonden voor "${libQuery}".` : 'Niets in deze categorie.'}
           </p>`}
-          ${libTab !== 'build' && libGroups.map(([grp, items]) => html`
-            <section className="lib-sec" key=${grp}>
-              <div className="lib-sec-h">
-                <span className="lib-sec-tick"></span>
-                <h3>${grp}</h3>
-                <span className="lib-sec-n">${items.length}</span>
-                <span className="lib-sec-rule"></span>
-              </div>
-              <div className="lib-grid">
-                ${items.map((e) => html`
-                  <div key=${e.k} role="button" tabIndex="0" aria-pressed=${libPick === e.k}
-                    className=${'lib-card' + (libPick === e.k ? ' active' : '')}
-                    ${/* A card selects; Tekenen in the footer draws. A card can
-                          now carry a direction and a value, and picking one up
-                          the instant you touch it would slam the dialog shut
-                          before you could set either. Double-click is the
-                          shortcut for when there is nothing to set. */ ''}
-                    onClick=${() => setLibPick(e.k)}
-                    onDblClick=${() => libTake(e)}
-                    onKeyDown=${(ev) => {
-                      if (ev.key === 'Enter') { ev.preventDefault(); libTake(e); }
-                      else if (ev.key === ' ') { ev.preventDefault(); setLibPick(e.k); }
-                    }}>
-                    <${ToolPreview} kind=${e.kind} value=${valueOf(e)} />
-                    <span className="lib-card-h">
-                      <span className="dot" style=${e.t ? dotStyle(e.t) : { background: e.color }}></span>
-                      <span className="lib-card-name">${e.label}</span>
-                      <span className="lib-card-gap"></span>
-                      ${badgeOf(e) && html`<span className="lib-card-key">${badgeOf(e)}</span>`}
-                    </span>
-                    <span className="lib-card-desc">${e.desc}</span>
-                    ${e.fam && html`
-                      <span className="lib-combo">
-                        <span className="lib-combo-h">Combinatie</span>
-                        <span className="lib-combo-pills">
-                          ${e.fam.members.map((m) => html`
-                            <button key=${m.kind} type="button"
-                              className=${'tag lib-pill' + (e.kind === m.kind ? ' on' : '')}
-                              title=${(ANNOT_TYPES[m.kind] || {}).label || m.label}
-                              aria-pressed=${e.kind === m.kind}
-                              onClick=${(ev) => {
-                                ev.stopPropagation();
-                                setComboPick((c) => ({ ...c, [e.famId]: m.kind }));
-                                setLibPick(e.k);
-                              }}>
-                              <span className="lib-pill-g">${m.glyph}</span><span>${m.label}</span>
-                            </button>`)}
-                        </span>
-                      </span>`}
-                    ${e.t && e.t.value != null && html`
-                      <span className="lib-card-val">
-                        <input className="input" type="number" aria-label=${e.t.valueLabel || 'Waarde'}
-                          min=${e.t.valueMin == null ? 5 : e.t.valueMin}
-                          max=${e.t.valueMax == null ? 130 : e.t.valueMax}
-                          step=${e.t.valueStep == null ? 5 : e.t.valueStep}
-                          value=${valueOf(e)}
-                          onClick=${(ev) => ev.stopPropagation()}
-                          onChange=${(ev) => {
-                            const v = parseFloat(ev.target.value);
-                            if (isFinite(v)) setLibValue((s) => ({ ...s, [e.kind]: v }));
-                          }} />
-                        <span className="lib-card-val-u">${e.t.valueUnit || ''} — aanpasbaar bij plaatsen</span>
-                      </span>`}
-                    ${e.t && e.t.asset && html`
-                      <span className="lib-card-actions">
-                        <button className="btn ghost" onClick=${(ev) => { ev.stopPropagation(); removeAsset(assetIdOf(e.kind)); }}>Verwijderen</button>
-                      </span>`}
-                  </div>`)}
-              </div>
-            </section>`)}
+          ${libTab === 'infra' && libSections()}
         </div>
 
         <footer className="dialog-f">
