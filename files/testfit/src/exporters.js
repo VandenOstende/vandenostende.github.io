@@ -5,9 +5,9 @@
 // produced in real lng/lat via the same anchor used by the basemap tiles
 // and the 3D view. DXF/CSV use the raw local metres.
 // ============================================================
-import { localToLatLon } from './basemap.js?v=f81a791d';
-import { polyOf, ribbonPoly } from './geometry.js?v=f81a791d';
-import { ANNOT_TYPES } from './annots.js?v=f81a791d';
+import { localToLatLon } from './basemap.js?v=37b247c1';
+import { polyOf, ribbonPoly } from './geometry.js?v=37b247c1';
+import { ANNOT_TYPES } from './annots.js?v=37b247c1';
 
 // A drawn carriageway is an area, not a centreline: exporting the hairline lost
 // its width, its offset and its corners.

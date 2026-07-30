@@ -13,10 +13,10 @@ import {
   dist, distPointSegment, pointInPolygon, polygonCentroid, polyOf,
   ribbonCentre, ribbonPoly, sampleEdges, segmentsIntersect,
   polylineCum, polylineAt, nearestOnPolyline,
-} from './geometry.js?v=f81a791d';
-import { ANNOT_TYPES } from './annots.js?v=f81a791d';
-import { aisleAxis } from './solver.js?v=f81a791d';
-import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=f81a791d';
+} from './geometry.js?v=37b247c1';
+import { ANNOT_TYPES } from './annots.js?v=37b247c1';
+import { aisleAxis } from './solver.js?v=37b247c1';
+import { BUILDING_USES, DEFAULT_USE } from './buildings.js?v=37b247c1';
 
 // ---------- Design vehicles ----------
 //

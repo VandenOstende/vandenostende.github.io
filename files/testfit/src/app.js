@@ -4,22 +4,22 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=f81a791d';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=37b247c1';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
-  tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, STRIPE_SPEC,
-} from './geometry.js?v=f81a791d';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=f81a791d';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=f81a791d';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=f81a791d';
-import { parseParcel, simplifyRing } from './importers.js?v=f81a791d';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=f81a791d';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=f81a791d';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=f81a791d';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=f81a791d';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=f81a791d';
-import { BUILD_ID } from './build.js?v=f81a791d';
+  tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
+} from './geometry.js?v=37b247c1';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=37b247c1';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=37b247c1';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=37b247c1';
+import { parseParcel, simplifyRing } from './importers.js?v=37b247c1';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=37b247c1';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=37b247c1';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=37b247c1';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=37b247c1';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=37b247c1';
+import { BUILD_ID } from './build.js?v=37b247c1';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -234,6 +234,7 @@ function annotationBlocker(ann) {
 // `overrides` are manual, position-keyed marks that persist across
 // re-solves: stall type per stall, one-way + direction per aisle.
 const initialDoc = {
+  name: 'Naamloos plan',
   site: DEFAULT_SITE, siteCurved: false, obstacles: DEFAULT_OBSTACLES, geo: DEFAULT_GEO,
   params: DEFAULT_PARAMS, orientationIndex: 0, autoParking: true,
   overrides: { stalls: {}, aisles: {}, locks: { stalls: {}, aisles: {} }, removed: {}, angles: {} },
@@ -344,7 +345,9 @@ export const UI_PARTS = [
   { id: 'secMix', group: 'Rechterpaneel', label: 'Vaktypes (mix)' },
   { id: 'secProgram', group: 'Rechterpaneel', label: 'Programma & ratio' },
 
+  { id: 'tbProject', group: 'Werkbalk', label: 'Plannaam' },
   { id: 'tbTools', group: 'Werkbalk', label: 'Gereedschappen' },
+  { id: 'tbLibrary', group: 'Werkbalk', label: 'Bibliotheek' },
   { id: 'tbNewSite', group: 'Werkbalk', label: 'Nieuwe site' },
   { id: 'tbAxis', group: 'Werkbalk', label: 'Rij-as & Reset' },
   { id: 'tbUndo', group: 'Werkbalk', label: 'Undo / Redo' },
@@ -363,7 +366,7 @@ export const UI_PARTS = [
 const WORKSPACE_PRESETS = {
   Alles: null, // null = everything visible
   Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
-  Tekenen: ['panelLeft', 'secDraw', 'secLayers', 'secSiteShape', 'tbTools', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
+  Tekenen: ['panelLeft', 'secDraw', 'secLayers', 'secSiteShape', 'tbTools', 'tbLibrary', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
   Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
 };
 const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
@@ -920,6 +923,111 @@ function drawRotGrip(ctx, s) {
   ctx.closePath();
   ctx.fillStyle = '#f59e0b';
   ctx.fill();
+}
+
+/**
+ * A thumbnail of what a tool draws, painted with the app's own painters.
+ *
+ * Not a bespoke icon set: a road is a ribbon of the real width, a marking is
+ * the real PICTOS painter, a zebra is the real bar geometry. That means the
+ * library can never show something the canvas would not draw, and it costs no
+ * second set of artwork to keep in step.
+ */
+function drawToolPreview(ctx, kind, w, h) {
+  const t = ANNOT_TYPES[kind] || {};
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  // A dark plate for the road family, a light one for paint and greenery — the
+  // same contrast the plan itself has.
+  // Paint needs asphalt under it. Two of the markings are near-white lines with
+  // no picto and no body, so they went on the pale plate and came out invisible
+  // — the group is the honest signal that a thing is paint on a road.
+  const onTarmac = !!t.body || t.mode === 'cross' || t.picto
+    || t.group === 'Markeringen' || kind === 'hatchZone' || kind === 'bayLines';
+  ctx.fillStyle = onTarmac ? '#2e3140' : '#e9ebf3';
+  ctx.fillRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2;
+
+  if (t.mode === 'point' && t.picto && PICTOS[t.picto]) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    const r = Math.min(w, h) * 0.34;
+    ctx.scale(r, r);
+    ctx.shadowColor = 'rgba(15,23,42,0.6)'; ctx.shadowBlur = 0.22;
+    PICTOS[t.picto](ctx, { value: t.value });
+    ctx.restore();
+  } else if (t.mode === 'point') {
+    ctx.beginPath(); ctx.arc(cx, cy, Math.min(w, h) * 0.22, 0, Math.PI * 2);
+    ctx.fillStyle = t.color || '#94a3b8'; ctx.fill();
+  } else if (t.mode === 'cross') {
+    // Real zebra bars from the shared helper.
+    const bars = zebraQuads([{ x: 0, y: 0 }, { x: 12, y: 0 }], 4);
+    const k = w / 12;
+    ctx.fillStyle = '#e9edf2';
+    for (const q of bars) {
+      ctx.beginPath();
+      q.forEach((pt, i) => { const X = pt.x * k, Y = cy + pt.y * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      ctx.closePath(); ctx.fill();
+    }
+  } else if (kind === 'hatchZone' || kind === 'bayLines') {
+    const poly = [{ x: 1, y: 1 }, { x: 11, y: 1 }, { x: 11, y: 6 }, { x: 1, y: 6 }];
+    const k = w / 12;
+    // The stripes are filled quads, so the paint colour has to be set before the
+    // loop — leaving the plate colour in place fills dark on dark and the card
+    // comes out blank.
+    ctx.fillStyle = '#f8fafc';
+    for (const q of hatchQuads(poly, STRIPE_SPEC[kind])) {
+      ctx.beginPath();
+      q.forEach((pt, i) => { const X = pt.x * k, Y = (pt.y + 0.5) * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      ctx.closePath(); ctx.fill();
+    }
+  } else if (t.mode === 'area') {
+    ctx.fillStyle = hexA(t.color || '#0e7490', 0.45);
+    ctx.fillRect(w * 0.12, h * 0.2, w * 0.76, h * 0.6);
+    ctx.strokeStyle = t.color || '#0e7490'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(w * 0.12, h * 0.2, w * 0.76, h * 0.6);
+  } else {
+    // A way: the real ribbon, at the real width, across the plate.
+    const wide = (t.width || 3);
+    const k = w / 14;
+    // A shallow curve, not a mountain: at ±3 m the ribbon of a 4 m way folds
+    // over its own centreline and fills as a blob instead of a road.
+    const pts = t.curved
+      ? [{ x: 0.5, y: 4.2 }, { x: 5, y: 3.0 }, { x: 9.5, y: 4.2 }, { x: 13.5, y: 3.4 }]
+      : [{ x: 0.5, y: 3.6 }, { x: 13.5, y: 3.6 }];
+    const poly = ribbonPoly(pts, wide, undefined, !!t.curved);
+    if (poly) {
+      ctx.beginPath();
+      poly.forEach((pt, i) => { const X = pt.x * k, Y = pt.y * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      ctx.closePath();
+      ctx.fillStyle = t.aisleColor ? 'rgba(148,163,184,0.55)' : hexA(t.color || '#94a3b8', 0.9);
+      ctx.fill();
+      // A road gets its centre dashes, the way it has them in plan.
+      if (t.aisleColor) {
+        ctx.strokeStyle = 'rgba(248,250,252,0.9)'; ctx.lineWidth = 1.4;
+        ctx.setLineDash([7, 6]);
+        ctx.beginPath(); ctx.moveTo(0.5 * k, 3.6 * k); ctx.lineTo(13.5 * k, 3.6 * k); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+  ctx.restore();
+}
+
+// A canvas that paints itself once from drawToolPreview, at device resolution.
+function ToolPreview({ kind }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth || 240, h = c.clientHeight || 72;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    try { drawToolPreview(ctx, kind, w, h); } catch (e) {}
+  }, [kind]);
+  return html`<canvas ref=${ref} className="lib-prev"></canvas>`;
 }
 
 function drawHandle(ctx, s, color) {
@@ -1741,7 +1849,16 @@ function App() {
   // While set, the junction's arms are lit up on the plan and the next click
   // picks one. Naming an arm by clicking it beats choosing between two buttons
   // labelled "Weg 3" and "Weg 5", which say nothing about where they are.
-  const [pickArm, setPickArm] = useState(null); // the crossing whose popover is open
+  const [pickArm, setPickArm] = useState(null);
+  // The library: the tool palette as something you browse rather than squint at.
+  const [libOpen, setLibOpen] = useState(false);
+  const [libTab, setLibTab] = useState('infra');   // 'infra' | 'assets'
+  const [libQuery, setLibQuery] = useState('');
+  const [libPick, setLibPick] = useState(''); // the kind the dialog has highlighted
+  // When the plan was last written to a file. Not stored in the document: it is
+  // a fact about this session's browser, and a loaded file's own timestamp
+  // would say "saved" about a plan you have since changed.
+  const [savedAt, setSavedAt] = useState(null);
   const [placing, setPlacing] = useState(0); // >0 while a duplicated group follows the cursor
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
@@ -1818,6 +1935,7 @@ function App() {
   const solveTimer = useRef(null);
   const fittedRef = useRef(false);
   const renderRef = useRef(() => {}); // always points at the latest renderNow
+  const libOpenRef = useRef(() => {}); // latest openLib (for T)
   const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
   const clipRef = useRef({});        // latest copy/cut/paste (for Cmd/Ctrl+C/X/V)
   const docRef = useRef(null);        // latest doc for the window key handler
@@ -1909,7 +2027,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=f81a791d', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=37b247c1', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2276,7 +2394,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=f81a791d').then(async (m) => {
+    import('./map3d.js?v=37b247c1').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -3952,6 +4070,7 @@ function App() {
           break;
         case 'g': setLayers((l) => ({ ...l, grid: !l.grid })); break;
         case 's': setSnapOn((v) => !v); break;
+        case 't': libOpenRef.current(); break;
         case '?': setKeysOpen((o) => !o); break;
         case '/': if (toolSearchRef.current) { e.preventDefault(); toolSearchRef.current.focus(); toolSearchRef.current.select(); } break;
         // R rotates in 15° steps: the stall about to be placed, or the selected
@@ -3975,6 +4094,7 @@ function App() {
         case '+': case '=': zoomBy(1.2); break;
         case '-': case '_': zoomBy(1 / 1.2); break;
         case 'escape':
+          if (libOpen) { setLibOpen(false); break; }
           if (placingRef.current) { cancelPlacing(); break; }
           setDrawing(null); setMeasure(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
           break;
@@ -4009,7 +4129,7 @@ function App() {
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
-  }, [selection, stallSel, aisleSel, tool, multiSel, placing]);
+  }, [selection, stallSel, aisleSel, tool, multiSel, placing, libOpen]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -4136,7 +4256,11 @@ function App() {
     // returns to the exact same view and geographic location.
     const payload = { _pp: 1, doc, view, viewMode: '2d' };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    downloadBlob(blob, 'parkplanner.json');
+    // The file is named after the plan, so a folder of them is readable.
+    const slug = String(doc.name || 'parkplanner').trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'parkplanner';
+    downloadBlob(blob, slug + '.json');
+    setSavedAt(new Date());
   };
   // Apply a loaded file. Accepts the new wrapped format ({_pp, doc, view,
   // basemapStyle}) as well as a bare document from older saves.
@@ -4327,6 +4451,25 @@ function migrateDoc(d) {
 
   // Palette grouped and filtered. A query searches label + synonyms and forces
   // every matching group open, so results are never hidden behind a collapse.
+  // The library's own grouping. Same catalogue as the palette — one source of
+  // truth for what exists — but split by tab and filtered by the dialog's search.
+  const libGroups = useMemo(() => {
+    const q = libQuery.trim().toLowerCase();
+    const want = (k, t) => (libTab === 'assets') === !!t.asset;
+    const out = [];
+    for (const grp of ANNOT_GROUPS) {
+      const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp && !t.hidden && want(k, t)
+        && (!q || (t.label + ' ' + k + ' ' + (t.keywords || '') + ' ' + descOf(k)).toLowerCase().includes(q)));
+      if (items.length) out.push([grp, items]);
+    }
+    return out;
+  }, [libQuery, libTab, assetLib]);
+  const libCounts = useMemo(() => {
+    let infra = 0, assets = 0;
+    for (const t of Object.values(ANNOT_TYPES)) { if (t.hidden) continue; t.asset ? assets++ : infra++; }
+    return { infra, assets };
+  }, [assetLib]);
+
   const paletteGroups = useMemo(() => {
     const q = toolQuery.trim().toLowerCase();
     const out = [];
@@ -4472,7 +4615,7 @@ function migrateDoc(d) {
   // Every shortcut in one place. Half of these existed but were invisible —
   // nothing on screen mentioned G, R, Esc, Delete or Cmd+D.
   const SHORTCUTS = [
-    ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['Spatie', 'Pannen']]],
+    ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['T', 'Bibliotheek'], ['Spatie', 'Pannen']]],
     ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
     ['Pannen & zoomen', [['Rechtermuis slepen', 'Pannen'], ['Middelste muisknop', 'Pannen'], ['Spatie ingedrukt', 'Pannen'], ['Muiswiel', 'In- en uitzoomen'], ['Trackpad (2 vingers)', 'Pannen'], ['Shift + scrollen', 'Pannen'], ['Ctrl + scrollen / knijpen', 'In- en uitzoomen'], ['+ / -', 'In- en uitzoomen']]],
@@ -4493,6 +4636,119 @@ function migrateDoc(d) {
         <div className="sel-actions" style=${{ marginTop: '14px' }}>
           <button className="btn" onClick=${() => setKeysOpen(false)}>Sluiten</button>
         </div>
+      </div>
+    </div>`;
+
+  // ---------- The library ----------
+  // The same catalogue as the side palette, but wide enough to show what each
+  // tool actually draws. The palette stays: it is the fast path once you know
+  // the name. This is the path for when you do not.
+  const openLib = (tab) => {
+    setLibTab(tab || 'infra');
+    setLibPick(tool === 'annot' ? annotKind : '');
+    setLibOpen(true);
+  };
+  // Through a ref, because the key listener is only re-registered on selection
+  // change and a captured openLib would highlight yesterday's tool.
+  // Assigned on every render, so it always closes over the current tool. T
+  // toggles: the same key gets you out again.
+  libOpenRef.current = () => { if (libOpen) setLibOpen(false); else openLib(); };
+  // No annotation has a key of its own — V/P/B/N/K/M are the tools, not the
+  // catalogue — so the badge slot carries the honest thing instead: how you
+  // draw it. Inventing letters here would put a lie on 40 cards.
+  const drawModeOf = (t) => (t.mode === 'point' ? 'punt'
+    : t.mode === 'area' ? 'vlak'
+    : t.mode === 'cross' ? 'zebra'
+    : t.body ? 'weg' : 'lijn');
+  const libPickT = ANNOT_TYPES[libPick];
+  const libraryModal = () => html`
+    <div className="dialog-backdrop" onClick=${() => setLibOpen(false)}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-label="Teken infrastructuur"
+        onClick=${(e) => e.stopPropagation()}>
+        <header className="dialog-h">
+          <div className="dialog-h-row">
+            <div>
+              <span className="dialog-eyebrow">Bibliotheek</span>
+              <h2 className="dialog-title">Teken infrastructuur</h2>
+              <p className="dialog-sub">
+                Alles wat je op het kavel kunt tekenen, per categorie. Elke voorbeeldweergave is
+                met de tekenaars van de plattegrond zelf gemaakt — wat je hier ziet, krijg je.
+              </p>
+            </div>
+            <button className="btn ghost dialog-x" aria-label="Sluiten" onClick=${() => setLibOpen(false)}>✕</button>
+          </div>
+          <div className="dialog-tabs">
+            <button className=${'dialog-tab' + (libTab === 'infra' ? ' active' : '')}
+              onClick=${() => setLibTab('infra')}>Infrastructuur <span>${libCounts.infra}</span></button>
+            <button className=${'dialog-tab' + (libTab === 'assets' ? ' active' : '')}
+              onClick=${() => setLibTab('assets')}>Eigen assets <span>${libCounts.assets}</span></button>
+            <span className="dialog-tabs-gap"></span>
+            <input className="lib-search" type="search" placeholder="Zoeken in bibliotheek…"
+              value=${libQuery} onInput=${(e) => setLibQuery(e.target.value)}
+              onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); setLibQuery(''); } }} />
+          </div>
+        </header>
+
+        <div className="dialog-body">
+          ${libTab === 'assets' && html`
+            <div className="lib-assets-head">
+              <label className="btn asset-import">
+                Symbool importeren…
+                <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  onChange=${importAsset} style=${{ display: 'none' }} />
+              </label>
+              <span className="mix-note" style=${{ margin: 0 }}>
+                PNG, JPG, WebP of SVG — verkleind tot ${ASSET_MAX_PX} px en daarna gewoon een gereedschap.
+              </span>
+            </div>
+            ${assetMsg && html`<div className="asset-msg">${assetMsg}</div>`}`}
+          ${libGroups.length === 0 && html`<p className="mix-note">
+            ${libQuery
+              ? html`Niets gevonden voor "${libQuery}".`
+              : libTab === 'assets'
+                ? 'Nog geen eigen symbolen geïmporteerd.'
+                : 'Niets in deze categorie.'}
+          </p>`}
+          ${libGroups.map(([grp, items]) => html`
+            <section className="lib-sec" key=${grp}>
+              <div className="lib-sec-h">
+                <span className="lib-sec-tick"></span>
+                <h3>${grp}</h3>
+                <span className="lib-sec-n">${items.length}</span>
+                <span className="lib-sec-rule"></span>
+              </div>
+              <div className="lib-grid">
+                ${items.map(([k, t]) => html`
+                  <div key=${k} role="button" tabIndex="0"
+                    className=${'lib-card' + (libPick === k ? ' active' : '')}
+                    onClick=${() => setLibPick(k)}
+                    onDblClick=${() => { startAnnot(k); setLibOpen(false); }}
+                    onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startAnnot(k); setLibOpen(false); } }}>
+                    <${ToolPreview} kind=${k} />
+                    <span className="lib-card-h">
+                      <span className="dot" style=${dotStyle(t)}></span>
+                      <span className="lib-card-name">${t.label}</span>
+                      <span className="lib-card-gap"></span>
+                      <span className="lib-card-key">${drawModeOf(t)}</span>
+                    </span>
+                    <span className="lib-card-desc">${descOf(k)}</span>
+                    ${t.asset && html`
+                      <span className="lib-card-actions">
+                        <button className="btn ghost" onClick=${(e) => { e.stopPropagation(); removeAsset(assetIdOf(k)); }}>Verwijderen</button>
+                      </span>`}
+                  </div>`)}
+              </div>
+            </section>`)}
+        </div>
+
+        <footer className="dialog-f">
+          <span className="dialog-f-sel">Geselecteerd: <strong>${libPickT ? libPickT.label : '—'}</strong></span>
+          ${libPickT && html`<span className="dialog-f-hint">${drawModeOf(libPickT)} · dubbelklik een kaart om direct te tekenen</span>`}
+          <span className="dialog-f-gap"></span>
+          <button className="btn ghost" onClick=${() => setLibOpen(false)}>Sluiten</button>
+          <button className="btn primary" disabled=${!libPickT}
+            onClick=${() => { if (libPick) { startAnnot(libPick); setLibOpen(false); } }}>Tekenen</button>
+        </footer>
       </div>
     </div>`;
 
@@ -4569,7 +4825,21 @@ function migrateDoc(d) {
       '--right-w': (vis('panelRight') ? panelW.right : 0) + 'px',
     }}>
       <div className="toolbar">
-        <div className="brand"><span className="logo">🅿️</span><span>ParkPlanner</span></div>
+        <div className="brand">
+          <span className="logo">🅿️</span>
+          <span className="brand-name">ParkPlanner</span>
+        </div>
+        ${vis('tbProject') && html`
+          <div className="tb-project">
+            <input className="proj-name" type="text" value=${doc.name || ''} placeholder="Naamloos plan"
+              title="Naam van dit plan — komt terug in de bestandsnaam bij Opslaan"
+              onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, name: e.target.value.slice(0, 60) }) })} />
+            <span className="proj-meta">
+              ${savedAt
+                ? 'Laatst opgeslagen om ' + savedAt.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })
+                : 'Nog niet opgeslagen in deze sessie'}
+            </span>
+          </div>`}
         <div className="tb-sep"></div>
         ${vis('tbTools') && html`
           ${toolBtn('select', 'Selecteer', 'V', tool, setTool, setDrawing)}
@@ -4580,6 +4850,9 @@ function migrateDoc(d) {
           ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
           <button className=${'btn' + (tool === 'measure' ? ' active' : '')}
             onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>📏 Meet <kbd>M</kbd></button>`}
+        ${vis('tbLibrary') && html`
+          <button className=${'btn primary' + (libOpen ? ' active' : '')} onClick=${() => libOpenRef.current()}
+            title="Alles wat je kunt tekenen, met voorbeeldweergave">▦ Bibliotheek <kbd>T</kbd></button>`}
         ${vis('tbNewSite') && html`<button className="btn ghost" onClick=${newRect}>Nieuwe site</button>`}
         <div className="tb-sep"></div>
         ${vis('tbAxis') && html`
@@ -4625,7 +4898,15 @@ function migrateDoc(d) {
               the building-type choice existed and could never be found. */ ''}
         ${vis('secToolOpts') && (tool === 'annot' || tool === 'obstacle' || tool === 'obstaclepoly') && html`
         <div className="section tool-opts">
-          <h3>${tool === 'annot' ? ANNOT_TYPES[annotKind].label : 'Gebouw'}</h3>
+          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+            <span>${tool === 'annot' ? ANNOT_TYPES[annotKind].label : 'Gebouw'}</span>
+            ${tool === 'annot' && html`
+              <button className="btn ghost" style=${{ padding: '2px 7px', fontSize: '10.5px' }}
+                onClick=${() => openLib()} title="Kies een ander gereedschap in de bibliotheek">▦ wissel</button>`}
+          </h3>
+          ${/* What this tool is for, in one line. The same sentence the library
+                shows, so a tool never means two different things. */
+            tool === 'annot' && html`<div className="tool-help">${descOf(annotKind)}</div>`}
           ${(tool === 'obstacle' || tool === 'obstaclepoly') && html`
             <div>
           <div className="seg">
@@ -4950,7 +5231,9 @@ function migrateDoc(d) {
         ${vis('ovHud') && html`<div className="hud" style=${{ bottom: (dealbarOpen ? 96 : 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>
-          <span>schaal <b>${view.scale.toFixed(1)}</b> px/m</span>
+          <span>schaal <b>${ratioScale(view.scale)}</b></span>
+          <span>·</span>
+          <span title=${view.scale.toFixed(2) + ' px/m'}>${view.scale.toFixed(1)} px/m</span>
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
           ${tool === 'placestall' && html`
@@ -4961,7 +5244,7 @@ function migrateDoc(d) {
 
         ${vis('ovDealbar') && html`
           <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
-            <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾' : '▴'} Tabulatie</button>
+            <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾ Tabulatie verbergen' : '▴ Tabulatie tonen'}</button>
             ${dealbarOpen && html`
               <div className="dealbar-cols">
                 <div className="deal-col">
@@ -5305,7 +5588,15 @@ function migrateDoc(d) {
             <button className="btn ghost" style=${{ padding: '3px 8px', fontSize: '11px' }} onClick=${() => setSummaryOpen(true)}>📋 Samenvatting</button>
           </h3>
           <div className="metric-grid">
-            <div className="metric big"><div className="k">Totaal vakken</div><div className="v">${metrics.total}</div></div>
+            <div className="metric big">
+              <div className="k">Totaal vakken</div>
+              <div className="v">${metrics.total}</div>
+              <div className="sub">
+                ${metrics.physicalStalls !== metrics.total
+                  ? html`${metrics.physicalStalls} fysieke vakken · ${metrics.aisleCount} rijstroken`
+                  : html`${metrics.aisleCount} rijstro${metrics.aisleCount === 1 ? 'ok' : 'ken'}${metrics.areaPerStall ? ' · ' + metrics.areaPerStall.toFixed(1) + ' m² per vak' : ''}`}
+              </div>
+            </div>
             <div className="metric"><div className="k">Site</div><div className="v">${fmt(metrics.siteArea)}<small> m²</small></div></div>
             <div className="metric"><div className="k">Bebouwd</div><div className="v">${(metrics.coverage * 100).toFixed(0)}<small>%</small></div></div>
             <div className="metric"><div className="k">m² / vak</div><div className="v">${metrics.areaPerStall ? metrics.areaPerStall.toFixed(1) : '—'}</div></div>
@@ -5662,6 +5953,7 @@ function migrateDoc(d) {
         </div>`}
       </div>`}
 
+      ${libOpen && libraryModal()}
       ${keysOpen && keysModal()}
       ${summaryOpen && html`
         <div className="modal-backdrop" onClick=${() => setSummaryOpen(false)}>
@@ -5794,6 +6086,22 @@ function rectFrom(a, b) {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
 }
 function fmt(n) { return n >= 10000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toLocaleString('nl-NL'); }
+
+// px/m as the drawing scale everyone in the trade actually says out loud.
+//
+// A CSS pixel is 1/96 inch by definition — 0.2645833 mm — so one metre drawn at
+// `scale` px covers scale × 0.2645833 mm of screen, and 1000 mm of world over
+// that is the ratio. It is honest about the browser's *nominal* pixel, not the
+// physical glass: a page zoom or a lying DPI would change what a ruler reads.
+const MM_PER_CSS_PX = 25.4 / 96;
+export function ratioScale(scale) {
+  if (!(scale > 0)) return '—';
+  const n = 1000 / (scale * MM_PER_CSS_PX);
+  // Rounded to a step that reads like a drawing title block rather than to the
+  // unit: 1:1250, not 1:1247.
+  const step = n >= 2000 ? 500 : n >= 500 ? 50 : n >= 100 ? 10 : n >= 20 ? 5 : 1;
+  return '1:' + (Math.round(n / step) * step).toLocaleString('nl-NL');
+}
 function downloadBlob(blob, name) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

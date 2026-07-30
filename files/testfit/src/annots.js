@@ -92,6 +92,55 @@ export const ANNOT_TYPES = {
                  keywords: 'carport overkapping zonnepanelen pv luifel afdak zonnedak solar' },
 };
 
+// ---------- What each tool is for ----------
+// One sentence per tool, for the library. A separate map rather than a `desc`
+// on each literal: two thirds of the catalogue is built through the MARK/PICTO/
+// SIGN helpers, so threading a field through would have meant touching every one
+// of them and widening three helper signatures for prose.
+export const TOOL_DESC = {
+  road: 'Rijbaan met instelbare breedte. Als lijn, als object met maten, of als vrij vlak.',
+  driveway: 'Aansluiting op de openbare weg, vastgeklikt op de siterand.',
+  drivethru: 'Rijstrook langs een unit, met stapelruimte en uitgiftepunt.',
+  walkway: 'Voetpad als echt oppervlak: vierkante uiteinden, eigen kleur.',
+  bikepath: 'Fietspad als oppervlak, met eigen kleur naast het asfalt.',
+  crosswalk: 'Zebrapad tussen twee punten; de balken volgen de breedte.',
+  bikeparking: 'Vlak voor fietsen; de capaciteit volgt uit het oppervlak.',
+  grass: 'Groenvlak. Telt niet mee als verhard oppervlak.',
+  tree: 'Boom met instelbare kroondiameter.',
+  access: 'Toegangspunt op de siterand. Bepaalt waar de minder-valide vakken komen.',
+  marking: 'Vrije belijning, voor alles waar geen apart gereedschap voor is.',
+  arrowAhead: 'Pijl rechtdoor. Draait mee met de weg waarop je hem zet.',
+  arrowLeft: 'Pijl linksaf.',
+  arrowRight: 'Pijl rechtsaf.',
+  arrowAheadL: 'Pijl rechtdoor of linksaf.',
+  arrowAheadR: 'Pijl rechtdoor of rechtsaf.',
+  sharkTeeth: 'Haaientanden: voorrang verlenen zonder verplicht te stoppen.',
+  stopLine: 'Stopstreep, hoort bij een B5-bord.',
+  speedMark: 'Snelheidscijfer op het wegdek; de waarde stel je per stuk in.',
+  hatchZone: 'Kruisarcering: een vlak waar niet gereden of geparkeerd wordt.',
+  bayLines: 'Vakbelijning over een vlak, voor vakken die je zelf indeelt.',
+  pictoBike: 'Fietspictogram op het wegdek.',
+  pictoEV: 'Laadsymbool bij een elektrisch vak.',
+  pictoAda: 'Rolstoelsymbool in een minder-valide vak.',
+  pictoWalk: 'Voetgangerssymbool, voor looproutes over het terrein.',
+  pictoP: 'P op het wegdek.',
+  signYield: 'B1 — voorrang verlenen. Plaat op een paal.',
+  signStop: 'B5 — stoppen. Hoort bij een stopstreep.',
+  signSpeed: 'C43 — snelheidsbeperking; de waarde stel je per bord in.',
+  signNoEntry: 'C1 — verboden richting.',
+  signParking: 'E9a — parkeren toegestaan.',
+  signOneWay: 'F19 — eenrichtingsverkeer.',
+  signAda: 'Voorbehouden aan minder-validen.',
+  signEV: 'Voorbehouden aan elektrische voertuigen.',
+  loadingZone: 'Laad- en loszone voor bevoorrading.',
+  trolleyBay: 'Stalling voor winkelwagens.',
+  clickCollect: 'Afhaalplekken voor online bestellingen.',
+  familyBay: 'Familieplaats: breder, dicht bij de ingang.',
+  lightPole: 'Lichtmast; per stuk stel je de lichtpunthoogte in. Voedt de lux-kaart.',
+  carport: 'Overkapping met zonnepanelen. Levert kWp en kWh per jaar.',
+};
+export const descOf = (kind) => TOOL_DESC[kind] || (isAssetKind(kind) ? 'Je eigen symbool, op ware grootte.' : '');
+
 // ---------- Surface materials ----------
 // What a surface is made of, and how much rain runs off it rather than soaking
 // away. A coefficient rather than a paved/unpaved flag, because that is how
