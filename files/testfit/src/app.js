@@ -4,23 +4,23 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=f26c5b05';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=550e6f41';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=f26c5b05';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=f26c5b05';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=f26c5b05';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=f26c5b05';
-import { parseParcel, simplifyRing } from './importers.js?v=f26c5b05';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=f26c5b05';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=f26c5b05';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=f26c5b05';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=f26c5b05';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=f26c5b05';
-import { BUILD_ID } from './build.js?v=f26c5b05';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=f26c5b05';
+} from './geometry.js?v=550e6f41';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=550e6f41';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=550e6f41';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=550e6f41';
+import { parseParcel, simplifyRing } from './importers.js?v=550e6f41';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=550e6f41';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=550e6f41';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=550e6f41';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=550e6f41';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=550e6f41';
+import { BUILD_ID } from './build.js?v=550e6f41';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=550e6f41';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -328,13 +328,14 @@ export const UI_PARTS = [
   { id: 'panelRight', group: 'Panelen', label: 'Rechterpaneel' },
 
   { id: 'secToolOpts', group: 'Linkerpaneel', label: 'Gereedschapsopties' },
-  { id: 'secLocation', group: 'Linkerpaneel', label: 'Locatie' },
-  { id: 'secDraw', group: 'Linkerpaneel', label: 'Teken (infrastructuur)' },
-  { id: 'secAssets', group: 'Linkerpaneel', label: 'Eigen assets' },
   { id: 'secObjects', group: 'Linkerpaneel', label: 'Objecten' },
   { id: 'secSiteShape', group: 'Linkerpaneel', label: 'Site-vorm' },
-  { id: 'secLayers', group: 'Linkerpaneel', label: 'Lagen' },
-  { id: 'secPreset', group: 'Linkerpaneel', label: 'Preset' },
+  // The palette and the asset importer are both fully covered by the library
+  // dialog now. They stay switchable — typing a name in the side list is still
+  // the fastest route once you know it — but off by default, because they were
+  // what pushed the tool options and the object list below the fold.
+  { id: 'secDraw', group: 'Linkerpaneel', label: 'Gereedschapslijst (palet)' },
+  { id: 'secAssets', group: 'Linkerpaneel', label: 'Eigen assets (paneel)' },
   { id: 'secFoot', group: 'Linkerpaneel', label: 'Voettekst' },
 
   { id: 'secMetrics', group: 'Rechterpaneel', label: 'Metrics' },
@@ -368,10 +369,23 @@ export const UI_PARTS = [
 const WORKSPACE_PRESETS = {
   Alles: null, // null = everything visible
   Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
-  Tekenen: ['panelLeft', 'secDraw', 'secLayers', 'secSiteShape', 'tbTools', 'tbLibrary', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
+  Tekenen: ['panelLeft', 'secToolOpts', 'secObjects', 'secSiteShape', 'tbTools', 'tbLibrary', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
   Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
 };
 const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
+
+// One line per tool for the options panel, so it says something even when the
+// active tool has nothing to set. The canvas hint says what to *do*; this says
+// what the tool *is*.
+const TOOL_HELP = {
+  select: 'Klik iets aan om het te bewerken, of sleep een kader voor meerdere objecten. Kies een gereedschap in de bibliotheek.',
+  site: 'Teken de kavelgrens. De solver vult alleen wat binnen deze grens ligt.',
+  obstacle: 'Gebouw of uitsluitingszone als rechthoek.',
+  obstaclepoly: 'Gebouw of uitsluitingszone in vrije vorm.',
+  placestall: 'Zet losse parkeervakken neer, ook buiten wat de solver bedacht.',
+  measure: 'Meet een afstand of een reeks afstanden op de plattegrond.',
+  pan: 'Sleep om de plattegrond te verschuiven.',
+};
 
 // ---------- Canvas theme ----------
 // Only the colours that actually break when the backdrop flips. Meaning-bearing
@@ -1870,8 +1884,14 @@ function App() {
   const [assetMsg, setAssetMsg] = useState('');
   // Saved layout. Absent id => visible, so a part added later is on by default
   // rather than silently missing for everyone who already saved a layout.
+  // Parts that start off. A stored preference wins, including a stored `false`,
+  // so switching one on is remembered and a later default cannot override it.
+  const HIDDEN_BY_DEFAULT = { secDraw: true, secAssets: true };
   const [hidden, setHidden] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('pp_ui_hidden') || '{}') || {}; } catch (e) { return {}; }
+    try {
+      const saved = JSON.parse(localStorage.getItem('pp_ui_hidden') || '{}') || {};
+      return { ...HIDDEN_BY_DEFAULT, ...saved };
+    } catch (e) { return { ...HIDDEN_BY_DEFAULT }; }
   });
   const [panelW, setPanelW] = useState(() => {
     try {
@@ -2029,7 +2049,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=f26c5b05', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=550e6f41', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2396,7 +2416,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=f26c5b05').then(async (m) => {
+    import('./map3d.js?v=550e6f41').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4663,10 +4683,15 @@ function migrateDoc(d) {
   // the Weergave menu, but a control you have to go looking for in a menu is not
   // one you use to make room for a moment — and getting it back meant
   // remembering which menu it was. The reopen tab is the other half.
+  // A sticky strip of its own rather than a button floated over the content: the
+  // first section's heading is not always the same section, and an absolutely
+  // positioned chevron sat on top of whichever one it was — "Metrics" read
+  // ":trics".
   const panelFold = (id, label) => html`
-    <button className=${'panel-fold ' + (id === 'panelLeft' ? 'left' : 'right')}
-      title=${label + ' inklappen'} aria-label=${label + ' inklappen'}
-      onClick=${() => togglePart(id)}>${id === 'panelLeft' ? '‹' : '›'}</button>`;
+    <div className=${'panel-head ' + (id === 'panelLeft' ? 'left' : 'right')}>
+      <button className="panel-fold" title=${label + ' inklappen'} aria-label=${label + ' inklappen'}
+        onClick=${() => togglePart(id)}>${id === 'panelLeft' ? '‹' : '›'}</button>
+    </div>`;
   const panelReopen = (id, label) => html`
     <button className=${'panel-reopen ' + (id === 'panelLeft' ? 'left' : 'right')}
       title=${label + ' uitklappen'} aria-label=${label + ' uitklappen'}
@@ -4813,14 +4838,85 @@ function migrateDoc(d) {
     </div>`;
 
   // The one control that is never hideable — hiding it would lock you out.
+  // Locatie, Lagen en Preset live in this menu rather than in the left panel.
+  // They answer "what am I looking at", not "what am I drawing", and in the
+  // panel they pushed the two things you actually work in below the fold. Same
+  // state, same handlers — only the place changed.
+  const vmLocation = () => html`
+    <div className="vm-group vm-wide">
+      <div className="vm-h">Locatie</div>
+      <form onSubmit=${(e) => { e.preventDefault(); doGeocode(); }} className="geo-form">
+        <input type="text" placeholder="Zoek adres of plaats…" value=${geoSearch}
+          onChange=${(e) => setGeoSearch(e.target.value)} />
+        <button type="submit" className="btn" disabled=${geoBusy}>${geoBusy ? '…' : 'Ga'}</button>
+      </form>
+      ${geoMsg && html`<div className="geo-msg">${geoMsg}</div>`}
+      <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
+      <div className="geo-coord" style=${{ marginTop: '6px' }}>
+        ${mbToken ? html`🗺️ Kaart-token ✓ · <a href="#" onClick=${(e) => { e.preventDefault(); clearMbToken(); }} style=${{ color: 'var(--accent)' }}>wijzigen</a>` : '🗺️ Geen kaart-token'}
+      </div>
+      <div className="seg style-seg" style=${{ marginTop: '8px' }}>
+        ${[['satellite', 'Satelliet'], ['streets', 'Straten'], ['standard', 'Standaard'], ['none', 'Geen']].map(([s, lbl]) => html`
+          <button key=${s} className=${mapStyle === s ? 'active' : ''} onClick=${() => changeMapStyle(s)}>${lbl}</button>`)}
+      </div>
+      ${map3dError && html`<div className="geo-msg" style=${{ color: 'var(--danger)' }}>${map3dError}</div>`}
+      ${mbToken && mapStyle !== 'none' && html`
+        <div className="geo-coord" style=${{ marginTop: '8px' }}>
+          <a href="#" onClick=${(e) => { e.preventDefault(); setDiagOpen(!diagOpen); }} style=${{ color: 'var(--accent)' }}>
+            ${diagOpen ? '▾' : '▸'} Kaart-diagnose
+          </a>
+          ${' · '}
+          <a href="#" onClick=${(e) => { e.preventDefault(); retryMap(); }} style=${{ color: 'var(--accent)' }}>opnieuw proberen</a>
+        </div>
+        ${diagOpen && html`
+          <div className="map-diag">
+            <div><span>WebGL</span><b>${mapDiag.webgl || '—'}</b></div>
+            <div><span>Bibliotheek</span><b>${mapDiag.lib || '—'}</b></div>
+            <div><span>Stijl</span><b>${mapDiag.style || '—'}</b></div>
+            <div><span>Tegels</span><b>${mapDiag.tiles == null ? '—' : mapDiag.tiles}</b></div>
+            <div><span>Canvas</span><b>${mapDiag.canvas || '—'}</b></div>
+            <div><span>Build</span><b>${BUILD_ID}</b></div>
+            ${mapDiag.detail && html`<div className="map-diag-detail">${mapDiag.detail}</div>`}
+          </div>`}`}
+    </div>`;
+  const vmLayers = () => html`
+    <div className="vm-group vm-wide">
+      <div className="vm-h">Lagen <span className="vm-n">${Object.values(layers).filter(Boolean).length}</span></div>
+      ${layerRow('grid', 'Raster', '#3b4453', layers, setLayers)}
+      ${layerRow('site', 'Site-grens', '#f8b500', layers, setLayers)}
+      ${layerRow('setback', 'Setback', '#6ee7ff', layers, setLayers)}
+      ${layerRow('building', 'Gebouwen', '#64748b', layers, setLayers)}
+      ${layerRow('parking', 'Parkeren', '#3b82f6', layers, setLayers)}
+      ${layerRow('infra', 'Infrastructuur', '#0e7490', layers, setLayers)}
+      ${layerRow('context', 'Omgeving (3D)', '#c3c8d2', layers, setLayers)}
+      ${layerRow('shadow', 'Schaduw', '#334155', layers, setLayers)}
+      ${layerRow('lightmap', 'Lichtkaart', '#f59e0b', layers, setLayers)}
+      <div className="mix-note">Omgeving = de bestaande bebouwing rondom; die bestaat alleen in de 3D-weergave.</div>
+    </div>`;
+  const vmPreset = () => html`
+    <div className="vm-group vm-wide">
+      <div className="vm-h">Afmetingen-preset</div>
+      <select className="preset" onChange=${(e) => applyPreset(e.target.value)}>
+        <option value="">— kies afmetingen —</option>
+        ${Object.entries(PRESETS).map(([k, p]) => html`<option key=${k} value=${k}>${p.label}</option>`)}
+      </select>
+    </div>`;
+
   const viewMenu = () => html`
     <div className="dropdown">
-      <button className="btn ghost" onClick=${() => setViewMenuOpen((o) => !o)} title="Toon of verberg onderdelen">👁 Weergave ▾</button>
+      <button className=${'btn ghost' + (viewMenuOpen ? ' active' : '')} onClick=${() => setViewMenuOpen((o) => !o)}
+        title="Locatie, lagen, presets en welke onderdelen zichtbaar zijn">👁 Weergave ▾</button>
       ${viewMenuOpen && html`
         <div className="menu view-menu" onMouseLeave=${() => setViewMenuOpen(false)}>
-          <div className="vm-row vm-actions">
-            ${Object.keys(WORKSPACE_PRESETS).map((n) => html`
-              <button key=${n} className="btn ghost" onClick=${() => applyWorkspace(n)}>${n}</button>`)}
+          ${vmLocation()}
+          ${vmLayers()}
+          ${vmPreset()}
+          <div className="vm-group">
+            <div className="vm-h">Werkruimte</div>
+            <div className="vm-row vm-actions">
+              ${Object.keys(WORKSPACE_PRESETS).map((n) => html`
+                <button key=${n} className="btn ghost" onClick=${() => applyWorkspace(n)}>${n}</button>`)}
+            </div>
           </div>
           ${UI_GROUPS.map((g) => html`
             <div key=${g} className="vm-group">
@@ -4885,10 +4981,7 @@ function migrateDoc(d) {
       '--right-w': (vis('panelRight') ? panelW.right : 0) + 'px',
     }}>
       <div className="toolbar">
-        <div className="brand">
-          <span className="logo">🅿️</span>
-          <span className="brand-name">ParkPlanner</span>
-        </div>
+        <div className="brand"><span className="brand-name">ParkPlanner</span></div>
         ${vis('tbProject') && html`
           <div className="tb-project">
             <input className="proj-name" type="text" value=${doc.name || ''} placeholder="Naamloos plan"
@@ -4913,14 +5006,18 @@ function migrateDoc(d) {
         ${vis('tbLibrary') && html`
           <button className=${'btn primary' + (libOpen ? ' active' : '')} onClick=${() => libOpenRef.current()}
             title="Alles wat je kunt tekenen, met voorbeeldweergave">▦ Bibliotheek <kbd>T</kbd></button>`}
-        ${vis('tbNewSite') && html`<button className="btn ghost" onClick=${newRect}>Nieuwe site</button>`}
+        ${vis('tbNewSite') && html`<button className="btn ghost icon" onClick=${newRect}
+          title="Nieuwe site — leeg rechthoekig perceel" aria-label="Nieuwe site">✧</button>`}
         <div className="tb-sep"></div>
         ${vis('tbAxis') && html`
           <button className="btn" onClick=${cycleAxis} title="Wissel rij-oriëntatie">↻ Rij-as ${result.orientationCount ? `(${doc.orientationIndex + 1}/${result.orientationCount})` : ''}</button>
-          <button className="btn ghost" onClick=${resetAxis}>Reset</button>`}
+          <button className="btn ghost icon" onClick=${resetAxis}
+            title="Rij-as terugzetten op de standaard" aria-label="Rij-as terugzetten">↺</button>`}
         ${vis('tbUndo') && html`
-          <button className="btn ghost" onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶ Undo</button>
-          <button className="btn ghost" onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷ Redo</button>`}
+          <button className="btn ghost icon" title="Ongedaan maken (Cmd/Ctrl+Z)" aria-label="Ongedaan maken"
+            onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶</button>
+          <button className="btn ghost icon" title="Opnieuw (Shift+Cmd/Ctrl+Z)" aria-label="Opnieuw"
+            onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷</button>`}
         <div className="tb-sep"></div>
         ${vis('tbView') && html`
           <div className="seg view-seg">
@@ -4931,16 +5028,22 @@ function migrateDoc(d) {
         ${vis('tbZoom') && html`
           <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
           <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
-          <button className="btn ghost" onClick=${fitToSite}>⤢ Fit</button>`}
+          <button className="btn ghost icon" onClick=${fitToSite}
+            title="Inpassen — zoom naar de hele site" aria-label="Inpassen">⤢</button>`}
         ${vis('tbShare') && html`
-          <button className="btn ghost" onClick=${shareLink}
-            title="Zet het hele plan in een link en kopieer die naar het klembord">🔗 Delen</button>`}
-        ${vis('tbFile') && html`<button className="btn ghost" onClick=${saveJSON}>Opslaan</button>
-        <label className="btn ghost">Laden<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
-        <label className="btn ghost" title="Perceelgrens importeren (GeoJSON of KML)">Perceel<input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} /></label>`}
+          <button className="btn ghost icon" onClick=${shareLink} aria-label="Delen"
+            title="Delen — zet het hele plan in een link en kopieer die naar het klembord">🔗</button>`}
+        ${/* Icons, with a title on every one. Spelled out they took a second
+              toolbar row on a 1900 px screen, and a row that only ever holds
+              file actions reads as a different toolbar rather than the same one. */ ''}
+        ${vis('tbFile') && html`
+        <button className="btn ghost icon" onClick=${saveJSON} title="Opslaan als JSON" aria-label="Opslaan">💾</button>
+        <label className="btn ghost icon" title="Een opgeslagen plan laden" aria-label="Laden">📂<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
+        <label className="btn ghost icon" title="Perceelgrens importeren (GeoJSON of KML)" aria-label="Perceel importeren">▦<input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} /></label>`}
         ${vis('tbExport') && html`
         <div className="dropdown">
-          <button className="btn ghost" onClick=${() => setExportOpen((o) => !o)}>Export ▾</button>
+          <button className="btn ghost icon" onClick=${() => setExportOpen((o) => !o)}
+            title="Export — PNG, GeoJSON, DXF, CSV" aria-label="Export">⬇</button>
           ${exportOpen && html`
             <div className="menu" onMouseLeave=${() => setExportOpen(false)}>
               <button onClick=${() => { exportPNG(); setExportOpen(false); }}>PNG-afbeelding</button>
@@ -4950,7 +5053,8 @@ function migrateDoc(d) {
             </div>`}
         </div>`}
         ${viewMenu()}
-        <button className="btn ghost" title="Sneltoetsen (?)" onClick=${() => setKeysOpen(true)}>?</button>
+        <button className="btn ghost icon" title="Sneltoetsen (?)" aria-label="Sneltoetsen"
+          onClick=${() => setKeysOpen(true)}>?</button>
       </div>
 
       ${vis('panelLeft') && html`
@@ -4960,17 +5064,27 @@ function migrateDoc(d) {
         ${/* Options for whatever tool is active, at the very top of the panel.
               They used to sit under the palette — 2000 px below the fold, so
               the building-type choice existed and could never be found. */ ''}
-        ${vis('secToolOpts') && (tool === 'annot' || tool === 'obstacle' || tool === 'obstaclepoly') && html`
+        ${vis('secToolOpts') && html`
         <div className="section tool-opts">
-          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
-            <span>${tool === 'annot' ? ANNOT_TYPES[annotKind].label : 'Gebouw'}</span>
-            ${tool === 'annot' && html`
-              <button className="btn ghost" style=${{ padding: '2px 7px', fontSize: '10.5px' }}
-                onClick=${() => openLib()} title="Kies een ander gereedschap in de bibliotheek">▦ wissel</button>`}
-          </h3>
+          <h3>${tool === 'annot' ? ANNOT_TYPES[annotKind].label : tool === 'obstacle' || tool === 'obstaclepoly' ? 'Gebouw' : 'Gereedschapsopties'}</h3>
+          ${/* Full width under the help line, not squeezed into the heading: at
+                the panel's default 210 px it was clipped to "▦ Bi". */ ''}
+          <button className="btn primary lib-open" onClick=${() => openLib()}
+            title="Alles wat je kunt tekenen, met voorbeeldweergave">▦ Bibliotheek <kbd>T</kbd></button>
           ${/* What this tool is for, in one line. The same sentence the library
-                shows, so a tool never means two different things. */
-            tool === 'annot' && html`<div className="tool-help">${descOf(annotKind)}</div>`}
+                card shows, so a tool never means two different things. With no
+                drawing tool active this section is where the hint lives — the
+                design has it always present, and an empty panel says nothing. */ ''}
+          <div className="tool-help">${tool === 'annot' ? descOf(annotKind) : TOOL_HELP[tool] || TOOL_HELP.select}</div>
+          <div className="toggle" style=${{ marginTop: '4px' }}>
+            <span>Vastklikken <span style=${{ color: 'var(--muted)', fontSize: '11px' }}>S</span></span>
+            <input type="checkbox" checked=${snapOn} onChange=${(e) => setSnapOn(e.target.checked)} />
+          </div>
+          <div className="mix-note" style=${{ marginTop: 0 }}>
+            ${snapOn
+              ? 'Punten klikken vast op bestaande hoekpunten, vakken langs een weg of tegen hun buren.'
+              : 'Uit — alles gaat exact waar je klikt.'}
+          </div>
           ${(tool === 'obstacle' || tool === 'obstaclepoly') && html`
             <div>
           <div className="seg">
@@ -5073,55 +5187,9 @@ function migrateDoc(d) {
                 </label>`}
             </div>`}
         </div>`}
-        ${vis('secLocation') && html`
-        <div className="section">
-          <h3>Locatie</h3>
-          <form onSubmit=${(e) => { e.preventDefault(); doGeocode(); }} className="geo-form">
-            <input type="text" placeholder="Zoek adres of plaats…" value=${geoSearch}
-              onChange=${(e) => setGeoSearch(e.target.value)} />
-            <button type="submit" className="btn" disabled=${geoBusy}>${geoBusy ? '…' : 'Ga'}</button>
-          </form>
-          ${geoMsg && html`<div className="geo-msg">${geoMsg}</div>`}
-          <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
-          <div className="geo-coord" style=${{ marginTop: '6px' }}>
-            ${mbToken ? html`🗺️ Kaart-token ✓ · <a href="#" onClick=${(e) => { e.preventDefault(); clearMbToken(); }} style=${{ color: 'var(--accent)' }}>wijzigen</a>` : '🗺️ Geen kaart-token'}
-          </div>
-          <div className="seg style-seg" style=${{ marginTop: '8px' }}>
-            ${[['satellite', 'Satelliet'], ['streets', 'Straten'], ['standard', 'Standaard'], ['none', 'Geen']].map(([s, lbl]) => html`
-              <button key=${s} className=${mapStyle === s ? 'active' : ''} onClick=${() => changeMapStyle(s)}>${lbl}</button>`)}
-          </div>
-          ${map3dError && html`<div className="geo-msg" style=${{ color: 'var(--danger)' }}>${map3dError}</div>`}
-          ${mbToken && mapStyle !== 'none' && html`
-            <div className="geo-coord" style=${{ marginTop: '8px' }}>
-              <a href="#" onClick=${(e) => { e.preventDefault(); setDiagOpen(!diagOpen); }} style=${{ color: 'var(--accent)' }}>
-                ${diagOpen ? '▾' : '▸'} Kaart-diagnose
-              </a>
-              ${' · '}
-              <a href="#" onClick=${(e) => { e.preventDefault(); retryMap(); }} style=${{ color: 'var(--accent)' }}>opnieuw proberen</a>
-            </div>
-            ${diagOpen && html`
-              <div className="map-diag">
-                <div><span>WebGL</span><b>${mapDiag.webgl || '—'}</b></div>
-                <div><span>Bibliotheek</span><b>${mapDiag.lib || '—'}</b></div>
-                <div><span>Stijl</span><b>${mapDiag.style || '—'}</b></div>
-                <div><span>Tegels</span><b>${mapDiag.tiles == null ? '—' : mapDiag.tiles}</b></div>
-                <div><span>Canvas</span><b>${mapDiag.canvas || '—'}</b></div>
-                <div><span>Build</span><b>${BUILD_ID}</b></div>
-                ${mapDiag.detail && html`<div className="map-diag-detail">${mapDiag.detail}</div>`}
-              </div>`}`}
-        </div>`}
         ${vis('secDraw') && html`
         <div className="section">
-          <h3>Teken (infrastructuur)</h3>
-          <div className="toggle">
-            <span>Vastklikken <span style=${{ color: 'var(--muted)', fontSize: '11px' }}>S</span></span>
-            <input type="checkbox" checked=${snapOn} onChange=${(e) => setSnapOn(e.target.checked)} />
-          </div>
-          <div className="mix-note" style=${{ marginTop: 0, marginBottom: '10px' }}>
-            ${snapOn
-              ? 'Punten klikken vast op bestaande hoekpunten, vakken langs een weg of tegen hun buren.'
-              : 'Uit — alles gaat exact waar je klikt.'}
-          </div>
+          <h3>Gereedschapslijst</h3>
           <input className="tool-search" type="search" placeholder="Zoek gereedschap…  /"
             ref=${toolSearchRef} value=${toolQuery} onInput=${(e) => setToolQuery(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Escape') { setToolQuery(''); e.target.blur(); } }} />
@@ -5224,28 +5292,6 @@ function migrateDoc(d) {
                   ? { ...d.params, layout: 'hybrid' } : d.params,
               }) })} />
           </div>
-        </div>`}
-        ${vis('secLayers') && html`
-        <div className="section">
-          <h3>Lagen</h3>
-          ${layerRow('grid', 'Raster', '#3b4453', layers, setLayers)}
-          ${layerRow('site', 'Site-grens', '#f8b500', layers, setLayers)}
-          ${layerRow('setback', 'Setback', '#6ee7ff', layers, setLayers)}
-          ${layerRow('building', 'Gebouwen', '#64748b', layers, setLayers)}
-          ${layerRow('parking', 'Parkeren', '#3b82f6', layers, setLayers)}
-          ${layerRow('infra', 'Infrastructuur', '#0e7490', layers, setLayers)}
-          ${layerRow('context', 'Omgeving (3D)', '#c3c8d2', layers, setLayers)}
-          ${layerRow('shadow', 'Schaduw', '#334155', layers, setLayers)}
-          ${layerRow('lightmap', 'Lichtkaart', '#f59e0b', layers, setLayers)}
-          <div className="mix-note">Omgeving = de bestaande bebouwing rondom; die bestaat alleen in de 3D-weergave.</div>
-        </div>`}
-        ${vis('secPreset') && html`
-        <div className="section">
-          <h3>Preset</h3>
-          <select className="preset" onChange=${(e) => applyPreset(e.target.value)}>
-            <option value="">— kies afmetingen —</option>
-            ${Object.entries(PRESETS).map(([k, p]) => html`<option key=${k} value=${k}>${p.label}</option>`)}
-          </select>
         </div>`}
         ${vis('secFoot') && html`<div className="foot">
           Open-source demonstrator van een parametrische parkeer­generator, geïnspireerd op TestFit's Parking Solver.
