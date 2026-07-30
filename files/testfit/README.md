@@ -176,6 +176,18 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
 - **Fold either panel away** from a chevron in the panel itself, and back from a
   tab on the canvas edge where it was. Same state the Weergave menu and saved
   workspaces use, so the three cannot disagree.
+- **One toolbar row.** The file, history and help actions are square icon
+  buttons, each with a title and an `aria-label`; spelled out they took a second
+  row on a 1900 px screen, and a row holding only file actions reads as a
+  different toolbar rather than the same one.
+- **The left panel holds what you are working in**: the active tool's options,
+  with one line saying what the tool is for and the snapping switch, and the
+  object list. Locatie, Lagen and the dimension preset moved into the Weergave
+  menu — they answer "what am I looking at", not "what am I drawing", and in the
+  panel they pushed the other two below the fold. The tool palette and the asset
+  importer are off by default, both being fully covered by the library; they stay
+  switchable, since typing a name in the side list is still the fastest route
+  once you know it.
 - Undo/redo, save/load, layers, and hideable/resizable UI parts you can save as
   a workspace.
 
