@@ -778,6 +778,28 @@ select.preset {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em;
   color: var(--accent); margin-bottom: 6px; font-weight: 700;
 }
+/* Datum and Tijd as a pair: two labels over two fields. */
+.sun-when { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; }
+.sun-when .input { min-width: 0; }
+
+/* "Toon alle 10" under a palette group whose shortlist is hiding some. */
+.tool-more {
+  display: block;
+  width: 100%;
+  margin: 3px 0 0;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tool-more:hover { background: var(--color-accent-900); border-style: solid; }
+
+/* The same key/value rows the tabulatiebalk uses, reused in a panel section. */
+.deal-rows { margin-top: 4px; }
 .deal-row { display: flex; justify-content: space-between; gap: 16px; font-size: 12px; padding: 1.5px 0; }
 .deal-row span { color: var(--muted); white-space: nowrap; }
 .deal-row b { font-variant-numeric: tabular-nums; white-space: nowrap; }

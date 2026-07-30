@@ -4,24 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=a06fdcc4';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=cc8c8db3';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=a06fdcc4';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=a06fdcc4';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=a06fdcc4';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=a06fdcc4';
-import { parseParcel, simplifyRing } from './importers.js?v=a06fdcc4';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=a06fdcc4';
+} from './geometry.js?v=cc8c8db3';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=cc8c8db3';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=cc8c8db3';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=cc8c8db3';
+import { parseParcel, simplifyRing } from './importers.js?v=cc8c8db3';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=cc8c8db3';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=a06fdcc4';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=a06fdcc4';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=a06fdcc4';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=a06fdcc4';
-import { BUILD_ID } from './build.js?v=a06fdcc4';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=a06fdcc4';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=cc8c8db3';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=cc8c8db3';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=cc8c8db3';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=cc8c8db3';
+import { BUILD_ID } from './build.js?v=cc8c8db3';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=cc8c8db3';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -345,9 +345,9 @@ export const UI_PARTS = [
   { id: 'secSun', group: 'Rechterpaneel', label: 'Zon en schaduw' },
   { id: 'secLight', group: 'Rechterpaneel', label: 'Licht en opbrengst' },
   { id: 'secStallAisle', group: 'Rechterpaneel', label: 'Vak & rijstrook' },
-  { id: 'secConstraints', group: 'Rechterpaneel', label: 'Site-constraints' },
   { id: 'secMix', group: 'Rechterpaneel', label: 'Vaktypes (mix)' },
   { id: 'secProgram', group: 'Rechterpaneel', label: 'Programma & ratio' },
+  { id: 'secSchemes', group: 'Rechterpaneel', label: "Schema's" },
 
   { id: 'tbProject', group: 'Werkbalk', label: 'Plannaam' },
   { id: 'tbTools', group: 'Werkbalk', label: 'Gereedschappen' },
@@ -372,7 +372,7 @@ const WORKSPACE_PRESETS = {
   Alles: null, // null = everything visible
   Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
   Tekenen: ['panelLeft', 'secToolOpts', 'secObjects', 'secSiteShape', 'tbTools', 'tbLibrary', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
-  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
+  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'secSchemes', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
 };
 const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
 
@@ -408,6 +408,15 @@ const TOOL_HELP = {
 // these out — so the four things a new plan needs first were the only ones the
 // dialog would not show. They are `tool` values, not annotation kinds, hence a
 // list of their own rather than an ANNOT_TYPES group.
+// How many tools of each group the side palette shows before you ask for more.
+// The palette was switched off by default because the full catalogue pushed the
+// tool options and the object list below the fold; the design's answer is to
+// show a shortlist per group with the group's real count beside it, and let the
+// search reveal the rest. A group absent from this table shows none of its
+// tools until you open it — those are the long tails (40 markings, pictograms,
+// signs) nobody scrolls a side panel for.
+const PALETTE_PINNED = { Rijden: 3, 'Langzaam verkeer': 4, Groen: 2, Licht: 2, Overig: 2, Eigen: 4 };
+
 const PRIMARY_GROUP = 'Site & gebouw';
 const PRIMARY_TOOLS = [
   { id: 'site', label: 'Site tekenen', key: 'P', color: '#b8860b',
@@ -2072,7 +2081,10 @@ function App() {
   // rather than silently missing for everyone who already saved a layout.
   // Parts that start off. A stored preference wins, including a stored `false`,
   // so switching one on is remembered and a later default cannot override it.
-  const HIDDEN_BY_DEFAULT = { secDraw: true, secAssets: true };
+  // The asset panel stays off: the library's own assets tab covers it, and now
+  // files your symbols by category too. The palette is back on — a shortlist per
+  // group is what made it affordable again (PALETTE_PINNED).
+  const HIDDEN_BY_DEFAULT = { secAssets: true };
   const [hidden, setHidden] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pp_ui_hidden') || '{}') || {};
@@ -2136,6 +2148,25 @@ function App() {
   const [schemes, setSchemes] = useState(null);           // generated layout variants
   const [optState, setOptState] = useState(null);         // { running, i, n } | { done, label, before, after }
   const [dealbarOpen, setDealbarOpen] = useState(true);   // bottom deal-tabulation bar
+  // The overlays sit above the tabulatiebalk, and 96px was a guess at how tall
+  // it is. Five columns wrap on a narrow window and the bar grows past it, which
+  // put the HUD inside the bar; hide the bar and the guess is wrong the other
+  // way. Measure the thing instead.
+  const dealRef = useRef(null);
+  const [dealH, setDealH] = useState(0);
+  useEffect(() => {
+    const el = dealRef.current;
+    if (!el) { setDealH(0); return; }
+    const read = () => setDealH(el.offsetHeight || 0);
+    read();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', read);
+      return () => window.removeEventListener('resize', read);
+    }
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [dealbarOpen, hidden.ovDealbar]);
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -2146,6 +2177,7 @@ function App() {
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const libOpenRef = useRef(() => {}); // latest openLib (for T)
   const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
+  const saveRef = useRef(() => {});   // latest saveJSON (for Cmd/Ctrl+S)
   const clipRef = useRef({});        // latest copy/cut/paste (for Cmd/Ctrl+C/X/V)
   const docRef = useRef(null);        // latest doc for the window key handler
   const vmRef = useRef('2d');          // latest viewMode (for the native wheel handler)
@@ -2236,7 +2268,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=a06fdcc4', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=cc8c8db3', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2621,7 +2653,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=a06fdcc4').then(async (m) => {
+    import('./map3d.js?v=cc8c8db3').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4264,6 +4296,9 @@ function App() {
     }
   };
   dupRef.current = duplicateSelection;
+  // Through a ref for the same reason: the key listener is registered on a
+  // narrow dep list, and a captured saveJSON would write yesterday's document.
+  saveRef.current = () => saveJSON();
   clipRef.current = { copy: copySelection, cut: cutSelection, paste: pasteClipboard };
 
   // Wheel handling is attached natively (passive:false) so preventDefault works.
@@ -4329,6 +4364,9 @@ function App() {
       if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); dispatch({ type: e.shiftKey ? 'REDO' : 'UNDO' }); return; }
       if (meta && e.key.toLowerCase() === 'y') { e.preventDefault(); dispatch({ type: 'REDO' }); return; }
       if (meta && e.key.toLowerCase() === 'd') { e.preventDefault(); dupRef.current(); return; }
+      // The design's save button advertises ⌘S, so ⌘S has to save. It was the
+      // only thing on that toolbar promising a shortcut that did not exist.
+      if (meta && e.key.toLowerCase() === 's') { e.preventDefault(); saveRef.current(); return; }
       if (meta && e.key.toLowerCase() === 'c') { e.preventDefault(); clipRef.current.copy(); return; }
       if (meta && e.key.toLowerCase() === 'x') { e.preventDefault(); clipRef.current.cut(); return; }
       if (meta && e.key.toLowerCase() === 'v') { e.preventDefault(); clipRef.current.paste(); return; }
@@ -4944,18 +4982,25 @@ function migrateDoc(d) {
     return { infra: infra + fams.size, assets: assetLib.length };
   }, [assetLib]);
 
+  // Which groups you have asked to see in full. Not persisted: it is a "show me
+  // the rest for a moment" state, not a preference.
+  const [paletteAll, setPaletteAll] = useState({});
   const paletteGroups = useMemo(() => {
     const q = toolQuery.trim().toLowerCase();
     const out = [];
     for (const grp of ANNOT_GROUPS) {
       const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp && !t.hidden
         && (!q || (t.label + ' ' + k + ' ' + (t.keywords || '')).toLowerCase().includes(q)));
-      if (items.length) out.push([grp, items]);
+      if (!items.length) continue;
+      // Searching shows everything it matched; otherwise the shortlist, and the
+      // count stays the group's real size so nothing looks smaller than it is.
+      const shown = q || paletteAll[grp] ? items : items.slice(0, PALETTE_PINNED[grp] || 0);
+      out.push([grp, shown, items.length]);
     }
     return out;
     // assetLib is not read here, but importing or removing a symbol changes
     // which types ANNOT_TYPES holds — without it the palette keeps the old set.
-  }, [toolQuery, assetLib]);
+  }, [toolQuery, assetLib, paletteAll]);
   const toggleGroup = (grp) => setOpenGroups((cur) => {
     const next = { ...cur, [grp]: cur[grp] === false };
     try { localStorage.setItem('pp_tool_groups', JSON.stringify(next)); } catch (e) {}
@@ -5097,21 +5142,26 @@ function migrateDoc(d) {
   // The words are what people would type, not the heading again: "schaduw" has
   // to find "Zon en schaduw", and "regenwater" has to find the runoff figure
   // even though no heading says either.
+  // The design's order. Site-constraints is no longer a section of its own:
+  // Setback and Groeneilanden belong with the sliders they constrain, which is
+  // where the design puts them. Its search words move with it onto
+  // secStallAisle, so "setback" still finds the panel it now lives in.
   const SEC_ORDER = [
-    ['secMetrics', 'Metrics'], ['secDrive', 'Bereikbaarheid'], ['secSun', 'Zon en schaduw'],
-    ['secLight', 'Licht en opbrengst'], ['secStallAisle', 'Vak & rijstrook'],
-    ['secConstraints', 'Site-constraints'], ['secMix', 'Vaktypes (mix)'],
-    ['secProgram', 'Programma & parkeer\u00adratio'],
+    ['secMetrics', 'Metrics'], ['secStallAisle', 'Vak & rijstrook'],
+    ['secDrive', 'Bereikbaarheid'], ['secMix', 'Vaktypes (mix)'],
+    ['secSun', 'Zon en schaduw'], ['secLight', 'Licht en opbrengst'],
+    ['secProgram', 'Programma & parkeer\u00adratio'], ['secSchemes', "Schema's"],
   ];
   const SEC_WORDS = {
     secMetrics: 'vakken totaal oppervlak site bebouwd verhard runoff regenwater far ratio oriëntaties samenvatting minder-valide',
     secDrive: 'bereikbaarheid rijden voertuig vrachtwagen brandweer knelpunt draaicirkel doodlopend',
     secSun: 'zon schaduw datum uur seizoen bezonning',
     secLight: 'licht lux verlichting lichtmast uniformiteit carport pv zonnepanelen opbrengst kwh',
-    secStallAisle: 'vak rijstrook rijbaan breedte diepte hoek layout automatisch parkeren perimeter',
-    secConstraints: 'setback padding buffer rijlengte groeneiland single-loaded constraints',
+    secStallAisle: 'vak rijstrook rijbaan breedte diepte hoek layout automatisch parkeren perimeter '
+      + 'setback padding buffer rijlengte groeneiland single-loaded constraints kopse turnaround',
     secMix: 'mix vaktypes compact ev laadpunt personeel bezoeker gereserveerd motor aandeel',
-    secProgram: 'programma gla vloeroppervlak parkeerratio zoning vereist',
+    secProgram: 'programma gla vloeroppervlak parkeerratio zoning vereist saldo',
+    secSchemes: 'schema varianten vergelijken optimaliseer alternatief scenario beste yield',
   };
   const [secShut, setSecShut] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pp_sec_shut') || '{}') || {}; } catch (e) { return {}; }
@@ -5159,7 +5209,7 @@ function migrateDoc(d) {
   const SHORTCUTS = [
     ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['T', 'Bibliotheek'], ['Spatie', 'Pannen']]],
     ['Infrastructuur', [['W', 'Weg'], ['I', 'In/uitrit'], ['D', 'Drive-thru']]],
-    ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
+    ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Cmd/Ctrl + S', 'Plan opslaan'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
     ['Pannen & zoomen', [['Rechtermuis slepen', 'Pannen'], ['Middelste muisknop', 'Pannen'], ['Spatie ingedrukt', 'Pannen'], ['Muiswiel', 'In- en uitzoomen'], ['Trackpad (2 vingers)', 'Pannen'], ['Shift + scrollen', 'Pannen'], ['Ctrl + scrollen / knijpen', 'In- en uitzoomen'], ['+ / -', 'In- en uitzoomen']]],
     ['Weergave', [['G', 'Raster aan/uit'], ['S', 'Vastklikken aan/uit'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
@@ -5556,6 +5606,7 @@ function migrateDoc(d) {
   const viewMenu = () => html`
     <div className="dropdown">
       <button className=${'btn ghost' + (viewMenuOpen ? ' active' : '')} onClick=${() => setViewMenuOpen((o) => !o)}
+        aria-expanded=${viewMenuOpen} aria-haspopup="true"
         title="Locatie, lagen, presets en welke onderdelen zichtbaar zijn">👁 Weergave ▾</button>
       ${viewMenuOpen && html`
         <div className="menu view-menu" onMouseLeave=${() => setViewMenuOpen(false)}>
@@ -5635,7 +5686,7 @@ function migrateDoc(d) {
         <div className="brand"><span className="brand-name">ParkPlanner</span></div>
         ${vis('tbProject') && html`
           <div className="tb-project">
-            <input className="proj-name" type="text" value=${doc.name || ''} placeholder="Naamloos plan"
+            <input className="proj-name" type="text" value=${doc.name || ''} placeholder="Naamloos plan" aria-label="Projectnaam"
               title="Naam van dit plan — komt terug in de bestandsnaam bij Opslaan"
               onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, name: e.target.value.slice(0, 60) }) })} />
             <span className="proj-meta">
@@ -5823,10 +5874,10 @@ function migrateDoc(d) {
           ${tool === 'annot' && annotKind === 'road' && roadShape === 'rect' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>Lengte <span className="val">${annotLength.toFixed(1)} m</span></label>
-              <input type="range" min="3" max="120" step="0.5" value=${annotLength}
+              <input type="range" min="3" max="120" step="0.5" value=${annotLength} aria-label="Lengte"
                 onInput=${(e) => setAnnotLength(+e.target.value)} />
               <label style=${{ marginTop: '8px' }}>Draaiing <span className="val">${annotRot}°</span></label>
-              <input type="range" min="0" max="355" step="5" value=${annotRot}
+              <input type="range" min="0" max="355" step="5" value=${annotRot} aria-label="Draaiing"
                 onInput=${(e) => setAnnotRot(+e.target.value)} />
             </div>`}
           ${tool === 'annot' && ANNOT_TYPES[annotKind].body && !(annotKind === 'road' && roadShape === 'rect') && html`
@@ -5844,7 +5895,7 @@ function migrateDoc(d) {
           ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && !(annotKind === 'road' && roadShape === 'rect') && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
-              <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
+              <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth} aria-label="Breedte"
                 onInput=${(e) => setAnnotWidth(parseFloat(e.target.value))} />
               ${ANNOT_TYPES[annotKind].mode === 'line' && html`
                 <label className="toggle" style=${{ marginTop: '8px' }}>
@@ -5860,11 +5911,12 @@ function migrateDoc(d) {
             ref=${toolSearchRef} value=${toolQuery} onInput=${(e) => setToolQuery(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Escape') { setToolQuery(''); e.target.blur(); } }} />
           ${paletteGroups.length === 0 && html`<div className="mix-note">Niets gevonden voor "${toolQuery}".</div>`}
-          ${paletteGroups.map(([grp, items]) => html`
+          ${paletteGroups.map(([grp, items, total]) => html`
             <div className="tool-group" key=${grp}>
-              <button className="tool-group-h" onClick=${() => toggleGroup(grp)}>
+              <button className="tool-group-h" onClick=${() => toggleGroup(grp)}
+                aria-expanded=${openGroups[grp] !== false || !!toolQuery}>
                 <span>${openGroups[grp] === false && !toolQuery ? '▸' : '▾'} ${grp}</span>
-                <span className="tool-group-n">${items.length}</span>
+                <span className="tool-group-n">${total}</span>
               </button>
               ${(openGroups[grp] !== false || toolQuery) && html`
                 <div className="type-grid">
@@ -5875,6 +5927,10 @@ function migrateDoc(d) {
                       <span className="dot" style=${dotStyle(t)}></span>${t.label}
                     </button>`)}
                 </div>`}
+              ${(openGroups[grp] !== false || toolQuery) && !toolQuery && items.length < total && html`
+                <button className="tool-more" onClick=${() => setPaletteAll((a) => ({ ...a, [grp]: true }))}>
+                  Toon alle ${total}
+                </button>`}
             </div>`)}
         </div>`}
         ${vis('secAssets') && html`
@@ -5915,9 +5971,14 @@ function migrateDoc(d) {
         </div>`}
         ${vis('secObjects') && html`
         <div className="section">
-          <h3>Objecten <span className="obj-count">${objectRows.reduce((n, g) => n + g[1].length, 0)}</span></h3>
+          ${/* The one list in either panel that would not fold, while all eight
+                right-hand sections do. On a laptop it pushed Site-vorm and the
+                footer off the bottom and there was nothing to be done about it. */ ''}
+          ${secHead('secObjects', 'Objecten',
+            html`<span className="obj-count">${objectRows.reduce((n, g) => n + g[1].length, 0)}</span>`)}
+          ${secIsOpen('secObjects') && html`
           <input className="tool-search" type="search" placeholder="Zoek object…"
-            value=${objQuery} onInput=${(e) => setObjQuery(e.target.value)} />
+            aria-label="Zoek object" value=${objQuery} onInput=${(e) => setObjQuery(e.target.value)} />
           ${objectRows.length === 0 && html`<div className="mix-note">Nog niets geplaatst.</div>`}
           ${aislesRemovedCount > 0 && html`
             <div className="mix-note" style=${{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -5956,6 +6017,7 @@ function migrateDoc(d) {
                       onClick=${(e) => { e.stopPropagation(); deleteRow(r); }}>✕</button>`}
                 </div>`))}
             </div>`)}
+          `}
         </div>`}
 
         ${vis('secSiteShape') && html`
@@ -6025,7 +6087,7 @@ function migrateDoc(d) {
           style=${{ pointerEvents: viewMode === '3d' ? 'none' : 'auto', cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
         ${vis('ovHint') && viewMode === '2d' && modeHint && html`<div className="hint">${modeHint}</div>`}
         ${vis('ovHint') && viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien/kantelen · scroll om te zoomen · alleen-lezen</div>`}
-        ${vis('ovHud') && html`<div className="hud" style=${{ bottom: (dealbarOpen ? 96 : 12) + 'px' }}>
+        ${vis('ovHud') && html`<div className="hud" style=${{ bottom: (dealH + 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>
           <span>schaal <b>${ratioScale(view.scale)}</b></span>
@@ -6037,10 +6099,10 @@ function migrateDoc(d) {
             <span>·</span>
             <span className="hud-rot">gedraaid <b>${stallRot}°</b>${stallRot ? '' : ' · R draait 15°'}</span>`}
         </div>`}
-        ${vis('ovAttrib') && mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
+        ${vis('ovAttrib') && mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealH + 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
 
         ${vis('ovDealbar') && html`
-          <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
+          <div ref=${dealRef} className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
             <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾ Tabulatie verbergen' : '▴ Tabulatie tonen'}</button>
             ${dealbarOpen && html`
               <div className="dealbar-cols">
@@ -6105,7 +6167,7 @@ function migrateDoc(d) {
       <div className="panel right tk-scroll">
         ${resizer('right')}
         ${panelFold('panelRight', 'Rechterpaneel', html`
-          <input className="panel-search" type="search" placeholder="Zoek in dit paneel…"
+          <input className="panel-search" type="search" placeholder="Zoek in dit paneel…" aria-label="Zoek in dit paneel"
             value=${panelQuery} onInput=${(e) => setPanelQuery(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); setPanelQuery(''); e.target.blur(); } }} />`)}
         ${panelQuery.trim() && !SEC_ORDER.some((s) => secShow(s[0], s[1])) && html`
@@ -6143,13 +6205,13 @@ function migrateDoc(d) {
             return html`
               <div className="field">
                 <label>Hoek <span className="val">${Math.round(ann.angle || 0)}°</span></label>
-                <input type="range" min="0" max="359" step="5" value=${Math.round(ann.angle || 0)}
+                <input type="range" min="0" max="359" step="5" value=${Math.round(ann.angle || 0)} aria-label="Hoek"
                   onInput=${(e) => updateAnnotation(ai, { angle: +e.target.value })} />
                 <div className="mix-note">R draait 15° · Shift+R terug</div>
               </div>
               <div className="field">
                 <label>Grootte <span className="val">${(ann.width || t.width || 3).toFixed(1)} m</span></label>
-                <input type="range" min="1" max="12" step="0.2" value=${ann.width || t.width || 3}
+                <input type="range" min="1" max="12" step="0.2" value=${ann.width || t.width || 3} aria-label="Grootte"
                   onInput=${(e) => updateAnnotation(ai, { width: +e.target.value })} />
               </div>
               ${t.value != null && html`
@@ -6228,7 +6290,7 @@ function migrateDoc(d) {
               </div>
               <div className="field">
                 <label>Draaiing <span className="val">${deg}°</span></label>
-                <input type="range" min="0" max="355" step="5" value=${deg}
+                <input type="range" min="0" max="355" step="5" value=${deg} aria-label="Draaiing"
                   onInput=${(e) => set({ rot: (+e.target.value * Math.PI) / 180 })} />
                 <div className="mix-note">Of sleep de oranje greep naast de weg; Shift klemt op 15°.</div>
               </div>`;
@@ -6260,7 +6322,7 @@ function migrateDoc(d) {
             return html`
               <div className="field">
                 <label>Breedte <span className="val">${(ann.width || 6).toFixed(1)} m</span></label>
-                <input type="range" min="2" max="20" step="0.1" value=${ann.width || 6}
+                <input type="range" min="2" max="20" step="0.1" value=${ann.width || 6} aria-label="Breedte"
                   onInput=${(e) => updateAnnotation(ai, { width: +e.target.value })} />
               </div>
               <div className="field">
@@ -6321,7 +6383,7 @@ function migrateDoc(d) {
           <div className="field">
             <label>Verdiepingen<span className="val">${floors}</span></label>
             <div className="row">
-              <input type="range" min="1" max="40" step="1" value=${floors}
+              <input type="range" min="1" max="40" step="1" value=${floors} aria-label="Verdiepingen"
                 onInput=${(e) => setObsFloors(selection.index, parseInt(e.target.value, 10))} style=${{ flex: 1 }} />
               <input type="number" min="1" max="200" step="1" value=${floors}
                 onChange=${(e) => setObsFloors(selection.index, Math.max(1, parseInt(e.target.value, 10) || 1))} />
@@ -6432,6 +6494,74 @@ function migrateDoc(d) {
           `}
         </div>`}
 
+        ${secShow('secStallAisle', 'Vak & rijstrook') && html`
+        <div className="section">
+          ${secHead('secStallAisle', 'Vak & rijstrook')}
+          ${secIsOpen('secStallAisle') && html`
+          <div className="toggle" style=${{ marginBottom: '10px' }}>
+            <span>Automatisch parkeren</span>
+            <input type="checkbox" checked=${doc.autoParking !== false} onChange=${(e) => setAutoParking(e.target.checked)} />
+          </div>
+          ${doc.autoParking === false && html`<div className="mix-note" style=${{ marginTop: 0, marginBottom: '10px' }}>Uit — teken je site vrij; plaats vakken met de Vak-tool (K).</div>`}
+          <div className="field">
+            <label>Layout</label>
+            <div className="seg">
+              <button className=${(doc.params.layout || 'strip') === 'strip' ? 'active' : ''} onClick=${() => setParam('layout', 'strip')} title="Rechte rijen">Recht</button>
+              <button className=${doc.params.layout === 'hybrid' ? 'active' : ''} onClick=${() => setParam('layout', 'hybrid')} title="Rand volgt de curve + recht in het midden">Rand+midden</button>
+              <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')} title="Volledig concentrisch, volgt de rand">Concentrisch</button>
+            </div>
+          </div>
+          <div className="toggle">
+            <span>Lijn rijen uit met langste rand</span>
+            <input type="checkbox" checked=${!!doc.params.alignLongestEdge} onChange=${(e) => setParam('alignLongestEdge', e.target.checked)} />
+          </div>
+          ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
+          ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
+          ${slider('Rijstrook', 'aisleWidth', doc.params.aisleWidth, 5, 8, 0.1, 'm', setParam)}
+          <div className="field">
+            <label>Parkeerhoek<span className="val">${doc.params.angle}°</span></label>
+            <div className="seg" style=${{ marginBottom: '6px' }}>
+              ${[30, 45, 60, 75, 90].map((a) => html`<button key=${a} className=${doc.params.angle === a ? 'active' : ''} onClick=${() => setParam('angle', a)}>${a}°</button>`)}
+            </div>
+            <div className="row">
+              <input type="range" min="30" max="90" step="1" value=${doc.params.angle} aria-label="Parkeerhoek"
+                onInput=${(e) => setParam('angle', parseInt(e.target.value, 10), false)}
+                onChange=${(e) => setParam('angle', parseInt(e.target.value, 10), true)}
+                style=${{ flex: 1 }} />
+              <input type="number" min="30" max="90" step="1" value=${doc.params.angle}
+                onChange=${(e) => { const v = Math.max(30, Math.min(90, parseInt(e.target.value, 10) || 90)); setParam('angle', v); }}
+                style=${{ width: '58px' }} />
+            </div>
+          </div>
+          ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
+          ${slider('Padding (buffer)', 'padding', doc.params.padding, 0, 3, 0.1, 'm', setParam)}
+          ${slider('Max. rijlengte', 'maxRun', doc.params.maxRun, 0, 30, 1, 'vak', setParam)}
+          ${slider('Groeneilanden (breedte)', 'islandWidth', doc.params.islandWidth, 0, 6, 0.5, 'm', setParam, (v) => v > 0 ? `${(+v).toFixed(1)} m` : 'uit')}
+          <div className="toggle">
+            <span>Single-loaded reststroken</span>
+            <input type="checkbox" checked=${!!doc.params.singleLoaded} onChange=${(e) => setParam('singleLoaded', e.target.checked)} />
+          </div>
+          <div className="toggle">
+            <span>Dead-end turnarounds</span>
+            <input type="checkbox" checked=${!!doc.params.deadEndTurnaround} onChange=${(e) => setParam('deadEndTurnaround', e.target.checked)} />
+          </div>
+          ${doc.params.deadEndTurnaround && slider('Turnaround-ruimte', 'turnaround', doc.params.turnaround, 4, 12, 0.5, 'm', setParam)}
+          <div className="field">
+            <label>Kopse rijbaan</label>
+            <div className="seg">
+              ${[['none', 'Geen'], ['one', 'Eén kant'], ['both', 'Beide']].map(([v, lab]) => html`
+                <button key=${v}
+                  className=${(doc.params.endAisles || 'one') === v ? 'active' : ''}
+                  title=${v === 'none' ? 'Geen verbinding tussen de rijen — teken die zelf'
+                    : v === 'one' ? 'Eén dwarsrijbaan verbindt alle rijen'
+                    : 'Aan beide uiteinden, dus een lus zonder doodlopende rijen'}
+                  onClick=${() => setParam('endAisles', v)}>${lab}</button>`)}
+            </div>
+            <div className="mix-note">Verbindt de rijen met elkaar en met je in/uitrit. Kost vakken — zonder is het terrein niet berijdbaar.</div>
+          </div>
+          `}
+        </div>`}
+
         ${secShow('secDrive', 'Bereikbaarheid') && html`
         <div className="section">
           ${secHead('secDrive', 'Bereikbaarheid', html`
@@ -6473,11 +6603,57 @@ function migrateDoc(d) {
           })()}
           <div className="field" style=${{ marginTop: 8 }}>
             <label>Brandweer max. afstand tot gevel <span className="val">${fireMaxDist} m</span></label>
-            <input type="range" min="20" max="120" step="5" value=${fireMaxDist}
+            <input type="range" min="20" max="120" step="5" value=${fireMaxDist} aria-label="Max. afstand tot gevel"
               onInput=${(e) => setParam('fireMaxDist', +e.target.value, false)}
               onChange=${(e) => setParam('fireMaxDist', +e.target.value)} />
           </div>
           <div className="mix-note">Gangbare ontwerpwaarden, geen normcitaat — maten verschillen per gemeente en per brandweerzone.</div>
+          `}
+        </div>`}
+
+        ${secShow('secMix', 'Vaktypes (mix)') && html`
+        <div className="section">
+          ${secHead('secMix', 'Vaktypes (mix)')}
+          ${secIsOpen('secMix') && html`
+          ${(() => {
+            const keys = ['compact', 'ev', 'staff', 'visitor', 'reserved'];
+            const mix = doc.params.mix || { compact: doc.params.compactRatio || 0, ev: doc.params.evRatio || 0 };
+            const sum = keys.reduce((s, k) => s + (mix[k] || 0), 0);
+            return html`
+              <table className="mix-table">
+                <thead><tr><th>Type</th><th>Aandeel</th><th>Aantal</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.standard.color }}></span>Standaard</td>
+                    <td className="mix-rem">${Math.max(0, Math.round((1 - sum) * 100))}%</td>
+                    <td>${metrics.counts.standard || 0}</td>
+                  </tr>
+                  ${keys.map((k) => html`
+                    <tr key=${k}>
+                      <td><span className="dot" style=${{ background: STALL_TYPES[k].color }}></span>${STALL_TYPES[k].label}</td>
+                      <td><input className="mix-in" type="number" min="0" max="100" step="5" value=${Math.round((mix[k] || 0) * 100)}
+                        onChange=${(e) => setMix(k, Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) / 100)} />%</td>
+                      <td>${metrics.counts[k] || 0}</td>
+                    </tr>`)}
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.ada.color }}></span>Minder-valide</td>
+                    <td>auto</td>
+                    <td>${metrics.counts.ada || 0}</td>
+                  </tr>
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.motorcycle.color }}></span>Motor</td>
+                    <td>handmatig</td>
+                    <td>${metrics.counts.motorcycle || 0}</td>
+                  </tr>
+                </tbody>
+              </table>
+              ${sum > 1 ? html`<div className="mix-warn">Totaal ${Math.round(sum * 100)}% &gt; 100% — er blijft geen standaard over.</div>` : ''}
+              <div className="toggle">
+                <span>Minder-valide (ADA) automatisch</span>
+                <input type="checkbox" checked=${doc.params.ada} onChange=${(e) => setParam('ada', e.target.checked)} />
+              </div>
+              <div className="mix-note">Motor markeer je handmatig op een vak (telt als 3 plaatsen).</div>`;
+          })()}
           `}
         </div>`}
 
@@ -6490,17 +6666,33 @@ function migrateDoc(d) {
             </label>
           `)}
           ${secIsOpen('secSun') && html`
-          <div className="field">
-            <label>Datum</label>
-            <input type="date" value=${doc.params.sunDate || '2026-06-21'}
+          ${/* Date and time side by side, as the design has them. The hour was a
+                0-23.5 range slider, which is a poor control for a clock: you
+                cannot type 14:30 into it, and dragging past the hour you want is
+                the normal case. A time input is the thing browsers already have. */ ''}
+          <div className="field sun-when">
+            <label htmlFor="sun-date">Datum</label>
+            <label htmlFor="sun-time">Tijd</label>
+            <input id="sun-date" className="input" type="date" aria-label="Datum"
+              value=${doc.params.sunDate || '2026-06-21'}
               onChange=${(e) => setParam('sunDate', e.target.value)} />
+            <input id="sun-time" className="input" type="time" aria-label="Tijd" step="1800"
+              value=${hoursToClock(doc.params.sunHour == null ? 15 : doc.params.sunHour)}
+              onChange=${(e) => { const h = clockToHours(e.target.value); if (h != null) setParam('sunHour', h); }} />
           </div>
-          ${slider('Tijd', 'sunHour', doc.params.sunHour == null ? 15 : doc.params.sunHour, 0, 23.5, 0.5, 'u', setParam)}
           <div className="mix-note">
             ${sun.altitude > 0
               ? `Zon staat ${sun.altitude.toFixed(0)}° hoog, azimut ${sun.azimuth.toFixed(0)}°.`
               : 'De zon staat onder de horizon — alles ligt in de schaduw.'}
-            ${layers.shadow ? ` ${shadedStalls.length} van ${deco.stalls.length} vakken in de schaduw.` : ''}
+          </div>
+          ${/* Its own labelled row rather than a clause in the note above, and no
+                longer conditional on the layer being on: the count is the answer
+                this section exists to give. */ ''}
+          <div className="deal-rows">
+            <div className="deal-row">
+              <span>Vakken in schaduw</span>
+              <b>${shadedStalls.length} / ${deco.stalls.length}</b>
+            </div>
           </div>
           <div className="mix-note">Klok is zonnetijd voor deze lengtegraad (UTC${zoneOffsetHours((doc.geo || {}).lon) >= 0 ? '+' : ''}${zoneOffsetHours((doc.geo || {}).lon)}); geen zomertijd.</div>
           `}
@@ -6602,26 +6794,44 @@ function migrateDoc(d) {
           `}
         </div>`}
 
-        ${secShow('secStallAisle', 'Vak & rijstrook') && html`
+        ${secShow('secProgram', 'Programma & parkeer­ratio') && html`
         <div className="section">
-          ${secHead('secStallAisle', 'Vak & rijstrook')}
-          ${secIsOpen('secStallAisle') && html`
-          <div className="toggle" style=${{ marginBottom: '10px' }}>
-            <span>Automatisch parkeren</span>
-            <input type="checkbox" checked=${doc.autoParking !== false} onChange=${(e) => setAutoParking(e.target.checked)} />
-          </div>
-          ${doc.autoParking === false && html`<div className="mix-note" style=${{ marginTop: 0, marginBottom: '10px' }}>Uit — teken je site vrij; plaats vakken met de Vak-tool (K).</div>`}
+          ${secHead('secProgram', 'Programma & parkeer­ratio')}
+          ${secIsOpen('secProgram') && html`
           <div className="field">
-            <label>Layout</label>
-            <div className="seg">
-              <button className=${(doc.params.layout || 'strip') === 'strip' ? 'active' : ''} onClick=${() => setParam('layout', 'strip')} title="Rechte rijen">Recht</button>
-              <button className=${doc.params.layout === 'hybrid' ? 'active' : ''} onClick=${() => setParam('layout', 'hybrid')} title="Rand volgt de curve + recht in het midden">Rand+midden</button>
-              <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')} title="Volledig concentrisch, volgt de rand">Concentrisch</button>
-            </div>
+            <label>Gebouw-GLA<span className="val">${doc.params.buildingGLA || 0} m²</span></label>
+            <input type="number" min="0" step="50" aria-label="Gebouw-GLA (m²)" value=${doc.params.buildingGLA || 0}
+              onChange=${(e) => setParam('buildingGLA', Math.max(0, parseFloat(e.target.value) || 0))} />
           </div>
-          <div className="toggle">
-            <span>Lijn rijen uit met langste rand</span>
-            <input type="checkbox" checked=${!!doc.params.alignLongestEdge} onChange=${(e) => setParam('alignLongestEdge', e.target.checked)} />
+          <div className="field">
+            <label>Ratio<span className="val">${doc.params.parkingRatio || 0} / 100 m²</span></label>
+            <input type="number" min="0" step="0.1" aria-label="Parkeerratio per 100 m²" value=${doc.params.parkingRatio || 0}
+              onChange=${(e) => setParam('parkingRatio', Math.max(0, parseFloat(e.target.value) || 0))} />
+          </div>
+          ${/* Vereist, Geleverd and Saldo as three rows, as the design has them and
+                as the tabulatiebalk already reads. It was one run-on sentence, so
+                the number that actually decides whether the plan passes had to be
+                parsed out of prose. */ ''}
+          ${metrics.requiredStalls != null
+            ? html`<div className="deal-rows">
+                <div className="deal-row"><span>Vereist</span><b>${metrics.requiredStalls}</b></div>
+                <div className="deal-row"><span>Geleverd</span><b>${metrics.total}</b></div>
+                <div className="deal-row"><span>Saldo</span>
+                  <b className=${metrics.total >= metrics.requiredStalls ? 'ok' : 'bad'}>
+                    ${(metrics.total - metrics.requiredStalls > 0 ? '+' : '') + (metrics.total - metrics.requiredStalls)}
+                  </b>
+                </div>
+              </div>`
+            : html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)' }}>Vul GLA en ratio in voor een zoning-check.</div>`}
+          `}
+        </div>`}
+        ${secShow('secSchemes', "Schema's") && html`
+        <div className="section">
+          ${secHead('secSchemes', "Schema's")}
+          ${secIsOpen('secSchemes') && html`
+          <div className="mix-note" style=${{ marginTop: 0 }}>
+            Los het plan een aantal keer op met andere parameters en zet de uitkomsten
+            naast elkaar.
           </div>
           <div className="field" style=${{ display: 'flex', gap: '6px' }}>
             <button className="btn ghost" style=${{ flex: 1, justifyContent: 'center' }} onClick=${genSchemes}>⚖️ Vergelijk</button>
@@ -6647,128 +6857,9 @@ function migrateDoc(d) {
                   <button className="btn ghost" onClick=${() => applyScheme(s.patch)}>Toepassen</button>
                 </div>`)}
             </div>`}
-          ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
-          ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
-          ${slider('Rijstrook', 'aisleWidth', doc.params.aisleWidth, 5, 8, 0.1, 'm', setParam)}
-          <div className="field">
-            <label>Parkeerhoek<span className="val">${doc.params.angle}°</span></label>
-            <div className="seg" style=${{ marginBottom: '6px' }}>
-              ${[30, 45, 60, 75, 90].map((a) => html`<button key=${a} className=${doc.params.angle === a ? 'active' : ''} onClick=${() => setParam('angle', a)}>${a}°</button>`)}
-            </div>
-            <div className="row">
-              <input type="range" min="30" max="90" step="1" value=${doc.params.angle}
-                onInput=${(e) => setParam('angle', parseInt(e.target.value, 10), false)}
-                onChange=${(e) => setParam('angle', parseInt(e.target.value, 10), true)}
-                style=${{ flex: 1 }} />
-              <input type="number" min="30" max="90" step="1" value=${doc.params.angle}
-                onChange=${(e) => { const v = Math.max(30, Math.min(90, parseInt(e.target.value, 10) || 90)); setParam('angle', v); }}
-                style=${{ width: '58px' }} />
-            </div>
-          </div>
           `}
         </div>`}
 
-        ${secShow('secConstraints', 'Site-constraints') && html`
-        <div className="section">
-          ${secHead('secConstraints', 'Site-constraints')}
-          ${secIsOpen('secConstraints') && html`
-          ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
-          ${slider('Padding (buffer)', 'padding', doc.params.padding, 0, 3, 0.1, 'm', setParam)}
-          ${slider('Max. rijlengte', 'maxRun', doc.params.maxRun, 0, 30, 1, 'vak', setParam)}
-          ${slider('Groeneilanden (breedte)', 'islandWidth', doc.params.islandWidth, 0, 6, 0.5, 'm', setParam, (v) => v > 0 ? `${(+v).toFixed(1)} m` : 'uit')}
-          <div className="toggle">
-            <span>Single-loaded reststroken</span>
-            <input type="checkbox" checked=${!!doc.params.singleLoaded} onChange=${(e) => setParam('singleLoaded', e.target.checked)} />
-          </div>
-          <div className="toggle">
-            <span>Dead-end turnarounds</span>
-            <input type="checkbox" checked=${!!doc.params.deadEndTurnaround} onChange=${(e) => setParam('deadEndTurnaround', e.target.checked)} />
-          </div>
-          ${doc.params.deadEndTurnaround && slider('Turnaround-ruimte', 'turnaround', doc.params.turnaround, 4, 12, 0.5, 'm', setParam)}
-          <div className="field">
-            <label>Kopse rijbaan</label>
-            <div className="seg">
-              ${[['none', 'Geen'], ['one', 'Eén kant'], ['both', 'Beide']].map(([v, lab]) => html`
-                <button key=${v}
-                  className=${(doc.params.endAisles || 'one') === v ? 'active' : ''}
-                  title=${v === 'none' ? 'Geen verbinding tussen de rijen — teken die zelf'
-                    : v === 'one' ? 'Eén dwarsrijbaan verbindt alle rijen'
-                    : 'Aan beide uiteinden, dus een lus zonder doodlopende rijen'}
-                  onClick=${() => setParam('endAisles', v)}>${lab}</button>`)}
-            </div>
-            <div className="mix-note">Verbindt de rijen met elkaar en met je in/uitrit. Kost vakken — zonder is het terrein niet berijdbaar.</div>
-          </div>
-          `}
-        </div>`}
-
-        ${secShow('secMix', 'Vaktypes (mix)') && html`
-        <div className="section">
-          ${secHead('secMix', 'Vaktypes (mix)')}
-          ${secIsOpen('secMix') && html`
-          ${(() => {
-            const keys = ['compact', 'ev', 'staff', 'visitor', 'reserved'];
-            const mix = doc.params.mix || { compact: doc.params.compactRatio || 0, ev: doc.params.evRatio || 0 };
-            const sum = keys.reduce((s, k) => s + (mix[k] || 0), 0);
-            return html`
-              <table className="mix-table">
-                <thead><tr><th>Type</th><th>Aandeel</th><th>Aantal</th></tr></thead>
-                <tbody>
-                  <tr>
-                    <td><span className="dot" style=${{ background: STALL_TYPES.standard.color }}></span>Standaard</td>
-                    <td className="mix-rem">${Math.max(0, Math.round((1 - sum) * 100))}%</td>
-                    <td>${metrics.counts.standard || 0}</td>
-                  </tr>
-                  ${keys.map((k) => html`
-                    <tr key=${k}>
-                      <td><span className="dot" style=${{ background: STALL_TYPES[k].color }}></span>${STALL_TYPES[k].label}</td>
-                      <td><input className="mix-in" type="number" min="0" max="100" step="5" value=${Math.round((mix[k] || 0) * 100)}
-                        onChange=${(e) => setMix(k, Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) / 100)} />%</td>
-                      <td>${metrics.counts[k] || 0}</td>
-                    </tr>`)}
-                  <tr>
-                    <td><span className="dot" style=${{ background: STALL_TYPES.ada.color }}></span>Minder-valide</td>
-                    <td>auto</td>
-                    <td>${metrics.counts.ada || 0}</td>
-                  </tr>
-                  <tr>
-                    <td><span className="dot" style=${{ background: STALL_TYPES.motorcycle.color }}></span>Motor</td>
-                    <td>handmatig</td>
-                    <td>${metrics.counts.motorcycle || 0}</td>
-                  </tr>
-                </tbody>
-              </table>
-              ${sum > 1 ? html`<div className="mix-warn">Totaal ${Math.round(sum * 100)}% &gt; 100% — er blijft geen standaard over.</div>` : ''}
-              <div className="toggle">
-                <span>Minder-valide (ADA) automatisch</span>
-                <input type="checkbox" checked=${doc.params.ada} onChange=${(e) => setParam('ada', e.target.checked)} />
-              </div>
-              <div className="mix-note">Motor markeer je handmatig op een vak (telt als 3 plaatsen).</div>`;
-          })()}
-          `}
-        </div>`}
-
-        ${secShow('secProgram', 'Programma & parkeer­ratio') && html`
-        <div className="section">
-          ${secHead('secProgram', 'Programma & parkeer­ratio')}
-          ${secIsOpen('secProgram') && html`
-          <div className="field">
-            <label>Gebouw-GLA<span className="val">${doc.params.buildingGLA || 0} m²</span></label>
-            <input type="number" min="0" step="50" value=${doc.params.buildingGLA || 0}
-              onChange=${(e) => setParam('buildingGLA', Math.max(0, parseFloat(e.target.value) || 0))} />
-          </div>
-          <div className="field">
-            <label>Ratio<span className="val">${doc.params.parkingRatio || 0} / 100 m²</span></label>
-            <input type="number" min="0" step="0.1" value=${doc.params.parkingRatio || 0}
-              onChange=${(e) => setParam('parkingRatio', Math.max(0, parseFloat(e.target.value) || 0))} />
-          </div>
-          ${metrics.requiredStalls != null
-            ? html`<div style=${{ fontSize: '12px', marginTop: '2px' }}>
-                <b style=${{ color: metrics.total >= metrics.requiredStalls ? '#22c55e' : '#f59e0b' }}>${metrics.total}</b>
-                <span style=${{ color: 'var(--muted)' }}> / ${metrics.requiredStalls} vereist — ${metrics.total >= metrics.requiredStalls ? 'voldoet ✓' : (metrics.requiredStalls - metrics.total) + ' tekort'}</span>
-              </div>`
-            : html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)' }}>Vul GLA en ratio in voor een zoning-check.</div>`}
-          `}
-        </div>`}
       </div>`}
 
       ${libOpen && libraryModal()}
@@ -6890,11 +6981,17 @@ function layerRow(id, label, color, layers, setLayers) {
   </label>`;
 }
 
+// Fifteen call sites, so the label association lives here rather than at each of
+// them. The visible <label> was not tied to its input by `for`/`id`, which meant
+// a screen reader announced every one of these as an unnamed slider — and the
+// value span sits inside that label, so the name carries the reading too.
 function slider(label, key, value, min, max, step, unit, setParam, format) {
   const shown = format ? format(value) : `${(+value).toFixed(step < 1 ? 1 : 0)}${unit ? ' ' + unit : ''}`;
+  const id = 'sl-' + key;
   return html`<div className="field">
-    <label>${label}<span className="val">${shown}</span></label>
-    <input type="range" min=${min} max=${max} step=${step} value=${value}
+    <label htmlFor=${id}>${label}<span className="val">${shown}</span></label>
+    <input id=${id} type="range" min=${min} max=${max} step=${step} value=${value}
+      aria-label=${label} aria-valuetext=${shown}
       onInput=${(e) => setParam(key, parseFloat(e.target.value), false)}
       onChange=${(e) => setParam(key, parseFloat(e.target.value), true)} />
   </div>`;
@@ -6902,6 +6999,24 @@ function slider(label, key, value, min, max, step, unit, setParam, format) {
 
 function rectFrom(a, b) {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+}
+// The sun panel keeps its hour as a fractional number (15.5 = half past three),
+// because that is what the almanac maths wants. <input type="time"> speaks
+// "HH:MM". These two are the only translation between them.
+function hoursToClock(h) {
+  const t = Math.max(0, Math.min(23.999, +h || 0));
+  const hh = Math.floor(t);
+  const mm = Math.round((t - hh) * 60);
+  // 59.7 minutes rounds to 60, which is not a minute of any hour.
+  const [H, M] = mm === 60 ? [hh + 1, 0] : [hh, mm];
+  return String(H % 24).padStart(2, '0') + ':' + String(M).padStart(2, '0');
+}
+function clockToHours(v) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(v || ''));
+  if (!m) return null;                       // an empty field must not read as midnight
+  const h = +m[1], mi = +m[2];
+  if (h > 23 || mi > 59) return null;
+  return h + mi / 60;
 }
 function fmt(n) { return n >= 10000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toLocaleString('nl-NL'); }
 
