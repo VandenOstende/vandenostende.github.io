@@ -4,23 +4,23 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=550e6f41';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=e42d847c';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=550e6f41';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=550e6f41';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=550e6f41';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=550e6f41';
-import { parseParcel, simplifyRing } from './importers.js?v=550e6f41';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=550e6f41';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=550e6f41';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=550e6f41';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=550e6f41';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=550e6f41';
-import { BUILD_ID } from './build.js?v=550e6f41';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=550e6f41';
+} from './geometry.js?v=e42d847c';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=e42d847c';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=e42d847c';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=e42d847c';
+import { parseParcel, simplifyRing } from './importers.js?v=e42d847c';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=e42d847c';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=e42d847c';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=e42d847c';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=e42d847c';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=e42d847c';
+import { BUILD_ID } from './build.js?v=e42d847c';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=e42d847c';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -1878,6 +1878,7 @@ function App() {
   const [placing, setPlacing] = useState(0); // >0 while a duplicated group follows the cursor
   const [toolQuery, setToolQuery] = useState('');
   const [objQuery, setObjQuery] = useState('');
+  const [objEdit, setObjEdit] = useState('');  // the row whose name is being typed
   // Imported symbols. The library is per-browser; a document carries its own
   // copies so a shared plan is not full of holes.
   const [assetLib, setAssetLib] = useState(() => readAssetLib());
@@ -1944,6 +1945,7 @@ function App() {
   const [mapReady, setMapReady] = useState(0);     // bumped once the controller exists
   const [stallRot, setStallRot] = useState(0);     // extra stall rotation in degrees (R key)
   const [exportOpen, setExportOpen] = useState(false);
+  const [fileOpen, setFileOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
   const [schemes, setSchemes] = useState(null);           // generated layout variants
@@ -2049,7 +2051,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=550e6f41', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=e42d847c', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2416,7 +2418,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=550e6f41').then(async (m) => {
+    import('./map3d.js?v=e42d847c').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -3693,28 +3695,36 @@ function App() {
         netsDone.add(netRoot[i]);
         push(t.group || 'Rijden', {
           key: 'n' + netRoot[i], kind: 'net', net: netRoot[i], index: i, color: t.color || '#94a3b8', type: t,
-          label: 'Wegennet', sub: grp.length + ' segmenten',
+          // A network's name lives on its first segment in document order, which
+          // is where `index` points. Split the network and the name follows that
+          // segment — the alternative is a name on nothing.
+          label: 'Wegennet', custom: a.label || '', sub: grp.length + ' segmenten',
         });
         return;
       }
       push(t.group || 'Overig', {
         key: 'a' + i, kind: 'annot', index: i, color: t.color || '#94a3b8', type: t,
-        label: t.label || a.kind, sub: a.points && a.points.length > 1 ? a.points.length + ' punten' : '',
+        label: t.label || a.kind, custom: a.label || '',
+        sub: a.points && a.points.length > 1 ? a.points.length + ' punten' : '',
       });
     });
     (doc.obstacles || []).forEach((o, i) => push('Gebouwen', {
       key: 'o' + i, kind: 'obs', index: i,
       color: PART_COLORS[(o && o.use) === 'residential' ? 'roof' : 'body'],
       label: (BUILDING_USES[(o && o.use) || DEFAULT_USE] || {}).label || 'Gebouw',
+      custom: (o && o.label) || '',
       sub: ((o && o.floors) || 1) + ' verd.',
     }));
     (doc.manualStalls || []).forEach((ms, i) => push('Handmatige vakken', {
       key: 'm' + i, kind: 'manual', index: i, color: (STALL_TYPES[ms.type] || STALL_TYPES.standard).color,
-      label: (STALL_TYPES[ms.type] || STALL_TYPES.standard).label, sub: 'vak',
+      label: (STALL_TYPES[ms.type] || STALL_TYPES.standard).label, custom: ms.label || '', sub: 'vak',
     }));
     deco.aisles.forEach((a, i) => push('Rijbanen', {
       key: 'ai' + a.key, kind: 'aisle', aisleKey: a.key, color: '#94a3b8',
-      label: 'Rijbaan ' + (i + 1), sub: (a.oneway ? 'eenrichting' : '') + (a.locked ? ' 🔒' : ''),
+      // An aisle is derived, so its name goes where its other manual decisions
+      // go: the position-keyed override, which is what survives a re-solve.
+      label: 'Rijbaan ' + (i + 1), custom: ((doc.overrides.aisles || {})[a.key] || {}).label || '',
+      sub: (a.oneway ? 'eenrichting' : '') + (a.locked ? ' 🔒' : ''),
     }));
     const byType = new Map();
     for (const st of deco.stalls) if (!st.manual) byType.set(st.type, (byType.get(st.type) || 0) + 1);
@@ -3725,11 +3735,11 @@ function App() {
     });
     const out = [];
     for (const [grp, rows] of groups) {
-      const hit = q ? rows.filter((r) => (r.label + ' ' + grp).toLowerCase().includes(q)) : rows;
+      const hit = q ? rows.filter((r) => (r.label + ' ' + (r.custom || '') + ' ' + grp).toLowerCase().includes(q)) : rows;
       if (hit.length) out.push([grp, hit]);
     }
     return out;
-  }, [doc.annotations, doc.obstacles, doc.manualStalls, deco.stalls, deco.aisles, objQuery, netRoot]);
+  }, [doc.annotations, doc.obstacles, doc.manualStalls, doc.overrides, deco.stalls, deco.aisles, objQuery, netRoot]);
 
   // An imported symbol shows its own thumbnail where the built-in kinds show a
   // colour dot — otherwise every custom asset is the same grey circle.
@@ -3787,6 +3797,46 @@ function App() {
       if (ms) { deleteStalls([stallKey(ms.poly)]); setStallSel([]); }
     } else if (r.kind === 'aisle') deleteAisle(r.aisleKey);
   };
+  // Give a listed object a name of your own. Written onto the record itself, so
+  // it travels with save, undo and a shared link; an aisle is derived and gets
+  // its name in the position-keyed override, where its other manual decisions
+  // already live. A solver stall group is a type rather than an object and is
+  // deliberately not renameable — there is nothing to hang the name on.
+  const canRename = (r) => r.kind === 'net' || r.kind === 'annot' || r.kind === 'obs'
+    || r.kind === 'manual' || r.kind === 'aisle';
+  const renameRow = (r, raw) => {
+    const label = String(raw || '').trim().slice(0, 60);
+    dispatch({ type: 'COMMIT', updater: (d) => {
+      const set = (obj) => { const o = { ...obj }; if (label) o.label = label; else delete o.label; return o; };
+      if (r.kind === 'net' || r.kind === 'annot') {
+        const anns = (d.annotations || []).slice();
+        if (!anns[r.index]) return d;
+        anns[r.index] = set(anns[r.index]);
+        return { ...d, annotations: anns };
+      }
+      if (r.kind === 'obs') {
+        const obs = (d.obstacles || []).slice();
+        if (!obs[r.index]) return d;
+        obs[r.index] = set(obs[r.index]);
+        return { ...d, obstacles: obs };
+      }
+      if (r.kind === 'manual') {
+        const ms = (d.manualStalls || []).slice();
+        if (!ms[r.index]) return d;
+        ms[r.index] = set(ms[r.index]);
+        return { ...d, manualStalls: ms };
+      }
+      if (r.kind === 'aisle') {
+        const aisles = { ...(d.overrides.aisles || {}) };
+        const cur = set(aisles[r.aisleKey] || {});
+        // An override that holds nothing but a deleted name is litter.
+        if (Object.keys(cur).length) aisles[r.aisleKey] = cur; else delete aisles[r.aisleKey];
+        return { ...d, overrides: { ...d.overrides, aisles } };
+      }
+      return d;
+    } });
+  };
+
   const isRowSelected = (r) => {
     if (r.kind === 'net') return !!(selection && selection.type === 'annot'
       && netRoot[selection.index] === r.net);
@@ -4116,6 +4166,9 @@ function App() {
         case '+': case '=': zoomBy(1.2); break;
         case '-': case '_': zoomBy(1 / 1.2); break;
         case 'escape':
+          // Menus first, outermost thing last: Escape should undo the most
+          // recent layer, and an open dropdown stayed open through it.
+          if (viewMenuOpen || exportOpen || fileOpen) { setViewMenuOpen(false); setExportOpen(false); setFileOpen(false); break; }
           if (libOpen) { setLibOpen(false); break; }
           if (placingRef.current) { cancelPlacing(); break; }
           setDrawing(null); setMeasure(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
@@ -4151,7 +4204,7 @@ function App() {
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
-  }, [selection, stallSel, aisleSel, tool, multiSel, placing, libOpen]);
+  }, [selection, stallSel, aisleSel, tool, multiSel, placing, libOpen, viewMenuOpen, exportOpen, fileOpen]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -4683,14 +4736,64 @@ function migrateDoc(d) {
   // the Weergave menu, but a control you have to go looking for in a menu is not
   // one you use to make room for a moment — and getting it back meant
   // remembering which menu it was. The reopen tab is the other half.
+  // Right-panel sections fold one at a time, and a search at the top of the panel
+  // keeps only the ones that match. Nine sections is more than a laptop screen
+  // holds, and scrolling past eight to reach the ninth is not an interface.
+  //
+  // The words are what people would type, not the heading again: "schaduw" has
+  // to find "Zon en schaduw", and "regenwater" has to find the runoff figure
+  // even though no heading says either.
+  const SEC_ORDER = [
+    ['secMetrics', 'Metrics'], ['secDrive', 'Bereikbaarheid'], ['secSun', 'Zon en schaduw'],
+    ['secLight', 'Licht en opbrengst'], ['secStallAisle', 'Vak & rijstrook'],
+    ['secConstraints', 'Site-constraints'], ['secMix', 'Vaktypes (mix)'],
+    ['secProgram', 'Programma & parkeer\u00adratio'],
+  ];
+  const SEC_WORDS = {
+    secMetrics: 'vakken totaal oppervlak site bebouwd verhard runoff regenwater far ratio oriëntaties samenvatting minder-valide',
+    secDrive: 'bereikbaarheid rijden voertuig vrachtwagen brandweer knelpunt draaicirkel doodlopend',
+    secSun: 'zon schaduw datum uur seizoen bezonning',
+    secLight: 'licht lux verlichting lichtmast uniformiteit carport pv zonnepanelen opbrengst kwh',
+    secStallAisle: 'vak rijstrook rijbaan breedte diepte hoek layout automatisch parkeren perimeter',
+    secConstraints: 'setback padding buffer rijlengte groeneiland single-loaded constraints',
+    secMix: 'mix vaktypes compact ev laadpunt personeel bezoeker gereserveerd motor aandeel',
+    secProgram: 'programma gla vloeroppervlak parkeerratio zoning vereist',
+  };
+  const [secShut, setSecShut] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pp_sec_shut') || '{}') || {}; } catch (e) { return {}; }
+  });
+  const [panelQuery, setPanelQuery] = useState('');
+  const toggleSec = (id) => setSecShut((cur) => {
+    const next = { ...cur, [id]: !cur[id] };
+    try { localStorage.setItem('pp_sec_shut', JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
+  // While searching every hit is open: a result you still have to unfold is not
+  // a result. Closing one by hand during a search still works and is remembered.
+  const secIsOpen = (id) => !secShut[id] || !!panelQuery.trim();
+  const secShow = (id, title) => {
+    if (!vis(id)) return false;
+    const q = panelQuery.trim().toLowerCase();
+    return !q || (title + ' ' + (SEC_WORDS[id] || '')).toLowerCase().includes(q);
+  };
+  const secHead = (id, title, extra) => html`
+    <h3 className="sec-h">
+      <button className="sec-t" onClick=${() => toggleSec(id)} aria-expanded=${secIsOpen(id)}
+        title=${secIsOpen(id) ? 'Inklappen' : 'Uitklappen'}>
+        <span className="sec-caret">${secIsOpen(id) ? '▾' : '▸'}</span><span>${title}</span>
+      </button>
+      ${extra || ''}
+    </h3>`;
+
   // A sticky strip of its own rather than a button floated over the content: the
   // first section's heading is not always the same section, and an absolutely
   // positioned chevron sat on top of whichever one it was — "Metrics" read
   // ":trics".
-  const panelFold = (id, label) => html`
+  const panelFold = (id, label, extra) => html`
     <div className=${'panel-head ' + (id === 'panelLeft' ? 'left' : 'right')}>
       <button className="panel-fold" title=${label + ' inklappen'} aria-label=${label + ' inklappen'}
         onClick=${() => togglePart(id)}>${id === 'panelLeft' ? '‹' : '›'}</button>
+      ${extra || ''}
     </div>`;
   const panelReopen = (id, label) => html`
     <button className=${'panel-reopen ' + (id === 'panelLeft' ? 'left' : 'right')}
@@ -4993,57 +5096,66 @@ function migrateDoc(d) {
                 : 'Nog niet opgeslagen in deze sessie'}
             </span>
           </div>`}
-        <div className="tb-sep"></div>
+        ${/* The order is the design's: named tools, the measure icon, the library
+              as the one accent button, then a spacer and the view cluster. No
+              rules between groups — the spacer does that work. */ ''}
         ${vis('tbTools') && html`
-          ${toolBtn('select', 'Selecteer', 'V', tool, setTool, setDrawing)}
+          ${toolBtn('select', 'Selecteren', 'V', tool, setTool, setDrawing)}
           ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
           ${toolBtn('obstacle', 'Gebouw ▭', 'B', tool, setTool, setDrawing)}
           ${toolBtn('obstaclepoly', 'Gebouw ⬠', 'N', tool, setTool, setDrawing)}
           ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
           ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
-          <button className=${'btn' + (tool === 'measure' ? ' active' : '')}
-            onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>📏 Meet <kbd>M</kbd></button>`}
+          <button className=${'btn icon' + (tool === 'measure' ? ' active' : '')} aria-label="Meetlint"
+            title="Meetlint (M)"
+            onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>📏</button>`}
         ${vis('tbLibrary') && html`
-          <button className=${'btn primary' + (libOpen ? ' active' : '')} onClick=${() => libOpenRef.current()}
-            title="Alles wat je kunt tekenen, met voorbeeldweergave">▦ Bibliotheek <kbd>T</kbd></button>`}
-        ${vis('tbNewSite') && html`<button className="btn ghost icon" onClick=${newRect}
-          title="Nieuwe site — leeg rechthoekig perceel" aria-label="Nieuwe site">✧</button>`}
-        <div className="tb-sep"></div>
+          <button className=${'btn primary icon' + (libOpen ? ' active' : '')} onClick=${() => libOpenRef.current()}
+            aria-label="Teken infrastructuur" title="Teken infrastructuur (T) — alles wat je kunt tekenen, met voorbeeldweergave">▦</button>`}
+        <div className="tb-spacer"></div>
         ${vis('tbAxis') && html`
-          <button className="btn" onClick=${cycleAxis} title="Wissel rij-oriëntatie">↻ Rij-as ${result.orientationCount ? `(${doc.orientationIndex + 1}/${result.orientationCount})` : ''}</button>
-          <button className="btn ghost icon" onClick=${resetAxis}
-            title="Rij-as terugzetten op de standaard" aria-label="Rij-as terugzetten">↺</button>`}
-        ${vis('tbUndo') && html`
-          <button className="btn ghost icon" title="Ongedaan maken (Cmd/Ctrl+Z)" aria-label="Ongedaan maken"
-            onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶</button>
-          <button className="btn ghost icon" title="Opnieuw (Shift+Cmd/Ctrl+Z)" aria-label="Opnieuw"
-            onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷</button>`}
-        <div className="tb-sep"></div>
+          <button className="btn ghost" onClick=${cycleAxis} title="Wissel rij-oriëntatie">↻ Rij-as${result.orientationCount ? html` <span className="tb-n">${doc.orientationIndex + 1}/${result.orientationCount}</span>` : ''}</button>
+          ${/* Only once you have moved off the default: with nothing to undo the
+                button is furniture, and the design's bar does not carry it. */ ''}
+          ${(doc.orientationIndex || 0) !== 0 && html`
+            <button className="btn ghost icon" onClick=${resetAxis}
+              title="Rij-as terugzetten op de standaard" aria-label="Rij-as terugzetten">↺</button>`}`}
         ${vis('tbView') && html`
           <div className="seg view-seg">
             ${[['2d', '2D'], ['3d', '3D']].map(([m, lbl]) => html`
               <button key=${m} className=${viewMode === m ? 'active' : ''} onClick=${() => setViewMode(m)}>${lbl}</button>`)}
           </div>`}
-        <div className="tb-spacer"></div>
         ${vis('tbZoom') && html`
-          <button className="btn ghost" onClick=${() => zoomBy(1 / 1.2)} title="Uitzoomen">−</button>
-          <button className="btn ghost" onClick=${() => zoomBy(1.2)} title="Inzoomen">＋</button>
-          <button className="btn ghost icon" onClick=${fitToSite}
-            title="Inpassen — zoom naar de hele site" aria-label="Inpassen">⤢</button>`}
-        ${vis('tbShare') && html`
-          <button className="btn ghost icon" onClick=${shareLink} aria-label="Delen"
-            title="Delen — zet het hele plan in een link en kopieer die naar het klembord">🔗</button>`}
-        ${/* Icons, with a title on every one. Spelled out they took a second
-              toolbar row on a 1900 px screen, and a row that only ever holds
-              file actions reads as a different toolbar rather than the same one. */ ''}
+          <button className="btn ghost" onClick=${fitToSite} title="Zoom naar de hele site">⤢ Fit</button>`}
+        ${viewMenu()}
+        ${vis('tbUndo') && html`
+          <button className="btn ghost icon" title="Ongedaan maken (Cmd/Ctrl+Z)" aria-label="Ongedaan maken"
+            onClick=${() => dispatch({ type: 'UNDO' })} disabled=${!hist.past.length}>↶</button>
+          <button className="btn ghost icon" title="Opnieuw (Shift+Cmd/Ctrl+Z)" aria-label="Opnieuw"
+            onClick=${() => dispatch({ type: 'REDO' })} disabled=${!hist.future.length}>↷</button>`}
+        ${/* One dropdown for everything that reads or writes a file, the way the
+              design has a single save icon and a single export icon. Zes losse
+              knoppen namen een tweede rij. */ ''}
         ${vis('tbFile') && html`
-        <button className="btn ghost icon" onClick=${saveJSON} title="Opslaan als JSON" aria-label="Opslaan">💾</button>
-        <label className="btn ghost icon" title="Een opgeslagen plan laden" aria-label="Laden">📂<input type="file" accept="application/json" onChange=${loadJSON} style=${{ display: 'none' }} /></label>
-        <label className="btn ghost icon" title="Perceelgrens importeren (GeoJSON of KML)" aria-label="Perceel importeren">▦<input type="file" accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml" onChange=${importParcel} style=${{ display: 'none' }} /></label>`}
+        <div className="dropdown">
+          <button className=${'btn ghost icon' + (fileOpen ? ' active' : '')} onClick=${() => setFileOpen((o) => !o)}
+            title="Plan — opslaan, laden, delen, nieuw" aria-label="Plan">💾</button>
+          ${fileOpen && html`
+            <div className="menu" onMouseLeave=${() => setFileOpen(false)}>
+              <button onClick=${() => { saveJSON(); setFileOpen(false); }}>Opslaan als JSON</button>
+              <label className="menu-file">Plan laden…<input type="file" accept="application/json"
+                onChange=${(e) => { loadJSON(e); setFileOpen(false); }} style=${{ display: 'none' }} /></label>
+              <label className="menu-file">Perceelgrens importeren…<input type="file"
+                accept=".geojson,.json,.kml,application/geo+json,application/vnd.google-earth.kml+xml"
+                onChange=${(e) => { importParcel(e); setFileOpen(false); }} style=${{ display: 'none' }} /></label>
+              ${vis('tbShare') && html`<button onClick=${() => { shareLink(); setFileOpen(false); }}>🔗 Deelbare link kopiëren</button>`}
+              ${vis('tbNewSite') && html`<button onClick=${() => { newRect(); setFileOpen(false); }}>Nieuw leeg perceel</button>`}
+            </div>`}
+        </div>`}
         ${vis('tbExport') && html`
         <div className="dropdown">
-          <button className="btn ghost icon" onClick=${() => setExportOpen((o) => !o)}
-            title="Export — PNG, GeoJSON, DXF, CSV" aria-label="Export">⬇</button>
+          <button className=${'btn ghost icon' + (exportOpen ? ' active' : '')} onClick=${() => setExportOpen((o) => !o)}
+            title="Export (PNG, GeoJSON, DXF, CSV)" aria-label="Export">⬆</button>
           ${exportOpen && html`
             <div className="menu" onMouseLeave=${() => setExportOpen(false)}>
               <button onClick=${() => { exportPNG(); setExportOpen(false); }}>PNG-afbeelding</button>
@@ -5052,7 +5164,6 @@ function migrateDoc(d) {
               <button onClick=${() => { exportCSV(); setExportOpen(false); }}>CSV (takeoff)</button>
             </div>`}
         </div>`}
-        ${viewMenu()}
         <button className="btn ghost icon" title="Sneltoetsen (?)" aria-label="Sneltoetsen"
           onClick=${() => setKeysOpen(true)}>?</button>
       </div>
@@ -5263,18 +5374,32 @@ function migrateDoc(d) {
               <div className="tool-group-h" style=${{ cursor: 'default' }}>
                 <span>${grp}</span><span className="tool-group-n">${rows.length}</span>
               </div>
-              ${rows.map((r) => html`
+              ${rows.map((r) => (objEdit === r.key ? html`
+                <div key=${r.key} className="obj-row editing">
+                  <span className="dot" style=${r.type ? dotStyle(r.type) : { background: r.color }}></span>
+                  <input className="obj-name" type="text" autoFocus
+                    defaultValue=${r.custom || ''} placeholder=${r.label}
+                    title="Eigen naam · leeg laten geeft de standaardnaam terug"
+                    onKeyDown=${(e) => {
+                      if (e.key === 'Enter') { renameRow(r, e.target.value); setObjEdit(''); }
+                      if (e.key === 'Escape') { e.stopPropagation(); setObjEdit(''); }
+                    }}
+                    onBlur=${(e) => { renameRow(r, e.target.value); setObjEdit(''); }} />
+                </div>` : html`
                 <div key=${r.key} className=${'obj-row' + (isRowSelected(r) ? ' active' : '')}
                   onClick=${() => selectRow(r)}
                   onDoubleClick=${() => { selectRow(r); focusPoly(rowPoly(r)); }}
-                  title="Klik selecteert · dubbelklik brengt in beeld">
+                  title=${(r.custom ? r.custom + ' — ' + r.label + ' · ' : '') + 'klik selecteert · dubbelklik brengt in beeld'}>
                   <span className="dot" style=${r.type ? dotStyle(r.type) : { background: r.color }}></span>
-                  <span className="obj-label">${r.label}</span>
+                  <span className=${'obj-label' + (r.custom ? ' named' : '')}>${r.custom || r.label}</span>
                   <span className="obj-sub">${r.sub}</span>
+                  ${canRename(r) && html`
+                    <button className="obj-x" title="Naam geven"
+                      onClick=${(e) => { e.stopPropagation(); setObjEdit(r.key); }}>✎</button>`}
                   ${r.kind !== 'stallGroup' && html`
                     <button className="obj-x" title="Verwijderen"
                       onClick=${(e) => { e.stopPropagation(); deleteRow(r); }}>✕</button>`}
-                </div>`)}
+                </div>`))}
             </div>`)}
         </div>`}
 
@@ -5424,7 +5549,12 @@ function migrateDoc(d) {
       ${vis('panelRight') && html`
       <div className="panel right">
         ${resizer('right')}
-        ${panelFold('panelRight', 'Rechterpaneel')}
+        ${panelFold('panelRight', 'Rechterpaneel', html`
+          <input className="panel-search" type="search" placeholder="Zoek in dit paneel…"
+            value=${panelQuery} onInput=${(e) => setPanelQuery(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); setPanelQuery(''); e.target.blur(); } }} />`)}
+        ${panelQuery.trim() && !SEC_ORDER.some((s) => secShow(s[0], s[1])) && html`
+          <div className="section"><div className="mix-note" style=${{ margin: 0 }}>Geen sectie gevonden voor "${panelQuery}".</div></div>`}
         ${multiCount > 1 && html`
         <div className="section sel-section">
           <h3>${multiCount} objecten geselecteerd</h3>
@@ -5699,12 +5829,12 @@ function migrateDoc(d) {
             <div className="mix-note">De vakken langs deze rijbaan blijven staan — verwijder ze apart als ze ook weg moeten.</div>`;
           })()}
         </div>`}
-        ${vis('secMetrics') && html`
+        ${secShow('secMetrics', 'Metrics') && html`
         <div className="section">
-          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Metrics</span>
+          ${secHead('secMetrics', 'Metrics', html`
             <button className="btn ghost" style=${{ padding: '3px 8px', fontSize: '11px' }} onClick=${() => setSummaryOpen(true)}>📋 Samenvatting</button>
-          </h3>
+          `)}
+          ${secIsOpen('secMetrics') && html`
           <div className="metric-grid">
             <div className="metric big">
               <div className="k">Totaal vakken</div>
@@ -5741,17 +5871,18 @@ function migrateDoc(d) {
           ${metrics.onewayAisles > 0 && html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '4px' }}>
             Eenrichtings-rijbanen: <b style=${{ color: 'var(--text)' }}>${metrics.onewayAisles}</b> / ${metrics.aisleCount}.
           </div>`}
+          `}
         </div>`}
 
-        ${vis('secDrive') && html`
+        ${secShow('secDrive', 'Bereikbaarheid') && html`
         <div className="section">
-          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Bereikbaarheid</span>
+          ${secHead('secDrive', 'Bereikbaarheid', html`
             <label className="toggle" style=${{ fontSize: '11px' }}>
-              <input type="checkbox" checked=${showIssues} onChange=${(e) => setShowIssues(e.target.checked)} />
-              <span>toon op plan</span>
+            <input type="checkbox" checked=${showIssues} onChange=${(e) => setShowIssues(e.target.checked)} />
+            <span>toon op plan</span>
             </label>
-          </h3>
+          `)}
+          ${secIsOpen('secDrive') && html`
           <div className="field"><label>Ontwerpvoertuig</label></div>
           <div className="veh-grid">
             ${Object.values(VEHICLES).map((v) => html`
@@ -5789,17 +5920,18 @@ function migrateDoc(d) {
               onChange=${(e) => setParam('fireMaxDist', +e.target.value)} />
           </div>
           <div className="mix-note">Gangbare ontwerpwaarden, geen normcitaat — maten verschillen per gemeente en per brandweerzone.</div>
+          `}
         </div>`}
 
-        ${vis('secSun') && html`
+        ${secShow('secSun', 'Zon en schaduw') && html`
         <div className="section">
-          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Zon en schaduw</span>
+          ${secHead('secSun', 'Zon en schaduw', html`
             <label className="toggle" style=${{ fontSize: '11px' }}>
-              <input type="checkbox" checked=${!!layers.shadow} onChange=${(e) => setLayers((l) => ({ ...l, shadow: e.target.checked }))} />
-              <span>toon</span>
+            <input type="checkbox" checked=${!!layers.shadow} onChange=${(e) => setLayers((l) => ({ ...l, shadow: e.target.checked }))} />
+            <span>toon</span>
             </label>
-          </h3>
+          `)}
+          ${secIsOpen('secSun') && html`
           <div className="field">
             <label>Datum</label>
             <input type="date" value=${doc.params.sunDate || '2026-06-21'}
@@ -5813,17 +5945,18 @@ function migrateDoc(d) {
             ${layers.shadow ? ` ${shadedStalls.length} van ${deco.stalls.length} vakken in de schaduw.` : ''}
           </div>
           <div className="mix-note">Klok is zonnetijd voor deze lengtegraad (UTC${zoneOffsetHours((doc.geo || {}).lon) >= 0 ? '+' : ''}${zoneOffsetHours((doc.geo || {}).lon)}); geen zomertijd.</div>
+          `}
         </div>`}
 
-        ${vis('secLight') && html`
+        ${secShow('secLight', 'Licht en opbrengst') && html`
         <div className="section">
-          <h3 style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Licht en opbrengst</span>
+          ${secHead('secLight', 'Licht en opbrengst', html`
             <label className="toggle" style=${{ fontSize: '11px' }}>
-              <input type="checkbox" checked=${!!layers.lightmap} onChange=${(e) => setLayers((l) => ({ ...l, lightmap: e.target.checked }))} />
-              <span>toon</span>
+            <input type="checkbox" checked=${!!layers.lightmap} onChange=${(e) => setLayers((l) => ({ ...l, lightmap: e.target.checked }))} />
+            <span>toon</span>
             </label>
-          </h3>
+          `)}
+          ${secIsOpen('secLight') && html`
           <div className="field">
             <label>Bron</label>
             <div className="seg">
@@ -5908,11 +6041,13 @@ function migrateDoc(d) {
               </div>
               <div className="mix-note">Kaart over ${lightField.stats.n} rasterpunten, gerekend in ${lightField.ms.toFixed(0)} ms.</div>
             </div>`}
+          `}
         </div>`}
 
-        ${vis('secStallAisle') && html`
+        ${secShow('secStallAisle', 'Vak & rijstrook') && html`
         <div className="section">
-          <h3>Vak & rijstrook</h3>
+          ${secHead('secStallAisle', 'Vak & rijstrook')}
+          ${secIsOpen('secStallAisle') && html`
           <div className="toggle" style=${{ marginBottom: '10px' }}>
             <span>Automatisch parkeren</span>
             <input type="checkbox" checked=${doc.autoParking !== false} onChange=${(e) => setAutoParking(e.target.checked)} />
@@ -5972,11 +6107,13 @@ function migrateDoc(d) {
                 style=${{ width: '58px' }} />
             </div>
           </div>
+          `}
         </div>`}
 
-        ${vis('secConstraints') && html`
+        ${secShow('secConstraints', 'Site-constraints') && html`
         <div className="section">
-          <h3>Site-constraints</h3>
+          ${secHead('secConstraints', 'Site-constraints')}
+          ${secIsOpen('secConstraints') && html`
           ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
           ${slider('Padding (buffer)', 'padding', doc.params.padding, 0, 3, 0.1, 'm', setParam)}
           ${slider('Max. rijlengte', 'maxRun', doc.params.maxRun, 0, 30, 1, 'vak', setParam)}
@@ -6003,11 +6140,13 @@ function migrateDoc(d) {
             </div>
             <div className="mix-note">Verbindt de rijen met elkaar en met je in/uitrit. Kost vakken — zonder is het terrein niet berijdbaar.</div>
           </div>
+          `}
         </div>`}
 
-        ${vis('secMix') && html`
+        ${secShow('secMix', 'Vaktypes (mix)') && html`
         <div className="section">
-          <h3>Vaktypes (mix)</h3>
+          ${secHead('secMix', 'Vaktypes (mix)')}
+          ${secIsOpen('secMix') && html`
           ${(() => {
             const keys = ['compact', 'ev', 'staff', 'visitor', 'reserved'];
             const mix = doc.params.mix || { compact: doc.params.compactRatio || 0, ev: doc.params.evRatio || 0 };
@@ -6047,11 +6186,13 @@ function migrateDoc(d) {
               </div>
               <div className="mix-note">Motor markeer je handmatig op een vak (telt als 3 plaatsen).</div>`;
           })()}
+          `}
         </div>`}
 
-        ${vis('secProgram') && html`
+        ${secShow('secProgram', 'Programma & parkeer­ratio') && html`
         <div className="section">
-          <h3>Programma & parkeer­ratio</h3>
+          ${secHead('secProgram', 'Programma & parkeer­ratio')}
+          ${secIsOpen('secProgram') && html`
           <div className="field">
             <label>Gebouw-GLA<span className="val">${doc.params.buildingGLA || 0} m²</span></label>
             <input type="number" min="0" step="50" value=${doc.params.buildingGLA || 0}
@@ -6068,6 +6209,7 @@ function migrateDoc(d) {
                 <span style=${{ color: 'var(--muted)' }}> / ${metrics.requiredStalls} vereist — ${metrics.total >= metrics.requiredStalls ? 'voldoet ✓' : (metrics.requiredStalls - metrics.total) + ' tekort'}</span>
               </div>`
             : html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)' }}>Vul GLA en ratio in voor een zoning-check.</div>`}
+          `}
         </div>`}
       </div>`}
 

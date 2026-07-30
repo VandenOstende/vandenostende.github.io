@@ -1323,3 +1323,74 @@ body.resizing .panel-resize { pointer-events: auto; }
 /* The library is the way into the tool catalogue now that the palette is off by
    default, so it gets the full width of the options section. */
 .lib-open { width: 100%; justify-content: center; margin-bottom: 8px; }
+
+/* The row-axis counter, and a file menu whose entries include <label> wrappers
+   around hidden file inputs — those need to look like the buttons beside them. */
+.tb-n { opacity: 0.6; font-variant-numeric: tabular-nums; }
+.dropdown .menu .menu-file {
+  display: block;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dropdown .menu .menu-file:hover { background: var(--panel-2); }
+
+/* ---- Collapsible panel sections + a panel-wide search ---------------------- */
+.panel-head { gap: 6px; align-items: center; }
+.panel-head.right { padding-right: 10px; }
+.panel-search {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 7px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.panel-search::placeholder { color: var(--muted); }
+.sec-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+/* The whole heading is the hit area, not just the caret. */
+.sec-t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.sec-t:hover { color: var(--text); }
+.sec-caret { color: var(--accent); flex: none; }
+
+/* A named object reads as the name; the type it is stays in the tooltip and
+   comes back the moment you clear the field. */
+.obj-label.named { font-weight: 500; }
+.obj-row.editing { padding: 2px 4px; }
+.obj-name {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+}
+.obj-name::placeholder { color: var(--muted); }
