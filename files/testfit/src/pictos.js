@@ -19,20 +19,55 @@ export function pathFrom(ctx, pts, close) {
   pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
   if (close) ctx.closePath();
 }
-// A road arrow: shaft plus head, optionally with a branch to one side.
-function arrow(ctx, branch) {
+// A road arrow: a shaft up the middle, a head straight ahead, and a branch to
+// either side. `dirs` names which of the three the marking permits, so one
+// painter covers every legal combination instead of one function per glyph —
+// which is what let "links + rechts" and "alle richtingen" be drawn at all.
+function arrow(ctx, dirs) {
+  const d = dirs || {};
+  // Without a head ahead, the shaft stops where the branches leave it. Left
+  // standing, the stub above them reads as a fourth, unmarked direction.
+  const top = d.ahead ? -0.3 : 0.12;
+  // Losing the head also loses the top half of the glyph, which would leave the
+  // marking hanging in the bottom of its box — and the caller positions by the
+  // centre, so it would sit low on the tarmac. Recentre what is actually drawn.
+  if (!d.ahead) ctx.translate(0, -(0.95 + 0.01) / 2);
   ctx.fillStyle = '#f8fafc';
-  pathFrom(ctx, [[-0.16, 0.95], [0.16, 0.95], [0.16, -0.3], [-0.16, -0.3]], true);
+  pathFrom(ctx, [[-0.16, 0.95], [0.16, 0.95], [0.16, top], [-0.16, top]], true);
   ctx.fill();
-  pathFrom(ctx, [[-0.45, -0.25], [0.45, -0.25], [0, -0.95]], true);
-  ctx.fill();
-  if (branch) {
-    const sx = branch === 'left' ? -1 : 1;
+  if (d.ahead) {
+    pathFrom(ctx, [[-0.45, -0.25], [0.45, -0.25], [0, -0.95]], true);
+    ctx.fill();
+  }
+  for (const sx of [d.left ? -1 : 0, d.right ? 1 : 0]) {
+    if (!sx) continue;
     pathFrom(ctx, [[0, 0.35], [sx * 0.62, 0.35], [sx * 0.62, 0.12], [0, 0.12]], true);
     ctx.fill();
     pathFrom(ctx, [[sx * 0.55, 0.46], [sx * 0.55, 0.01], [sx * 0.95, 0.235]], true);
     ctx.fill();
   }
+}
+
+// Keren: up one side, over the top and back down the other, with the head
+// pointing where the driver ends up. Not a combination of the three directions
+// above, so it gets its own geometry: a half annulus for the bend plus a leg
+// either side of it.
+function uturn(ctx) {
+  const rOut = 0.52, rIn = 0.24, yTop = -0.34;
+  ctx.fillStyle = '#f8fafc';
+  // The bend. Both arcs run over the top (anticlockwise in canvas's y-down
+  // frame); the implicit lineTo between them closes the right-hand end flat.
+  ctx.beginPath();
+  ctx.arc(0, yTop, rOut, Math.PI, 0, true);
+  ctx.arc(0, yTop, rIn, 0, Math.PI, true);
+  ctx.closePath();
+  ctx.fill();
+  pathFrom(ctx, [[rIn, yTop], [rOut, yTop], [rOut, 0.95], [rIn, 0.95]], true);
+  ctx.fill();
+  pathFrom(ctx, [[-rOut, yTop], [-rIn, yTop], [-rIn, 0.2], [-rOut, 0.2]], true);
+  ctx.fill();
+  pathFrom(ctx, [[-0.66, 0.16], [-0.1, 0.16], [-0.38, 0.95]], true);
+  ctx.fill();
 }
 export function glyph(ctx, txt, size, color) {
   ctx.fillStyle = color || '#f8fafc';
@@ -56,11 +91,14 @@ export function plate(ctx, shape, fill, rim) {
 // Mutated at runtime when a symbol is imported, deliberately: it is the one
 // registry every consumer already reads from.
 export const PICTOS = {
-  arrowAhead: (ctx) => arrow(ctx),
-  arrowLeft: (ctx) => { ctx.rotate(-Math.PI / 2); arrow(ctx); },
-  arrowRight: (ctx) => { ctx.rotate(Math.PI / 2); arrow(ctx); },
-  arrowAheadL: (ctx) => arrow(ctx, 'left'),
-  arrowAheadR: (ctx) => arrow(ctx, 'right'),
+  arrowAhead: (ctx) => arrow(ctx, { ahead: true }),
+  arrowLeft: (ctx) => { ctx.rotate(-Math.PI / 2); arrow(ctx, { ahead: true }); },
+  arrowRight: (ctx) => { ctx.rotate(Math.PI / 2); arrow(ctx, { ahead: true }); },
+  arrowAheadL: (ctx) => arrow(ctx, { ahead: true, left: true }),
+  arrowAheadR: (ctx) => arrow(ctx, { ahead: true, right: true }),
+  arrowLeftRight: (ctx) => arrow(ctx, { left: true, right: true }),
+  arrowAll: (ctx) => arrow(ctx, { ahead: true, left: true, right: true }),
+  arrowUturn: uturn,
   speed: (ctx, ann) => {
     ctx.fillStyle = '#f8fafc';
     glyph(ctx, String(ann && ann.value != null ? ann.value : 20), 1.5, '#f8fafc');

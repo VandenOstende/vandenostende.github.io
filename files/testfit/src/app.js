@@ -4,24 +4,25 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=d4f790f9';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle, decorate, plausibility, applyPatch, sanitizePatch, buildSolveInput, VARY_AXES, ORIENT_KEY, axisOf, axisValueLabel, expandSweep, stableStringify, fnv1a } from './solver.js?v=c398da1a';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=d4f790f9';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=d4f790f9';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=d4f790f9';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d4f790f9';
-import { parseParcel, simplifyRing } from './importers.js?v=d4f790f9';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=d4f790f9';
+} from './geometry.js?v=c398da1a';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=c398da1a';
+import { geocode, reverseGeocode, latLonToLocal, localToLatLon } from './basemap.js?v=c398da1a';
+import { generateZone, DRESS_OPTIONS, DRESS_DEFAULTS } from './autopark.js?v=c398da1a';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=c398da1a';
+import { parseParcel, simplifyRing } from './importers.js?v=c398da1a';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=c398da1a';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=d4f790f9';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=d4f790f9';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=d4f790f9';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=d4f790f9';
-import { BUILD_ID } from './build.js?v=d4f790f9';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=d4f790f9';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=c398da1a';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=c398da1a';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=c398da1a';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=c398da1a';
+import { BUILD_ID } from './build.js?v=c398da1a';
+import { shareURL, decodeShare, shareCodeOf, MAX_SHARED_VARIANTS } from './share.js?v=c398da1a';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -245,6 +246,7 @@ const initialDoc = {
   manualStalls: [], // hand-placed stalls: { poly, type }
   assets: [], // imported symbols used by this plan: { id, name, src, w, h, height }
   buildingStyles: [], // imported building styles used by this plan (see buildings.js)
+  variants: [], // kept layout alternatives: { id, label, patch, gen } — patches only, never geometry
 };
 
 // Simple history wrapper: { past[], present, future[] }.
@@ -345,13 +347,14 @@ export const UI_PARTS = [
   { id: 'secSun', group: 'Rechterpaneel', label: 'Zon en schaduw' },
   { id: 'secLight', group: 'Rechterpaneel', label: 'Licht en opbrengst' },
   { id: 'secStallAisle', group: 'Rechterpaneel', label: 'Vak & rijstrook' },
-  { id: 'secConstraints', group: 'Rechterpaneel', label: 'Site-constraints' },
   { id: 'secMix', group: 'Rechterpaneel', label: 'Vaktypes (mix)' },
   { id: 'secProgram', group: 'Rechterpaneel', label: 'Programma & ratio' },
+  { id: 'secSchemes', group: 'Rechterpaneel', label: "Schema's" },
 
   { id: 'tbProject', group: 'Werkbalk', label: 'Plannaam' },
   { id: 'tbTools', group: 'Werkbalk', label: 'Gereedschappen' },
   { id: 'tbLibrary', group: 'Werkbalk', label: 'Bibliotheek' },
+  { id: 'tbVariants', group: 'Werkbalk', label: 'Varianten' },
   { id: 'tbNewSite', group: 'Werkbalk', label: 'Nieuwe site' },
   { id: 'tbAxis', group: 'Werkbalk', label: 'Rij-as & Reset' },
   { id: 'tbUndo', group: 'Werkbalk', label: 'Undo / Redo' },
@@ -372,7 +375,7 @@ const WORKSPACE_PRESETS = {
   Alles: null, // null = everything visible
   Minimaal: ['tbTools', 'tbView', 'tbZoom', 'ovHud'],
   Tekenen: ['panelLeft', 'secToolOpts', 'secObjects', 'secSiteShape', 'tbTools', 'tbLibrary', 'tbNewSite', 'tbUndo', 'tbView', 'tbZoom', 'ovHud', 'ovHint'],
-  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'tbTools', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
+  Analyse: ['panelRight', 'secMetrics', 'secDrive', 'secLight', 'secStallAisle', 'secMix', 'secProgram', 'secSchemes', 'tbTools', 'tbVariants', 'tbView', 'tbZoom', 'tbExport', 'ovDealbar', 'ovHud'],
 };
 const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max: 560, def: 300 } };
 
@@ -392,15 +395,70 @@ const BUILD_FAMILIES = [
 // through here, because the one that did not crashed the whole canvas.
 const styleOf = (key) => BUILDING_USES[key] || BUILDING_USES[DEFAULT_USE];
 
+// ---------- Toolbar icons ----------
+// The stroked 24px glyphs the design draws, path data taken from the mock. They
+// replace emoji, which render at whatever size and weight the platform font
+// feels like and looked nothing like the rest of the bar on Windows. Only the
+// four the design actually draws as SVG: it keeps the eye, the Fit arrows and
+// the undo/redo hooks as glyphs, so those stay glyphs here too.
+const ICON_PATHS = {
+  measure: ['M2 8h20v8H2z', 'M7 8v3M12 8v4M17 8v3'],
+  library: ['M8 21 5 3M16 21l3-18', 'M12 5v3M12 11v3M12 17v3'],
+  save: ['M4 4h11l5 5v11H4z', 'M8 4v5h7', 'M8 13h8v7H8z'],
+  export: ['M12 15V3', 'm8 7 4-4 4 4', 'M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4'],
+};
+function icon(name, size = 17) {
+  const paths = ICON_PATHS[name];
+  if (!paths) return '';
+  return html`<svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" aria-hidden="true"
+    stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    ${paths.map((d, i) => html`<path key=${i} d=${d}></path>`)}
+  </svg>`;
+}
+
 const TOOL_HELP = {
   select: 'Klik iets aan om het te bewerken, of sleep een kader voor meerdere objecten. Kies een gereedschap in de bibliotheek.',
   site: 'Teken de kavelgrens. De solver vult alleen wat binnen deze grens ligt.',
   obstacle: 'Gebouw of uitsluitingszone als rechthoek.',
   obstaclepoly: 'Gebouw of uitsluitingszone in vrije vorm.',
   placestall: 'Zet losse parkeervakken neer, ook buiten wat de solver bedacht.',
+  autopark: 'Teken een zone; de parking verschijnt terwijl je tekent. Dubbelklik legt hem vast.',
   measure: 'Meet een afstand of een reeks afstanden op de plattegrond.',
   pan: 'Sleep om de plattegrond te verschuiven.',
 };
+
+// The four tools the toolbar has and the catalogue does not: they draw the site
+// and the buildings themselves rather than something laid on top. The library
+// opens with the promise "alles wat je op het kavel kunt tekenen", and left
+// these out — so the four things a new plan needs first were the only ones the
+// dialog would not show. They are `tool` values, not annotation kinds, hence a
+// list of their own rather than an ANNOT_TYPES group.
+// How many tools of each group the side palette shows before you ask for more.
+// The palette was switched off by default because the full catalogue pushed the
+// tool options and the object list below the fold; the design's answer is to
+// show a shortlist per group with the group's real count beside it, and let the
+// search reveal the rest. A group absent from this table shows none of its
+// tools until you open it — those are the long tails (40 markings, pictograms,
+// signs) nobody scrolls a side panel for.
+const PALETTE_PINNED = { Rijden: 3, 'Langzaam verkeer': 4, Groen: 2, Licht: 2, Overig: 2, Eigen: 4 };
+
+const PRIMARY_GROUP = 'Site & gebouw';
+const PRIMARY_TOOLS = [
+  { id: 'site', label: 'Site tekenen', key: 'P', color: '#b8860b',
+    desc: 'Klik punten voor de siterand; dubbelklik of het beginpunt sluit de vorm.' },
+  { id: 'obstacle', label: 'Gebouw (rechthoek)', key: 'B', color: '#64748b',
+    desc: 'Sleep een rechthoek voor een gebouw of uitsluitingszone.' },
+  { id: 'obstaclepoly', label: 'Gebouw (vrije vorm)', key: 'N', color: '#94a3b8',
+    desc: 'Klik punten; dubbelklik sluit. Een hoek verslepen hertekent het exterieur.' },
+  { id: 'placestall', label: 'Parkeervak plaatsen', key: 'K', color: '#2563eb',
+    desc: 'Losse vakken plaatsen; ze snappen aan bestaande vakken en aan wegen.' },
+  { id: 'autopark', label: 'Auto-park zone', key: 'A', color: '#6a5bc4',
+    desc: 'Teken een zone en de parking verschijnt terwijl je tekent — met groen, licht en belijning.' },
+];
+// The keyboard letters that really exist, for the card badges. Only these three
+// annotations have one; the rest of the catalogue has none, and the design
+// leaves that badge empty for them.
+const ANNOT_KEYS = { road: 'W', driveway: 'I', drivethru: 'D' };
 
 // ---------- Canvas theme ----------
 // Only the colours that actually break when the backdrop flips. Meaning-bearing
@@ -888,6 +946,13 @@ function draw(ctx, opts) {
     }
   }
 
+  // The auto-park proposal, above the plan it is not part of yet.
+  if (opts.zonePreview !== undefined && opts.drawing) {
+    const zpts = opts.drawing.points || [];
+    const live = opts.hover && zpts.length >= 2 ? [...zpts, opts.hover] : zpts;
+    drawZonePreview(ctx, opts.zonePreview, live, w2s, view.scale);
+  }
+
   // Knelpunten last of all — they are a verdict on the plan, not part of it.
   if (opts.driveIssues && opts.driveIssues.length) {
     drawIssues(ctx, opts.driveIssues, opts.focusIssue == null ? -1 : opts.focusIssue, w2s, view.scale);
@@ -911,6 +976,10 @@ function draw(ctx, opts) {
 }
 
 function pathPoly(ctx, poly, w2s, close) {
+  // A raw solver aisle is a bare quad with no `.poly`, so a caller that hands us
+  // one — or that compares `aisleSel` against an absent `.key` and finds
+  // undefined === undefined — arrives here with nothing to draw.
+  if (!poly || !poly.length) return;
   ctx.beginPath();
   poly.forEach((p, i) => {
     const s = w2s(p);
@@ -964,7 +1033,68 @@ function drawRotGrip(ctx, s) {
  * library can never show something the canvas would not draw, and it costs no
  * second set of artwork to keep in step.
  */
-function drawToolPreview(ctx, kind, w, h) {
+// The four primary tools have no ANNOT_TYPES entry to paint from, so each gets
+// its own thumbnail. Same rule as the rest of the library: what the card shows
+// is the shape the tool actually leaves on the plan.
+function drawPrimaryPreview(ctx, id, w, h) {
+  const pad = Math.min(w, h) * 0.16;
+  if (id === 'site') {
+    ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+    ctx.strokeRect(pad, pad, w - pad * 2, h - pad * 2);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(184,134,11,0.10)';
+    ctx.fillRect(pad, pad, w - pad * 2, h - pad * 2);
+    for (const [x, y] of [[pad, pad], [w - pad, pad], [w - pad, h - pad], [pad, h - pad]]) {
+      ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    return;
+  }
+  if (id === 'obstacle' || id === 'obstaclepoly') {
+    const pts = id === 'obstacle'
+      ? [[pad * 1.6, pad * 1.3], [w - pad * 1.6, pad * 1.3], [w - pad * 1.6, h - pad * 1.3], [pad * 1.6, h - pad * 1.3]]
+      : [[pad * 1.4, pad * 2], [w * 0.46, pad * 1.1], [w - pad * 1.3, pad * 1.8],
+         [w - pad * 1.8, h - pad * 1.2], [pad * 2.2, h - pad * 1.5]];
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(100,116,139,0.42)'; ctx.fill();
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1.6; ctx.stroke();
+    return;
+  }
+  if (id === 'autopark') {
+    // What the tool makes: a green edge, a row of bays, a lamp.
+    ctx.fillStyle = 'rgba(63,155,70,0.55)';
+    ctx.fillRect(pad * 0.5, pad * 0.5, w - pad, h - pad);
+    ctx.fillStyle = 'rgba(111,114,133,0.35)';
+    ctx.fillRect(pad * 1.8, pad * 1.8, w - pad * 3.6, h - pad * 3.6);
+    const bw2 = (w - pad * 3.6) / 6;
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = i === 1 ? '#6366f1' : 'rgba(37,99,235,0.30)';
+      ctx.fillRect(pad * 1.8 + bw2 * (i + 0.3), pad * 2.2, bw2 * 0.72, h * 0.3);
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1;
+      ctx.strokeRect(pad * 1.8 + bw2 * (i + 0.3), pad * 2.2, bw2 * 0.72, h * 0.3);
+    }
+    ctx.strokeStyle = '#6a5bc4'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+    ctx.strokeRect(pad * 0.5, pad * 0.5, w - pad, h - pad);
+    ctx.setLineDash([]);
+    return;
+  }
+  // placestall — a short run of bays off an aisle, which is what one click gives
+  // you: the stall, snapped to whatever is already there.
+  ctx.fillStyle = 'rgba(111,114,133,0.30)';
+  ctx.fillRect(0, h * 0.62, w, h * 0.38);
+  const bw = w / 5.5;
+  for (let i = 0; i < 5; i++) {
+    const x = bw * 0.35 + i * bw;
+    ctx.fillStyle = i === 2 ? '#2563eb' : 'rgba(37,99,235,0.28)';
+    ctx.fillRect(x, h * 0.2, bw * 0.78, h * 0.42);
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1;
+    ctx.strokeRect(x, h * 0.2, bw * 0.78, h * 0.42);
+  }
+}
+
+function drawToolPreview(ctx, kind, w, h, value) {
   const t = ANNOT_TYPES[kind] || {};
   ctx.save();
   ctx.clearRect(0, 0, w, h);
@@ -977,6 +1107,11 @@ function drawToolPreview(ctx, kind, w, h) {
     || t.group === 'Markeringen' || kind === 'hatchZone' || kind === 'bayLines';
   ctx.fillStyle = onTarmac ? '#2e3140' : '#e9ebf3';
   ctx.fillRect(0, 0, w, h);
+  if (PRIMARY_TOOLS.some((p) => p.id === kind)) {
+    drawPrimaryPreview(ctx, kind, w, h);
+    ctx.restore();
+    return;
+  }
   const cx = w / 2, cy = h / 2;
 
   if (t.mode === 'point' && t.picto && PICTOS[t.picto]) {
@@ -985,7 +1120,7 @@ function drawToolPreview(ctx, kind, w, h) {
     const r = Math.min(w, h) * 0.34;
     ctx.scale(r, r);
     ctx.shadowColor = 'rgba(15,23,42,0.6)'; ctx.shadowBlur = 0.22;
-    PICTOS[t.picto](ctx, { value: t.value });
+    PICTOS[t.picto](ctx, { value: value != null ? value : t.value });
     ctx.restore();
   } else if (t.mode === 'point') {
     ctx.beginPath(); ctx.arc(cx, cy, Math.min(w, h) * 0.22, 0, Math.PI * 2);
@@ -1101,8 +1236,45 @@ function BuildPreview({ styleKey }) {
   return html`<canvas ref=${ref} className="lib-prev"></canvas>`;
 }
 
+// A candidate's plan, painted by the app's own `draw()` rather than a stand-in,
+// so a card cannot show something the plan would not. Its own effect per card,
+// so React spreads twelve canvases across commits instead of one long burst.
+//
+// `result` must be a DECORATED result: `draw` reads `.poly` and `.key` off every
+// aisle, which a raw solver quad does not have. The three selection fields are
+// passed explicitly as null rather than left undefined — `undefined === undefined`
+// would make every aisle read as the selected one.
+function VariantPreview({ result, doc, sitePoly, heavy }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth || 220, h = c.clientHeight || 74;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!result || heavy) return;
+    const view = fitView(sitePoly, w, h, 4);
+    if (!view) return;
+    try {
+      draw(ctx, {
+        view, doc, result, sitePoly, size: { w, h }, dpr,
+        layers: { site: true, setback: false, building: true, parking: true,
+          infra: true, grid: false, shadow: false, lightmap: false, context: false },
+        drawing: null, hover: null, selection: null, stallSel: [], aisleSel: null,
+        measure: null, showHandles: false,
+      });
+    } catch (e) { /* a thumbnail is never worth taking the dialog down for */ }
+  }, [result, heavy, sitePoly, doc.params.stallWidth]);
+  return html`<canvas ref=${ref} className="lib-prev var-prev"></canvas>`;
+}
+
 // A canvas that paints itself once from drawToolPreview, at device resolution.
-function ToolPreview({ kind }) {
+// `value` repaints it when the number on the card changes, so a speed marking
+// set to 30 shows a 30 rather than the catalogue's default.
+function ToolPreview({ kind, value }) {
   const ref = useRef(null);
   useEffect(() => {
     const c = ref.current;
@@ -1112,8 +1284,8 @@ function ToolPreview({ kind }) {
     c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
     const ctx = c.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    try { drawToolPreview(ctx, kind, w, h); } catch (e) {}
-  }, [kind]);
+    try { drawToolPreview(ctx, kind, w, h, value); } catch (e) {}
+  }, [kind, value]);
   return html`<canvas ref=${ref} className="lib-prev"></canvas>`;
 }
 
@@ -1207,6 +1379,25 @@ const ASSET_MAX_CHARS = 256 * 1024;    // per asset, as stored (data-URL text)
 const ASSET_LIB_MAX_CHARS = 2 * 1024 * 1024; // whole library
 const ASSET_DEF_H = 2.5;               // default height in metres, for 3D
 const ASSETS_KEY = 'pp_assets';
+
+// ---------- Asset categories ----------
+// Your own filing for your own symbols, and only that: the category groups the
+// assets tab, it does not become the annotation's `group`. ANNOT_GROUPS is a
+// fixed list and the palette filters against it, so an asset filed under
+// "Bomen" would match no group at all and vanish from the side palette
+// entirely. Assets stay in 'Eigen' there; this is the dialog's own axis.
+const ASSET_CATS_KEY = 'pp_asset_cats';
+const ASSET_CAT_NONE = 'Ongecategoriseerd';
+const catOf = (a) => (a && a.cat) || ASSET_CAT_NONE;
+function readAssetCats() {
+  try {
+    const v = JSON.parse(localStorage.getItem(ASSET_CATS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim()) : [];
+  } catch (e) { return []; }
+}
+function writeAssetCats(list) {
+  try { localStorage.setItem(ASSET_CATS_KEY, JSON.stringify(list)); } catch (e) {}
+}
 
 const ASSET_IMAGES = new Map(); // id → HTMLImageElement
 let assetRepaint = () => {};    // wired to the canvas renderer once it exists
@@ -1817,6 +2008,52 @@ function drawAnnotations(ctx, anns, w2s, scale, under, selIdx) {
   }
 }
 
+// The auto-park zone as it is being drawn: the outline, the tarmac, the bays and
+// everything that will be dropped with them. Painted with the app's own
+// annotation painters rather than stand-ins, so the preview cannot show
+// something the plan would not draw — the same promise the tool library makes.
+//
+// Drawn at reduced opacity and over the top of everything: this is a proposal,
+// not yet part of the plan, and it should read that way.
+function drawZonePreview(ctx, zp, zone, w2s, scale) {
+  if (!zone || zone.length < 3) return;
+  ctx.save();
+
+  // The outline you are dragging.
+  pathPoly(ctx, zone, w2s, true);
+  ctx.fillStyle = 'rgba(106,91,196,0.07)';
+  ctx.fill();
+  ctx.setLineDash([7, 5]);
+  ctx.strokeStyle = TH.sel;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (!zp || !zp.stalls.length) { ctx.restore(); return; }
+
+  ctx.globalAlpha = 0.85;
+  // Everything that goes under the parking first (grass, bike parking), then
+  // the tarmac and bays, then what lies on top (trees, lamps, markings, signs).
+  drawAnnotations(ctx, zp.annotations, w2s, scale, true, null);
+
+  for (const a of zp.aisles || []) {
+    pathPoly(ctx, a.poly || a, w2s, true);
+    ctx.fillStyle = TH.aisle;
+    ctx.fill();
+  }
+  const lw = Math.max(1, 0.12 * scale);
+  for (const st of zp.stalls) {
+    const info = STALL_TYPES[st.type] || STALL_TYPES.standard;
+    pathPoly(ctx, st.poly, w2s, true);
+    if (st.type !== 'standard') { ctx.fillStyle = hexA(info.color, 0.5); ctx.fill(); }
+    ctx.strokeStyle = TH.onStall;
+    ctx.lineWidth = lw;
+    ctx.stroke();
+  }
+  drawAnnotations(ctx, zp.annotations, w2s, scale, false, null);
+  ctx.restore();
+}
+
 // Measuring tape: each leg labelled, the running total at the cursor, and the
 // enclosed area once three points make a shape. Deliberately drawn last and in
 // the accent colour so it reads as a tool, not as part of the plan.
@@ -1911,6 +2148,23 @@ function App() {
   const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true, shadow: false, lightmap: false });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
+  // The editable number a speed marking or a lamp post carries, chosen before
+  // the thing is placed rather than corrected afterwards. Null for the tools
+  // that have no such number.
+  const [annotValue, setAnnotValue] = useState(null);
+  // Auto-park: what the zone tool should generate along with the bays. Kept in
+  // localStorage rather than the document — it is how you like to work, not a
+  // property of this plan.
+  const [zoneDress, setZoneDress] = useState(() => {
+    try { return { ...DRESS_DEFAULTS, ...(JSON.parse(localStorage.getItem('pp_zone_dress') || '{}') || {}) }; }
+    catch (e) { return { ...DRESS_DEFAULTS }; }
+  });
+  const [zoneMsg, setZoneMsg] = useState('');
+  const toggleDress = (id) => setZoneDress((d) => {
+    const next = { ...d, [id]: !d[id] };
+    try { localStorage.setItem('pp_zone_dress', JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' (object) | 'multi'
   const [annotLength, setAnnotLength] = useState(20); // m — the road object's length
@@ -1942,6 +2196,24 @@ function App() {
   const [libTab, setLibTab] = useState('infra');   // 'infra' | 'assets'
   const [libQuery, setLibQuery] = useState('');
   const [libPick, setLibPick] = useState(''); // the kind the dialog has highlighted
+  // Which member of each combo family is chosen, family id → kind. Remembered
+  // across opens: having to re-pick "keren" every time would defeat the card.
+  const [comboPick, setComboPick] = useState({});
+  // ---------- Variants ----------
+  const [varOpen, setVarOpen] = useState(false);
+  const [varAxes, setVarAxes] = useState(['angle', '']);   // one or two axis keys
+  const [varJobs, setVarJobs] = useState([]);              // what the sweep produced
+  const [varRun, setVarRun] = useState(null);              // { i, n } while solving
+  const [varSort, setVarSort] = useState('total');
+  const [varHidePoor, setVarHidePoor] = useState(false);
+  // Scores and geometry, keyed by content. Derived data, so a ref rather than
+  // state or the document: when the plan changes the keys simply stop matching
+  // and every card goes back to "—". There is nothing to remember to clear,
+  // which is the whole point — a stale number cannot be displayed because it
+  // cannot be looked up.
+  const varCache = useRef(new Map());
+  // The value the next placement carries, edited on the card before drawing.
+  const [libValue, setLibValue] = useState({}); // kind → number
   // When the plan was last written to a file. Not stored in the document: it is
   // a fact about this session's browser, and a loaded file's own timestamp
   // would say "saved" about a plan you have since changed.
@@ -1953,6 +2225,12 @@ function App() {
   // Imported symbols. The library is per-browser; a document carries its own
   // copies so a shared plan is not full of holes.
   const [assetLib, setAssetLib] = useState(() => readAssetLib());
+  // Categories you named yourself. Kept separately from the assets so a category
+  // survives being emptied — otherwise creating one and then moving its last
+  // symbol out would silently delete it.
+  const [assetCats, setAssetCats] = useState(() => readAssetCats());
+  const [assetCatFilter, setAssetCatFilter] = useState(''); // '' = alles
+  const [newCat, setNewCat] = useState('');
   // Imported building styles. Same shape as the symbol library: kept per browser
   // so they are there for the next plan, and copied into the document so a saved
   // or shared plan renders its buildings even for someone who never imported
@@ -1966,7 +2244,10 @@ function App() {
   // rather than silently missing for everyone who already saved a layout.
   // Parts that start off. A stored preference wins, including a stored `false`,
   // so switching one on is remembered and a later default cannot override it.
-  const HIDDEN_BY_DEFAULT = { secDraw: true, secAssets: true };
+  // The asset panel stays off: the library's own assets tab covers it, and now
+  // files your symbols by category too. The palette is back on — a shortlist per
+  // group is what made it affordable again (PALETTE_PINNED).
+  const HIDDEN_BY_DEFAULT = { secAssets: true };
   const [hidden, setHidden] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pp_ui_hidden') || '{}') || {};
@@ -2006,6 +2287,22 @@ function App() {
   const [result, setResult] = useState({ stalls: [], aisles: [], islands: [], turnarounds: [], orientationCount: 0 });
   const [solving, setSolving] = useState(false);
   const [geoSearch, setGeoSearch] = useState('');
+  // The design prints "51.0536 N · 3.7253 E — Gent, Wondelgem". The numbers are
+  // the answer; the name is what makes them readable at a glance. Debounced and
+  // best-effort: Nominatim rate-limits, and a plan whose place name is missing is
+  // in no way worse off than one that never asked.
+  const [editingName, setEditingName] = useState(false);
+  const [geoPlace, setGeoPlace] = useState('');
+  useEffect(() => {
+    const g = doc.geo;
+    if (!g || !isFinite(g.lat) || !isFinite(g.lon)) { setGeoPlace(''); return; }
+    let live = true;
+    const t = setTimeout(async () => {
+      const name = await reverseGeocode(g.lat, g.lon);
+      if (live) setGeoPlace(name);
+    }, 700);
+    return () => { live = false; clearTimeout(t); };
+  }, [doc.geo && doc.geo.lat, doc.geo && doc.geo.lon]);
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoMsg, setGeoMsg] = useState('');
   const [viewMode, setViewMode] = useState('2d');            // '2d' (flat map) | '3d' (tilted map)
@@ -2027,9 +2324,26 @@ function App() {
   const [fileOpen, setFileOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(true);   // welcome overlay on open
-  const [schemes, setSchemes] = useState(null);           // generated layout variants
-  const [optState, setOptState] = useState(null);         // { running, i, n } | { done, label, before, after }
   const [dealbarOpen, setDealbarOpen] = useState(true);   // bottom deal-tabulation bar
+  // The overlays sit above the tabulatiebalk, and 96px was a guess at how tall
+  // it is. Five columns wrap on a narrow window and the bar grows past it, which
+  // put the HUD inside the bar; hide the bar and the guess is wrong the other
+  // way. Measure the thing instead.
+  const dealRef = useRef(null);
+  const [dealH, setDealH] = useState(0);
+  useEffect(() => {
+    const el = dealRef.current;
+    if (!el) { setDealH(0); return; }
+    const read = () => setDealH(el.offsetHeight || 0);
+    read();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', read);
+      return () => window.removeEventListener('resize', read);
+    }
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [dealbarOpen, hidden.ovDealbar]);
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -2040,6 +2354,7 @@ function App() {
   const renderRef = useRef(() => {}); // always points at the latest renderNow
   const libOpenRef = useRef(() => {}); // latest openLib (for T)
   const dupRef = useRef(() => {});    // latest duplicateSelection (for Cmd/Ctrl+D)
+  const saveRef = useRef(() => {});   // latest saveJSON (for Cmd/Ctrl+S)
   const clipRef = useRef({});        // latest copy/cut/paste (for Cmd/Ctrl+C/X/V)
   const docRef = useRef(null);        // latest doc for the window key handler
   const vmRef = useRef('2d');          // latest viewMode (for the native wheel handler)
@@ -2061,6 +2376,9 @@ function App() {
   const workerRef = useRef(null);  // solver web worker (null → inline solve)
   const reqRef = useRef(0);        // latest solve request id (stale-drop)
   const lastArgsRef = useRef(null); // last solve args (for worker-error fallback)
+  const varWorkerRef = useRef(null);  // the batch worker (null → inline fallback)
+  const batchRef = useRef(0);         // latest batch id (stale-drop, like reqRef)
+  const batchCbRef = useRef(null);    // handler for the batch in flight
 
   // Once mounted, cancel the index.html boot-failure fallback.
   useEffect(() => {
@@ -2108,6 +2426,17 @@ function App() {
   // nearest the parking — a stand-in for the shop door, since buildings have no
   // modelled entrance. Empty means "nothing said", and the solver then behaves
   // exactly as it always did.
+  // ---------- Auto-park zone ----------
+  // The outline as it stands this instant: the points you have clicked, closed
+  // through wherever the cursor is. That is what makes the parking appear while
+  // you are still drawing rather than after you finish.
+  const zonePoly = useMemo(() => {
+    if (tool !== 'autopark' || !drawing) return null;
+    const pts = drawing.points || [];
+    const live = hover && pts.length >= 2 ? [...pts, hover] : pts;
+    return live.length >= 3 ? live : null;
+  }, [tool, drawing, hover]);
+
   const entries = useMemo(() => {
     const anns = doc.annotations || [];
     const acc = anns.filter((a) => a.kind === 'access' && a.points && a.points[0]).map((a) => ({ x: a.points[0].x, y: a.points[0].y }));
@@ -2126,11 +2455,25 @@ function App() {
     return [{ x: best.x, y: best.y }];
   }, [doc.annotations, doc.obstacles, sitePoly]);
 
+  // Generated on every change of the outline. `generateZone` is pure and
+  // measures ~9 ms on a 60x40 zone, so this runs inline: routing it through a
+  // worker would add a round trip to something already faster than a frame, and
+  // the preview has to keep up with the mouse.
+  const zonePreview = useMemo(() => {
+    if (!zonePoly) return null;
+    const obs = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
+    // Where people arrive from, so the entrance faces the site rather than the
+    // back fence: a real access point if the plan has one, else the site centre.
+    const from = entries.length ? entries[0] : (sitePoly.length ? polygonCentroid(sitePoly) : null);
+    try { return generateZone(zonePoly, { params: doc.params, obstacles: obs, entryFrom: from }, zoneDress); }
+    catch (e) { return null; }
+  }, [zonePoly, doc.obstacles, roadBlockers, doc.params, zoneDress, entries, sitePoly]);
+
   // Solve off the main thread via a web worker, so big sites don't freeze
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=d4f790f9', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=c398da1a', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2147,6 +2490,27 @@ function App() {
     return () => { if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; } };
   }, []);
 
+  // The batch worker. Its own thread on purpose — see variants.worker.js for why
+  // sharing the live one would leave the canvas stale while a sweep runs.
+  useEffect(() => {
+    let w;
+    try { w = new Worker(new URL('./variants.worker.js?v=c398da1a', import.meta.url), { type: 'module' }); }
+    catch (e) { w = null; }
+    if (w) {
+      w.onmessage = (e) => {
+        const m = e.data || {};
+        const cb = batchCbRef.current;
+        // Same stale-drop discipline as reqRef, one level up: a reply from a
+        // batch nobody is waiting for any more must not touch the UI.
+        if (!cb || m.batchId !== cb.batchId) return;
+        cb.onMsg(m);
+      };
+      w.onerror = () => { varWorkerRef.current = null; };
+      varWorkerRef.current = w;
+    }
+    return () => { if (varWorkerRef.current) { varWorkerRef.current.terminate(); varWorkerRef.current = null; } };
+  }, []);
+
   // Debounced solve whenever inputs change.
   useEffect(() => {
     clearTimeout(solveTimer.current);
@@ -2157,17 +2521,40 @@ function App() {
       setSolving(false);
       return;
     }
+    // One assembly, shared with every variant solve. Plain {x,y} throughout:
+    // this crosses postMessage into the worker.
+    const inp = buildSolveInput({
+      site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+      params: doc.params, orientationIndex: doc.orientationIndex, entries,
+    });
+
+    // Adopting a variant used to solve the winner twice: once to score the card,
+    // once because `doc.params` had changed. The variants batch caches its
+    // results under exactly the key this solve would ask for, so when one is
+    // there the answer is already known — and there is nothing to debounce,
+    // because there is nothing to wait for. Adopting lands in the same frame.
+    //
+    // `decorate` runs on top of whatever comes out of here, so the cache has to
+    // give back a RAW result. It stores the decorated one for the thumbnails, so
+    // the raw stalls and bare aisle quads are recovered from it: hand-placed
+    // stalls are dropped (decorate will add them back from the document) and
+    // each aisle goes back to being the bare quad solveParking returned.
+    const hit = varCache.current.get(solveKey(inp.params, inp.orientationIndex));
+    if (hit && hit.result) {
+      reqRef.current++; // anything still in flight is now stale
+      setResult({
+        stalls: hit.result.stalls.filter((st) => !st.manual).map((st) => ({ poly: st.poly, type: st.type })),
+        aisles: hit.result.aisles.map((a) => a.poly),
+        islands: hit.result.islands || [], turnarounds: hit.result.turnarounds || [],
+        orientationCount: hit.result.orientationCount || 0,
+      });
+      setSolving(false);
+      return;
+    }
+
     setSolving(true);
     solveTimer.current = setTimeout(() => {
-      // Align rows to the site's longest (control-point) edge when requested.
-      const base = doc.params.alignLongestEdge && doc.site.length >= 2
-        ? { ...doc.params, alignAngle: longestEdgeAngle(doc.site) }
-        : doc.params;
-      // Where people arrive, so the accessible spaces can land near it. Plain
-      // {x,y} only: this crosses postMessage into the worker.
-      const solveP = entries.length ? { ...base, entries } : base;
-      const solveObstacles = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
-      const args = [sitePoly, solveObstacles, solveP, doc.orientationIndex];
+      const args = [inp.site, inp.obstacles, inp.params, inp.orientationIndex];
       lastArgsRef.current = args;
       const reqId = ++reqRef.current;
       if (workerRef.current) {
@@ -2182,43 +2569,12 @@ function App() {
 
   // Apply manual overrides (stall type, aisle one-way) on top of the
   // solver output, keyed by position so marks survive re-solves.
-  const deco = useMemo(() => {
-    const ov = doc.overrides || {};
-    const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {}, ovAngles = ov.angles || {};
-    const locks = ov.locks || {}, lockS = locks.stalls || {}, lockA = locks.aisles || {};
-    const removed = ov.removed || {};
-    const w = doc.params.stallWidth, d = doc.params.stallDepth;
-    // Re-orient a stall to an absolute angle about its own centre (the key is
-    // centroid-based, so it's unchanged by the rotation and the override sticks).
-    const reangle = (poly, key) => {
-      const deg = ovAngles[key];
-      if (deg == null) return poly;
-      const c = polygonCentroid(poly), th = (deg * Math.PI) / 180;
-      const ux = Math.cos(th), uy = Math.sin(th), vx = -Math.sin(th), vy = Math.cos(th), hw = w / 2, hd = d / 2;
-      return [
-        { x: c.x - ux * hw - vx * hd, y: c.y - uy * hw - vy * hd },
-        { x: c.x + ux * hw - vx * hd, y: c.y + uy * hw - vy * hd },
-        { x: c.x + ux * hw + vx * hd, y: c.y + uy * hw + vy * hd },
-        { x: c.x - ux * hw + vx * hd, y: c.y - uy * hw + vy * hd },
-      ];
-    };
-    const stalls = result.stalls.map((st) => {
-      const key = stallKey(st.poly);
-      return { ...st, key, poly: reangle(st.poly, key), type: ovStalls[key] || st.type, locked: !!lockS[key], angle: ovAngles[key], manual: false };
-    }).filter((st) => !removed[st.key]);
-    // Hand-placed stalls, markable/lockable like solver stalls.
-    for (const ms of doc.manualStalls || []) {
-      const key = stallKey(ms.poly);
-      stalls.push({ poly: reangle(ms.poly, key), key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], angle: ovAngles[key], manual: true });
-    }
-    const gone = ov.aislesRemoved || {};
-    const aisles = result.aisles.map((q) => {
-      const key = aisleKey(q);
-      const o = ovAisles[key] || {};
-      return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
-    }).filter((a) => !gone[a.key]);
-    return { stalls, aisles, islands: result.islands || [], turnarounds: result.turnarounds || [], orientationCount: result.orientationCount };
-  }, [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
+  // The same function a variant is scored with — see solver.js. Two definitions
+  // of "the plan, with your manual decisions on it" is exactly how a comparison
+  // table ends up quoting numbers the plan never had.
+  const deco = useMemo(
+    () => decorate(result, { overrides: doc.overrides, manualStalls: doc.manualStalls, params: doc.params }),
+    [result, doc.overrides, doc.manualStalls, doc.params.stallWidth, doc.params.stallDepth]);
 
   // Every place two drawn ways meet, with whatever was decided about it.
   // ---------- Sun and shadow ----------
@@ -2401,7 +2757,7 @@ function App() {
     else {
       draw(ctx, {
         view, doc, result: deco, layers, dpr,
-        drawing, hover, selection, size: sizeRef.current,
+        drawing, hover, selection, size: sizeRef.current, zonePreview,
         showHandles: tool === 'select', measure, guides: guidesRef.current,
         stallSel, aisleSel, marquee: marqueeRef.current, sitePoly, crossings, netRoot, multiSel, shadows,
         lightField, lightGrid,
@@ -2412,7 +2768,7 @@ function App() {
       });
     }
     if (!drewRef.current) { drewRef.current = true; mark('ok'); }
-  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid, pickArm]);
+  }, [view, doc, deco, layers, drawing, hover, selection, tool, stallSel, aisleSel, viewMode, sitePoly, measure, crossings, multiSel, driveIssues, showIssues, focusIssue, shadows, lightField, lightGrid, pickArm, zonePreview]);
 
   renderRef.current = renderNow;
   carryRidersRef.current = carryRiders;
@@ -2515,7 +2871,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=d4f790f9').then(async (m) => {
+    import('./map3d.js?v=c398da1a').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -2606,6 +2962,17 @@ function App() {
     if (!p) return;
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, stallWidth: p.stallWidth, stallDepth: p.stallDepth, aisleWidth: p.aisleWidth } }) });
   };
+  // Which preset the current dimensions are, if any — derived rather than
+  // stored, so moving a slider off a preset shows that immediately instead of
+  // leaving a stale name selected. The tolerance is half of the sliders' own
+  // 0.1 m step, so a value that came from a preset always matches it back.
+  const activePreset = useMemo(() => {
+    const near = (a, b) => Math.abs(a - b) < 0.05;
+    const { stallWidth, stallDepth, aisleWidth } = doc.params;
+    const hit = Object.entries(PRESETS).find(([, p]) =>
+      near(p.stallWidth, stallWidth) && near(p.stallDepth, stallDepth) && near(p.aisleWidth, aisleWidth));
+    return hit ? hit[0] : '';
+  }, [doc.params.stallWidth, doc.params.stallDepth, doc.params.aisleWidth]);
 
   // ---------- Pointer interactions ----------
   const getWorld = (e) => {
@@ -2914,11 +3281,12 @@ function App() {
     anns[index] = { ...anns[index], turnR: R };
     return { ...d, annotations: anns };
   } });
-  const startAnnot = (kind) => {
+  const startAnnot = (kind, value) => {
     const t = ANNOT_TYPES[kind];
     setAnnotKind(kind);
     setAnnotWidth(t.width || 2);
     setAnnotCurved(!!t.curved);
+    setAnnotValue(t.value == null ? null : (value == null ? t.value : value));
     setTool('annot'); setDrawing(null); clearSel();
   };
   const finishAnnotLine = (points, closed = false) => {
@@ -3314,6 +3682,17 @@ function App() {
       return;
     }
 
+    if (tool === 'autopark') {
+      const first = drawing && drawing.points[0];
+      const { w2s } = makeTransform(view);
+      if (first && drawing.points.length >= 3 && dist(w2s(first), sp) < 12) {
+        commitZone(drawing.points); return;
+      }
+      const pt = drawPoint(sp, e.shiftKey);
+      setDrawing((d) => ({ points: [...(d ? d.points : []), pt] }));
+      return;
+    }
+
     if (tool === 'obstacle') {
       dragRef.current = { mode: 'rect', start: wp, cur: wp };
       return;
@@ -3342,6 +3721,9 @@ function App() {
       if (t.mode === 'point') {
         const at = annotKind === 'access' ? nearestOnSiteEdge(wp) : snap;
         const ann = { kind: annotKind, points: [at], width: annotWidth };
+        // Carry the number chosen in the library, so a run of 30-signs does not
+        // have to be corrected one at a time after the fact.
+        if (t.value != null && annotValue != null) ann.value = annotValue;
         // Markings and signs read along the road they belong to, so line them
         // up with the nearest one. R adjusts from there.
         if (t.picto) ann.angle = (roadAngleAt(wp) + stallRot) % 360;
@@ -3423,7 +3805,7 @@ function App() {
         setMeasure({ points: pts, cur: at });
         return;
       }
-      if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly') && drawing) setHover(drawPoint(sp, e.shiftKey));
+      if ((tool === 'site' || tool === 'annot' || tool === 'obstaclepoly' || tool === 'autopark') && drawing) setHover(drawPoint(sp, e.shiftKey));
       else if (tool === 'placestall') { const s = snapStall(wp); setHover({ stallPreview: stallAt(s.center, s.theta), onRoad: s.onRoad }); }
       return;
     }
@@ -3683,7 +4065,9 @@ function App() {
 
   const onDoubleClick = (e) => {
     if (tool === 'measure') { setMeasure((m) => (m ? { points: m.points, done: true } : m)); return; }
-    if (tool === 'site' && drawing && drawing.points.length >= 3) {
+    if (tool === 'autopark' && drawing && drawing.points.length >= 3) {
+      commitZone(drawing.points);
+    } else if (tool === 'site' && drawing && drawing.points.length >= 3) {
       commitSite(drawing.points); setDrawing(null); setTool('select');
     } else if (tool === 'obstaclepoly' && drawing && drawing.points.length >= 3) {
       commitObstaclePoly(drawing.points); setDrawing(null); setTool('select');
@@ -3740,6 +4124,37 @@ function App() {
 
   const commitSite = (points) =>
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, site: points, obstacles: [] }) });
+  // Bake the zone into the plan. Everything generated becomes an ordinary object:
+  // the bays join `manualStalls` so they can be marked, locked and renamed like
+  // any hand-placed bay, and the trees, grass, lamps and markings join
+  // `annotations` where they are indistinguishable from ones you drew yourself.
+  // One COMMIT, so one Cmd+Z takes the whole zone back out again.
+  //
+  // Site-wide automatic parking is switched off at the same time. You have just
+  // said where the parking goes; leaving the solver to fill the rest of the
+  // parcel would lay bays straight through what you drew.
+  const commitZone = (points) => {
+    const done = () => { setDrawing(null); setHover(null); setTool('select'); };
+    if (!points || points.length < 3) { done(); return; }
+    const obs = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
+    const from = entries.length ? entries[0] : (sitePoly.length ? polygonCentroid(sitePoly) : null);
+    let gen;
+    try { gen = generateZone(points, { params: doc.params, obstacles: obs, entryFrom: from }, zoneDress); }
+    catch (e) { gen = null; }
+    if (!gen || !gen.stalls.length) {
+      setZoneMsg('Hier past geen parking in — maak de zone groter of zet de vakmaten kleiner.');
+      done();
+      return;
+    }
+    dispatch({ type: 'COMMIT', updater: (d) => ({
+      ...d,
+      autoParking: false,
+      manualStalls: [...(d.manualStalls || []), ...gen.stalls],
+      annotations: [...(d.annotations || []), ...gen.annotations],
+    }) });
+    setZoneMsg(`${gen.metrics.stalls} vakken en ${gen.annotations.length} objecten geplaatst.`);
+    done();
+  };
   const commitObstaclePoly = (points) => {
     if (!points || points.length < 3) return;
     dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, obstacles: [...d.obstacles, newBuilding(points.slice())] }) });
@@ -4154,6 +4569,9 @@ function App() {
     }
   };
   dupRef.current = duplicateSelection;
+  // Through a ref for the same reason: the key listener is registered on a
+  // narrow dep list, and a captured saveJSON would write yesterday's document.
+  saveRef.current = () => saveJSON();
   clipRef.current = { copy: copySelection, cut: cutSelection, paste: pasteClipboard };
 
   // Wheel handling is attached natively (passive:false) so preventDefault works.
@@ -4219,6 +4637,9 @@ function App() {
       if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); dispatch({ type: e.shiftKey ? 'REDO' : 'UNDO' }); return; }
       if (meta && e.key.toLowerCase() === 'y') { e.preventDefault(); dispatch({ type: 'REDO' }); return; }
       if (meta && e.key.toLowerCase() === 'd') { e.preventDefault(); dupRef.current(); return; }
+      // The design's save button advertises ⌘S, so ⌘S has to save. It was the
+      // only thing on that toolbar promising a shortcut that did not exist.
+      if (meta && e.key.toLowerCase() === 's') { e.preventDefault(); saveRef.current(); return; }
       if (meta && e.key.toLowerCase() === 'c') { e.preventDefault(); clipRef.current.copy(); return; }
       if (meta && e.key.toLowerCase() === 'x') { e.preventDefault(); clipRef.current.cut(); return; }
       if (meta && e.key.toLowerCase() === 'v') { e.preventDefault(); clipRef.current.paste(); return; }
@@ -4228,7 +4649,14 @@ function App() {
         case 'b': setTool('obstacle'); break;
         case 'n': setTool('obstaclepoly'); setDrawing({ points: [] }); break;
         case 'k': setTool('placestall'); break;
+        case 'a': setTool('autopark'); setDrawing({ points: [] }); break;
         case 'm': setTool('measure'); setMeasure({ points: [] }); setDrawing(null); break;
+        // The three ways in and out. The design puts a letter on these cards, so
+        // the letter has to do something — a badge for a key that does not exist
+        // is worse than no badge. They are the only annotations with one.
+        case 'w': startAnnot('road'); break;
+        case 'i': startAnnot('driveway'); break;
+        case 'd': startAnnot('drivethru'); break;
         // Hold to pan, release to go back. Without preventDefault the browser
         // also "clicks" whatever toolbar button still has focus, which set the
         // tool straight back and made Space-to-pan do nothing at all after you
@@ -4266,6 +4694,7 @@ function App() {
           // Menus first, outermost thing last: Escape should undo the most
           // recent layer, and an open dropdown stayed open through it.
           if (viewMenuOpen || exportOpen || fileOpen) { setViewMenuOpen(false); setExportOpen(false); setFileOpen(false); break; }
+          if (varOpen) { setVarOpen(false); break; }
           if (libOpen) { setLibOpen(false); break; }
           if (placingRef.current) { cancelPlacing(); break; }
           setDrawing(null); setMeasure(null); setTool('select'); setSelection(null); setStallSel([]); setAisleSel(null); setMultiSel({ anns: [], obs: [] });
@@ -4301,7 +4730,7 @@ function App() {
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
-  }, [selection, stallSel, aisleSel, tool, multiSel, placing, libOpen, viewMenuOpen, exportOpen, fileOpen]);
+  }, [selection, stallSel, aisleSel, tool, multiSel, placing, libOpen, varOpen, viewMenuOpen, exportOpen, fileOpen]);
 
   // ---------- Toolbar actions ----------
   const cycleAxis = () =>
@@ -4311,111 +4740,233 @@ function App() {
     const fv = fitView(sitePoly, sizeRef.current.w, sizeRef.current.h);
     if (fv) setView(fv);
   };
-  // Design schemes: solve a handful of layout variants and compare their yield,
-  // so the user can pick the best (TestFit "Design Schemes").
-  const genSchemes = () => {
-    const site = sitePoly;
-    if (!site || site.length < 3) { setSchemes([]); return; }
-    const align = site.length >= 2 ? longestEdgeAngle(site) : 0;
-    const siteArea = polygonArea(site);
-    const variants = [
-      { label: 'Recht 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: false } },
-      { label: 'Schuin 60°', patch: { layout: 'strip', angle: 60, alignLongestEdge: false } },
-      { label: 'Schuin 45°', patch: { layout: 'strip', angle: 45, alignLongestEdge: false } },
-      { label: 'Uitgelijnd op rand', patch: { layout: 'strip', angle: 90, alignLongestEdge: true } },
-    ];
-    // Curved layouts only make sense (and only pack cleanly) on curved sites.
-    if (doc.siteCurved) {
-      variants.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
-      variants.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
-    }
-    const out = variants.map((v) => {
-      const p = { ...doc.params, ...v.patch };
-      const solveP = p.alignLongestEdge ? { ...p, alignAngle: align } : p;
-      let res;
-      try { res = solveParking(site, doc.obstacles, solveP, 0); } catch (e) { res = { stalls: [] }; }
-      const physical = (res.stalls || []).length;
-      const density = physical > 0 ? siteArea / physical : 0; // m² of site per stall
-      return { label: v.label, patch: v.patch, physical, density };
-    });
-    // "Best" = most stalls among plausible (non-overlapping) layouts. A density
-    // below ~20 m²/stall means stalls overlap, so those never win the star.
-    const eligible = out.filter((o) => o.density >= 20);
-    const max = Math.max(1, ...(eligible.length ? eligible : out).map((o) => o.physical));
-    out.forEach((o) => { o.best = o.physical === max && (o.density >= 20 || !eligible.length); });
-    out.sort((a, b) => b.physical - a.physical);
-    setSchemes(out);
+  // 100 % is "the whole site fits", which is the only reference on a plan view
+  // that means anything — there is no natural 1:1 for a drawing in metres. Not
+  // memoised: fitView is a bounding box, and this recomputes on the same renders
+  // the HUD does anyway.
+  const zoomPct = (() => {
+    const fv = fitView(sitePoly, sizeRef.current.w, sizeRef.current.h);
+    return fv && fv.scale > 0 ? Math.round((view.scale / fv.scale) * 100) : null;
+  })();
+  // Score one candidate exactly as the live plan is scored: the same solve
+  // input, the same decoration, the same computeMetrics. Anything less and a
+  // card quotes a number you will not get when you adopt it.
+  //
+  // Off-thread version: one batch, streamed. `onEach(index, scored)` fires as
+  // each job lands, so the twelve cards fill in one by one rather than all at
+  // once thirty seconds later. Resolves with the whole list, nulls for failures.
+  // Everything the plan contributes to a score, hashed once per change rather
+  // than once per candidate — otherwise a twelve-job sweep would stringify a
+  // 64-gon and two hundred annotations twelve times over.
+  const planHash = useMemo(() => fnv1a(stableStringify({
+    sitePoly, obstacles: doc.obstacles, roadBlockers, annotations: doc.annotations,
+    overrides: doc.overrides, manualStalls: doc.manualStalls, entries,
+  })), [sitePoly, doc.obstacles, roadBlockers, doc.annotations, doc.overrides, doc.manualStalls, entries]);
+  // The key is what the SOLVER is asked, not what the user picked. Those are not
+  // the same object: `buildSolveInput` injects `alignAngle` and the entrance
+  // hint, so keying a variant on `applyPatch(params, patch)` while the live
+  // solve keys on the resolved params would mean the two never agree and the
+  // cache never hits — the failure would be silent and would look exactly like
+  // "the cache does not help much".
+  const solveKey = (params, orient) => planHash + '|' + fnv1a(stableStringify({ p: params, o: orient }));
+  const resolveFor = (patch, orient) => buildSolveInput({
+    site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+    params: doc.params, orientationIndex: orient == null ? doc.orientationIndex : orient,
+    entries, patch,
+  });
+  const varKey = (patch, orient) => {
+    const inp = resolveFor(patch, orient);
+    return solveKey(inp.params, inp.orientationIndex);
   };
-  const applyScheme = (patch) => {
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, ...patch } }) });
-    setSchemes(null);
+  const cachedScore = (patch, orient) => varCache.current.get(varKey(patch, orient)) || null;
+
+  const runBatch = (patches, onEach) => new Promise((resolve) => {
+    const shared = buildSolveInput({
+      site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+      params: doc.params, orientationIndex: doc.orientationIndex, entries,
+    });
+    // A candidate is a patch and, optionally, its own row axis — which is a
+    // solve input rather than a parameter, so it travels beside the patch.
+    const items = patches.map((x) => (x && x.patch !== undefined ? x : { patch: x, orient: null }));
+    const jobs = items.map((it, i) => {
+      const inp = buildSolveInput({
+        site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+        params: doc.params,
+        orientationIndex: it.orient == null ? doc.orientationIndex : it.orient,
+        entries, patch: it.patch,
+      });
+      return { jobId: i, params: inp.params, orientationIndex: inp.orientationIndex };
+    });
+    const out = new Array(items.length).fill(null);
+    const batchId = ++batchRef.current;
+    const w = varWorkerRef.current;
+    const remember = (i, score) => {
+      if (score) varCache.current.set(solveKey(jobs[i].params, jobs[i].orientationIndex), score);
+    };
+
+    if (!w) {
+      // No worker — solve inline, but yield between candidates so the tab still
+      // paints. Same posture as the live solve's own onerror fallback.
+      (async () => {
+        for (let i = 0; i < items.length; i++) {
+          if (batchRef.current !== batchId) return resolve(out);
+          out[i] = { ...scorePatch(items[i].patch, items[i].orient), inline: true };
+          remember(i, out[i]);
+          if (onEach) onEach(i, out[i]);
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        resolve(out);
+      })();
+      return;
+    }
+
+    batchCbRef.current = {
+      batchId,
+      onMsg: (m) => {
+        if (m.done) { batchCbRef.current = null; resolve(out); return; }
+        if (m.error) { out[m.jobId] = null; return; }
+        out[m.jobId] = { ...m.score, result: m.result, heavy: !!m.heavy, ms: m.ms };
+        remember(m.jobId, out[m.jobId]);
+        if (onEach) onEach(m.jobId, out[m.jobId]);
+      },
+    };
+    w.postMessage({
+      batchId, site: shared.site, obstacles: shared.obstacles,
+      metricObstacles: shared.metricObstacles, annotations: doc.annotations,
+      overrides: doc.overrides, manualStalls: doc.manualStalls, jobs,
+    });
+  });
+  // Give up on whatever is in flight. Bumping the id is what makes late replies
+  // stale; the message only saves the worker from finishing work nobody wants.
+  const cancelBatch = () => {
+    const id = batchRef.current;
+    batchRef.current++;
+    batchCbRef.current = null;
+    if (varWorkerRef.current) varWorkerRef.current.postMessage({ cancel: id });
   };
 
-  // Automatic optimisation: search the parameter space (angle sweep + a fine
-  // refinement pass, alignment, and curved layouts where applicable) and apply
-  // the highest-yield plausible layout automatically. Solves are yielded
-  // between candidates so the UI stays responsive, and roads/driveways are
-  // respected just like the live solve.
-  const evalPatch = (patch, siteArea) => {
-    const p = { ...doc.params, ...patch };
-    const solveP = p.alignLongestEdge ? { ...p, alignAngle: longestEdgeAngle(sitePoly) } : p;
-    const obs = roadBlockers.length ? [...doc.obstacles, ...roadBlockers] : doc.obstacles;
+  const scorePatch = (patch, orient) => {
+    const inp = buildSolveInput({
+      site: doc.site, sitePoly, obstacles: doc.obstacles, roadBlockers,
+      params: doc.params,
+      orientationIndex: orient == null ? doc.orientationIndex : orient,
+      entries, patch,
+    });
     let res;
-    try { res = solveParking(sitePoly, obs, solveP, 0); } catch (e) { res = { stalls: [] }; }
-    const physical = (res.stalls || []).length;
-    const spaces = (res.stalls || []).reduce((s, st) => s + (STALL_TYPES[st.type] ? STALL_TYPES[st.type].spaces || 1 : 1), 0);
-    return { physical, spaces, density: physical > 0 ? siteArea / physical : 0 };
+    try { res = solveParking(inp.site, inp.obstacles, inp.params, inp.orientationIndex); }
+    catch (e) { res = { stalls: [], aisles: [] }; }
+    const dec = decorate(res, { overrides: doc.overrides, manualStalls: doc.manualStalls, params: inp.params });
+    const m = computeMetrics(inp.site, inp.metricObstacles, dec, inp.params, doc.annotations);
+    const pl = plausibility(dec, inp.site, inp.params);
+    return { total: m.total, physical: m.physicalStalls, areaPerStall: m.areaPerStall,
+      adaRequired: m.adaRequired, adaProvided: m.adaProvided, aisleCount: m.aisleCount,
+      imperviousPct: m.imperviousPct, result: dec, ...pl };
   };
-  const autoOptimize = async () => {
-    const site = sitePoly;
-    if (!site || site.length < 3) return;
-    const siteArea = polygonArea(site);
-    const before = metrics.total;
-    // Phase 1 — coarse candidates (the current setup is always included so the
-    // result can never be worse than what you already have).
-    const coarse = [
-      { label: 'Huidig', patch: {} },
-      { label: 'Recht 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: false } },
-      { label: 'Schuin 75°', patch: { layout: 'strip', angle: 75, alignLongestEdge: false } },
-      { label: 'Schuin 60°', patch: { layout: 'strip', angle: 60, alignLongestEdge: false } },
-      { label: 'Schuin 45°', patch: { layout: 'strip', angle: 45, alignLongestEdge: false } },
-      { label: 'Schuin 30°', patch: { layout: 'strip', angle: 30, alignLongestEdge: false } },
-      { label: 'Uitgelijnd 90°', patch: { layout: 'strip', angle: 90, alignLongestEdge: true } },
-    ];
-    if (doc.siteCurved) {
-      coarse.push({ label: 'Rand + midden', patch: { layout: 'hybrid' } });
-      coarse.push({ label: 'Concentrisch', patch: { layout: 'perimeter' } });
-    }
-    const scored = [];
-    const better = (a, b) => !b || a.spaces > b.spaces; // a beats b?
-    const plausible = (r) => r.density >= 20 && r.physical > 0;
+
+  // ---------- Variants: generate, adopt, keep ----------
+  const varAxisSpecs = () => varAxes.filter(Boolean).map((k) => {
+    const a = axisOf(k);
+    if (!a) return null;
+    // The row axis only has as many values as this plan has orientations, so a
+    // three-value axis on a two-orientation site would solve the same layout
+    // twice under two names.
+    const vals = k === ORIENT_KEY
+      ? a.values.filter((v) => v < Math.max(1, result.orientationCount || 1))
+      : a.values;
+    return { key: k, values: vals };
+  }).filter(Boolean);
+
+  const runSweep = async () => {
+    const raw = expandSweep(varAxisSpecs());
+    // `expandSweep` dedupes by patch, which it must — it is pure and knows
+    // nothing about this plan. But a patch of `{angle: 90}` against a plan
+    // already at 90° resolves to the seed, and showing the same layout twice
+    // under two names is noise. Dedupe again here, on what the solver would
+    // actually be asked, which is the only definition that means anything.
+    const seen = new Set();
+    const jobs = raw.jobs.filter((j) => {
+      const id = stableStringify(applyPatch(doc.params, sanitizePatch(j.patch)))
+        + '|' + (j.orient == null ? doc.orientationIndex : j.orient);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    const dropped = raw.dropped;
+    setVarJobs(jobs.map((j) => ({ ...j, score: cachedScore(j.patch, j.orient) })));
+    setVarRun({ i: 0, n: jobs.length, dropped });
+    const scored = await runBatch(jobs, (i) => setVarRun((r) => (r ? { ...r, i: i + 1 } : r)));
+    setVarJobs(jobs.map((j, i) => ({ ...j, score: scored[i] || null })));
+    setVarRun(null);
+  };
+
+  // Adopting is one COMMIT of the parameters and the row axis, so one Cmd+Z puts
+  // it back. The list is deliberately left alone: keeping your alternatives is
+  // the point of having them.
+  const adoptVariant = (v) => {
+    dispatch({ type: 'COMMIT', updater: (d) => ({
+      ...d,
+      params: applyPatch(d.params, sanitizePatch(v.patch)),
+      orientationIndex: v.orient == null ? d.orientationIndex : v.orient,
+    }) });
+  };
+  // Is this candidate what the plan already is? Derived rather than stored — a
+  // "currently adopted" flag goes stale the moment a slider moves.
+  const isLiveVariant = (v) => {
+    const next = applyPatch(doc.params, sanitizePatch(v.patch));
+    const sameOrient = v.orient == null || v.orient === doc.orientationIndex;
+    return sameOrient && stableStringify(next) === stableStringify(doc.params);
+  };
+  const keepVariant = (v) => dispatch({ type: 'COMMIT', updater: (d) => {
+    const patch = sanitizePatch(v.patch);
+    const key = stableStringify(patch) + '|' + v.orient;
+    if ((d.variants || []).some((x) => stableStringify(x.patch) + '|' + (x.orient == null ? null : x.orient) === key)) return d;
+    return { ...d, variants: [...(d.variants || []), {
+      id: nextVariantId(d), label: v.label, patch, gen: v.gen || 'manual',
+    }].slice(0, MAX_SHARED_VARIANTS) };
+  } });
+  const dropVariant = (id) => dispatch({ type: 'COMMIT',
+    updater: (d) => ({ ...d, variants: (d.variants || []).filter((v) => v.id !== id) }) });
+
+  // Refine: the old optimiser's second phase, now visible and repeatable. Seeds
+  // an angle sweep around whatever this card is, rather than only around the
+  // winner of a search you could not see.
+  const refineVariant = async (v) => {
+    const base = applyPatch(doc.params, sanitizePatch(v.patch)).angle;
+    if (typeof base !== 'number') return;
+    const vals = [base - 10, base - 5, base, base + 5, base + 10].filter((a) => a >= 30 && a <= 90);
+    const jobs = vals.map((a) => ({
+      patch: { ...sanitizePatch(v.patch), angle: a }, orient: v.orient,
+      label: a + '°', gen: 'refine:angle',
+    }));
+    setVarJobs(jobs.map((j) => ({ ...j, score: cachedScore(j.patch, j.orient) })));
+    setVarRun({ i: 0, n: jobs.length, dropped: 0 });
+    const scored = await runBatch(jobs, (i) => setVarRun((r) => (r ? { ...r, i: i + 1 } : r)));
+    setVarJobs(jobs.map((j, i) => ({ ...j, score: scored[i] || null })));
+    setVarRun(null);
+  };
+
+  // Ranked for display. Implausible candidates sink whatever the sort, because
+  // "most spaces" is not a recommendation when the spaces overlap.
+  const varRanked = useMemo(() => {
+    const list = varJobs.filter((j) => !varHidePoor || !j.score || j.score.plausible);
+    const key = (j) => (j.score ? j.score[varSort === 'area' ? 'areaPerStall' : 'total'] : -1);
+    return list.slice().sort((a, b) => {
+      const pa = a.score ? (a.score.plausible ? 1 : 0) : 0.5;
+      const pb = b.score ? (b.score.plausible ? 1 : 0) : 0.5;
+      if (pa !== pb) return pb - pa;
+      if (varSort === 'name') return String(a.label).localeCompare(String(b.label), 'nl');
+      return varSort === 'area' ? key(a) - key(b) : key(b) - key(a);
+    });
+  }, [varJobs, varSort, varHidePoor]);
+  const varBest = useMemo(() => {
     let best = null;
-    // Phase 2 refine steps depend on phase-1 winner, so build the total up front.
-    const totalEst = coarse.length + 4;
-    for (let i = 0; i < coarse.length; i++) {
-      setOptState({ running: true, i: i + 1, n: totalEst });
-      await new Promise((r) => setTimeout(r, 0));
-      const r = { ...coarse[i], ...evalPatch(coarse[i].patch, siteArea) };
-      scored.push(r);
-      if (plausible(r) && better(r, best)) best = r;
+    for (const j of varJobs) {
+      if (!j.score || !j.score.plausible) continue;
+      if (!best || j.score.total > best.score.total) best = j;
     }
-    if (!best) best = scored.slice().sort((a, b) => b.spaces - a.spaces)[0];
-    // Phase 2 — refine the angle ±5°/±10° around a straight-layout winner.
-    if (best && best.patch.layout === 'strip' && !best.patch.alignLongestEdge && typeof best.patch.angle === 'number') {
-      const base = best.patch.angle;
-      const refine = [base - 10, base - 5, base + 5, base + 10].filter((a) => a >= 30 && a <= 90);
-      for (let j = 0; j < refine.length; j++) {
-        setOptState({ running: true, i: coarse.length + j + 1, n: totalEst });
-        await new Promise((r) => setTimeout(r, 0));
-        const patch = { layout: 'strip', angle: refine[j], alignLongestEdge: false };
-        const r = { label: `Recht ${refine[j]}°`, patch, ...evalPatch(patch, siteArea) };
-        if (plausible(r) && better(r, best)) best = r;
-      }
-    }
-    dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, params: { ...d.params, ...best.patch } }) });
-    setSchemes(null);
-    setOptState({ done: true, label: best.label, before, after: best.spaces });
-  };
+    return best;
+  }, [varJobs]);
+
   const zoomBy = (factor) => setView((v) => {
     const cx = sizeRef.current.w / 2, cy = sizeRef.current.h / 2;
     const s = Math.max(1, Math.min(60, v.scale * factor));
@@ -4449,6 +5000,7 @@ function App() {
       const lost = [];
       if (dropped.assets) lost.push(dropped.assets + ' eigen symbool' + (dropped.assets > 1 ? 'en' : ''));
       if (dropped.objects) lost.push(dropped.objects + ' object' + (dropped.objects > 1 ? 'en' : '') + ' daarmee geplaatst');
+      if (dropped.variants) lost.push(dropped.variants + ' variant' + (dropped.variants > 1 ? 'en' : '') + ' boven de ' + MAX_SHARED_VARIANTS);
       setShareMsg('Link gekopieerd — ' + fmt(chars) + ' tekens'
         + (lost.length ? '. Niet meegereisd: ' + lost.join(' en ') + '; stuur daarvoor het JSON-bestand.' : '.'));
     } catch (e) {
@@ -4471,14 +5023,60 @@ function App() {
  * such a plan exactly the shape it was — the alternative is that it silently
  * takes a default size the first time anything touches it.
  */
+// A variant id that is unique within this document and stable across saves.
+// Not `Date.now()`: that would make every save of an unchanged plan differ, for
+// no benefit — uniqueness is only ever needed inside one file.
+//
+// Not exported, and it cannot be: `migrateDoc` and everything around it is
+// written at column zero but lives *inside* the component function, where
+// indentation says nothing about scope and `export` is a syntax error.
+function nextVariantId(doc) {
+  let max = 0;
+  for (const v of (doc && doc.variants) || []) {
+    const m = /^v(\d+)$/.exec(String((v && v.id) || ''));
+    if (m) max = Math.max(max, +m[1]);
+  }
+  return 'v' + (max + 1);
+}
+
+// Everything a file can say about its variants, made safe. The important line is
+// `sanitizePatch`: without it a hand-edited or future-format file could put
+// `designVehicle` or `sunHour` in a patch, and adopting that variant would
+// quietly change what the drivability check fits or when the shadow study is
+// taken — settings that have nothing to do with a layout.
+function migrateVariants(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const v of list) {
+    if (!v || typeof v !== 'object' || !v.patch || typeof v.patch !== 'object') continue;
+    let id = String(v.id || '');
+    if (!/^v\d+$/.test(id) || seen.has(id)) id = 'v' + (out.length + 1);
+    while (seen.has(id)) id = 'v' + (parseInt(id.slice(1), 10) + 1);
+    seen.add(id);
+    out.push({
+      id,
+      label: String(v.label == null ? 'Variant' : v.label).slice(0, 60),
+      patch: sanitizePatch(v.patch),
+      gen: typeof v.gen === 'string' ? v.gen.slice(0, 32) : 'manual',
+    });
+    if (out.length >= MAX_SHARED_VARIANTS) break;
+  }
+  return out;
+}
+
 function migrateDoc(d) {
+  const vars = migrateVariants(d.variants);
   const anns = (d.annotations || []).map((a) => {
     if (!a || a.kind !== 'road' || a.shape || !a.closed) return a;
     if (!Array.isArray(a.points) || a.points.length !== 4) return a;
     const q = roadRectParams(a);
     return { ...a, shape: 'object', at: q.at, width: q.width, length: q.length, rot: q.rot };
   });
-  return anns === d.annotations ? d : { ...d, annotations: anns };
+  const sameVars = Array.isArray(d.variants) && vars.length === d.variants.length
+    && vars.every((v, i) => v === d.variants[i]);
+  if (anns === d.annotations && sameVars) return d;
+  return { ...d, annotations: anns, variants: vars };
 }
 
   const applyLoaded = (payload) => {
@@ -4636,6 +5234,32 @@ function migrateDoc(d) {
     // Placed instances stay: the document keeps its own copy of the definition.
     if (tool === 'annot' && annotKind === assetKindOf(id)) setTool('select');
   };
+  // Every category that exists: the ones you named, plus any an asset still
+  // refers to. The second half matters after an import — a file can carry a
+  // category this browser has never heard of, and it should not go missing.
+  const assetCatList = useMemo(() => {
+    const seen = new Set(assetCats);
+    for (const a of assetLib) if (a.cat) seen.add(a.cat);
+    const out = [...seen].sort((x, y) => x.localeCompare(y, 'nl'));
+    if (assetLib.some((a) => !a.cat)) out.push(ASSET_CAT_NONE);
+    return out;
+  }, [assetCats, assetLib]);
+  const assetCatCount = (name) => assetLib.filter((a) => catOf(a) === name).length;
+  const saveAssetCats = (list) => { setAssetCats(list); writeAssetCats(list); };
+  const addAssetCat = (raw) => {
+    const name = String(raw || '').trim().slice(0, 40);
+    if (!name || name === ASSET_CAT_NONE || assetCats.includes(name)) return;
+    saveAssetCats([...assetCats, name]);
+  };
+  // Removing a category is not removing its symbols. They fall back to
+  // Ongecategoriseerd, which is the whole reason that bucket is a real name
+  // rather than an empty string shown as a dash.
+  const removeAssetCat = (name) => {
+    saveAssetCats(assetCats.filter((c) => c !== name));
+    const members = assetLib.filter((a) => a.cat === name);
+    if (members.length) saveAssetLib(assetLib.map((a) => (a.cat === name ? { ...a, cat: '' } : a)));
+    if (assetCatFilter === name) setAssetCatFilter('');
+  };
   const importParcel = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -4720,35 +5344,107 @@ function migrateDoc(d) {
   // every matching group open, so results are never hidden behind a collapse.
   // The library's own grouping. Same catalogue as the palette — one source of
   // truth for what exists — but split by tab and filtered by the dialog's search.
+  // Every card is normalised to one shape here — a plain annotation, a combo
+  // family, or one of the four primary tools — so the render loop below has a
+  // single kind of thing to draw instead of three branches per card.
   const libGroups = useMemo(() => {
     const q = libQuery.trim().toLowerCase();
-    const want = (k, t) => (libTab === 'assets') === !!t.asset;
+    const hay = (k, t) => (t.label + ' ' + k + ' ' + (t.keywords || '') + ' ' + descOf(k)).toLowerCase();
     const out = [];
+    // Your own symbols file under your own categories, so this tab groups by
+    // those rather than by ANNOT_GROUPS — where every asset sits in the single
+    // bucket 'Eigen' and the grouping tells you nothing.
+    if (libTab === 'assets') {
+      for (const cat of assetCatList) {
+        if (assetCatFilter && cat !== assetCatFilter) continue;
+        const items = [];
+        for (const a of assetLib) {
+          if (catOf(a) !== cat) continue;
+          const kind = assetKindOf(a.id);
+          const t = ANNOT_TYPES[kind];
+          if (!t || t.hidden) continue;
+          if (q && !hay(kind, t).includes(q) && !cat.toLowerCase().includes(q)) continue;
+          items.push({ k: kind, kind, t, prim: false, fam: null, asset: a,
+            label: t.label, desc: descOf(kind), color: t.color, key: '' });
+        }
+        if (items.length) out.push([cat, items]);
+      }
+      return out;
+    }
+    if (libTab === 'infra') {
+      const prims = PRIMARY_TOOLS
+        .filter((p) => !q || (p.label + ' ' + p.id + ' ' + p.desc).toLowerCase().includes(q))
+        .map((p) => ({ k: p.id, kind: p.id, t: null, prim: true, fam: null,
+          label: p.label, desc: p.desc, color: p.color, key: p.key }));
+      if (prims.length) out.push([PRIMARY_GROUP, prims]);
+    }
     for (const grp of ANNOT_GROUPS) {
-      const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp && !t.hidden && want(k, t)
-        && (!q || (t.label + ' ' + k + ' ' + (t.keywords || '') + ' ' + descOf(k)).toLowerCase().includes(q)));
+      const items = [], famSeen = new Set();
+      for (const [k, t] of Object.entries(ANNOT_TYPES)) {
+        if ((t.group || 'Overig') !== grp || t.hidden) continue;
+        if ((libTab === 'assets') !== !!t.asset) continue;
+        const member = comboOf(k);
+        if (member) {
+          if (famSeen.has(member.id)) continue;
+          const fam = COMBOS[member.id];
+          // A family answers to any of its members, so "keren" finds the arrow
+          // card rather than nothing at all.
+          if (q && !(fam.label + ' ' + fam.desc).toLowerCase().includes(q)
+            && !fam.members.some((m) => hay(m.kind, ANNOT_TYPES[m.kind]).includes(q))) continue;
+          famSeen.add(member.id);
+          const pick = comboPick[member.id] || fam.members[0].kind;
+          items.push({ k: 'combo:' + member.id, kind: pick, t: ANNOT_TYPES[pick], prim: false,
+            fam, famId: member.id, label: fam.label, desc: fam.desc,
+            color: ANNOT_TYPES[pick].color, key: '' });
+          continue;
+        }
+        if (q && !hay(k, t).includes(q)) continue;
+        items.push({ k, kind: k, t, prim: false, fam: null,
+          label: t.label, desc: descOf(k), color: t.color, key: ANNOT_KEYS[k] || '' });
+      }
       if (items.length) out.push([grp, items]);
     }
     return out;
-  }, [libQuery, libTab, assetLib]);
+  }, [libQuery, libTab, assetLib, comboPick, assetCatList, assetCatFilter]);
+  // Cards, not kinds — a combo folds eight arrows onto one, and a tab total that
+  // did not agree with the group counts beside it would just look like a bug.
   const libCounts = useMemo(() => {
-    let infra = 0, assets = 0;
-    for (const t of Object.values(ANNOT_TYPES)) { if (t.hidden) continue; t.asset ? assets++ : infra++; }
-    return { infra, assets };
+    let infra = PRIMARY_TOOLS.length;
+    const fams = new Set();
+    for (const [k, t] of Object.entries(ANNOT_TYPES)) {
+      if (t.hidden || t.asset) continue;
+      const member = comboOf(k);
+      if (member) { fams.add(member.id); continue; }
+      infra++;
+    }
+    // The asset count comes from the library, not from ANNOT_TYPES. Assets are
+    // registered into that catalogue by an effect that runs *after* first
+    // render, so counting them there read 0 for a library that was already on
+    // screen — and since `assetLib` never changed again, the memo never
+    // recomputed and it stayed 0. The library's own length is both correct and
+    // exactly what this tab renders.
+    return { infra: infra + fams.size, assets: assetLib.length };
   }, [assetLib]);
 
+  // Which groups you have asked to see in full. Not persisted: it is a "show me
+  // the rest for a moment" state, not a preference.
+  const [paletteAll, setPaletteAll] = useState({});
   const paletteGroups = useMemo(() => {
     const q = toolQuery.trim().toLowerCase();
     const out = [];
     for (const grp of ANNOT_GROUPS) {
       const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp && !t.hidden
         && (!q || (t.label + ' ' + k + ' ' + (t.keywords || '')).toLowerCase().includes(q)));
-      if (items.length) out.push([grp, items]);
+      if (!items.length) continue;
+      // Searching shows everything it matched; otherwise the shortlist, and the
+      // count stays the group's real size so nothing looks smaller than it is.
+      const shown = q || paletteAll[grp] ? items : items.slice(0, PALETTE_PINNED[grp] || 0);
+      out.push([grp, shown, items.length]);
     }
     return out;
     // assetLib is not read here, but importing or removing a symbol changes
     // which types ANNOT_TYPES holds — without it the palette keeps the old set.
-  }, [toolQuery, assetLib]);
+  }, [toolQuery, assetLib, paletteAll]);
   const toggleGroup = (grp) => setOpenGroups((cur) => {
     const next = { ...cur, [grp]: cur[grp] === false };
     try { localStorage.setItem('pp_tool_groups', JSON.stringify(next)); } catch (e) {}
@@ -4890,21 +5586,26 @@ function migrateDoc(d) {
   // The words are what people would type, not the heading again: "schaduw" has
   // to find "Zon en schaduw", and "regenwater" has to find the runoff figure
   // even though no heading says either.
+  // The design's order. Site-constraints is no longer a section of its own:
+  // Setback and Groeneilanden belong with the sliders they constrain, which is
+  // where the design puts them. Its search words move with it onto
+  // secStallAisle, so "setback" still finds the panel it now lives in.
   const SEC_ORDER = [
-    ['secMetrics', 'Metrics'], ['secDrive', 'Bereikbaarheid'], ['secSun', 'Zon en schaduw'],
-    ['secLight', 'Licht en opbrengst'], ['secStallAisle', 'Vak & rijstrook'],
-    ['secConstraints', 'Site-constraints'], ['secMix', 'Vaktypes (mix)'],
-    ['secProgram', 'Programma & parkeer\u00adratio'],
+    ['secMetrics', 'Metrics'], ['secStallAisle', 'Vak & rijstrook'],
+    ['secDrive', 'Bereikbaarheid'], ['secMix', 'Vaktypes (mix)'],
+    ['secSun', 'Zon en schaduw'], ['secLight', 'Licht en opbrengst'],
+    ['secProgram', 'Programma & parkeer\u00adratio'], ['secSchemes', "Schema's"],
   ];
   const SEC_WORDS = {
     secMetrics: 'vakken totaal oppervlak site bebouwd verhard runoff regenwater far ratio oriëntaties samenvatting minder-valide',
     secDrive: 'bereikbaarheid rijden voertuig vrachtwagen brandweer knelpunt draaicirkel doodlopend',
     secSun: 'zon schaduw datum uur seizoen bezonning',
     secLight: 'licht lux verlichting lichtmast uniformiteit carport pv zonnepanelen opbrengst kwh',
-    secStallAisle: 'vak rijstrook rijbaan breedte diepte hoek layout automatisch parkeren perimeter',
-    secConstraints: 'setback padding buffer rijlengte groeneiland single-loaded constraints',
+    secStallAisle: 'vak rijstrook rijbaan breedte diepte hoek layout automatisch parkeren perimeter '
+      + 'setback padding buffer rijlengte groeneiland single-loaded constraints kopse turnaround',
     secMix: 'mix vaktypes compact ev laadpunt personeel bezoeker gereserveerd motor aandeel',
-    secProgram: 'programma gla vloeroppervlak parkeerratio zoning vereist',
+    secProgram: 'programma gla vloeroppervlak parkeerratio zoning vereist saldo',
+    secSchemes: 'schema varianten vergelijken optimaliseer alternatief scenario beste yield',
   };
   const [secShut, setSecShut] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pp_sec_shut') || '{}') || {}; } catch (e) { return {}; }
@@ -4950,8 +5651,9 @@ function migrateDoc(d) {
   // Every shortcut in one place. Half of these existed but were invisible —
   // nothing on screen mentioned G, R, Esc, Delete or Cmd+D.
   const SHORTCUTS = [
-    ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['T', 'Bibliotheek'], ['Spatie', 'Pannen']]],
-    ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
+    ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['A', 'Auto-park zone'], ['M', 'Meetlint'], ['T', 'Bibliotheek'], ['Spatie', 'Pannen']]],
+    ['Infrastructuur', [['W', 'Weg'], ['I', 'In/uitrit'], ['D', 'Drive-thru']]],
+    ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Cmd/Ctrl + S', 'Plan opslaan'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
     ['Pannen & zoomen', [['Rechtermuis slepen', 'Pannen'], ['Middelste muisknop', 'Pannen'], ['Spatie ingedrukt', 'Pannen'], ['Muiswiel', 'In- en uitzoomen'], ['Trackpad (2 vingers)', 'Pannen'], ['Shift + scrollen', 'Pannen'], ['Ctrl + scrollen / knijpen', 'In- en uitzoomen'], ['+ / -', 'In- en uitzoomen']]],
     ['Weergave', [['G', 'Raster aan/uit'], ['S', 'Vastklikken aan/uit'], ['/', 'Zoek gereedschap'], ['?', 'Dit overzicht']]],
@@ -4983,7 +5685,13 @@ function migrateDoc(d) {
     // especially on a tab the old query cannot match.
     setLibQuery('');
     setLibTab(tab || 'infra');
-    setLibPick(tool === 'annot' ? annotKind : '');
+    // Open on whatever is in your hand. A folded arrow is highlighted through
+    // its family, since that is the card the grid actually draws.
+    const mem = tool === 'annot' ? comboOf(annotKind) : null;
+    setLibPick(mem ? 'combo:' + mem.id
+      : tool === 'annot' ? annotKind
+      : PRIMARY_TOOLS.some((p) => p.id === tool) ? tool : '');
+    if (mem) setComboPick((c) => ({ ...c, [mem.id]: annotKind }));
     setLibOpen(true);
   };
   // Through a ref, because the key listener is only re-registered on selection
@@ -4991,14 +5699,255 @@ function migrateDoc(d) {
   // Assigned on every render, so it always closes over the current tool. T
   // toggles: the same key gets you out again.
   libOpenRef.current = () => { if (libOpen) setLibOpen(false); else openLib(); };
-  // No annotation has a key of its own — V/P/B/N/K/M are the tools, not the
-  // catalogue — so the badge slot carries the honest thing instead: how you
-  // draw it. Inventing letters here would put a lie on 40 cards.
+  // The badge slot. The design puts a keyboard letter there, and where one
+  // exists that is what it shows — the four primary tools, and W/I/D on the
+  // three ways in and out. The rest of the catalogue has no key (the design
+  // leaves those blank), and the draw mode is more use to a reader than an empty
+  // box, so it fills in.
   const drawModeOf = (t) => (t.mode === 'point' ? 'punt'
     : t.mode === 'area' ? 'vlak'
     : t.mode === 'cross' ? 'zebra'
     : t.body ? 'weg' : 'lijn');
-  const libPickT = ANNOT_TYPES[libPick];
+  const badgeOf = (e) => e.key || (e.t ? drawModeOf(e.t) : '');
+  // What the footer and the Tekenen button act on. A combo resolves to the
+  // member whose pill is lit; a primary tool has no ANNOT_TYPES entry at all.
+  const libEntry = useMemo(() => {
+    for (const [, items] of libGroups) for (const e of items) if (e.k === libPick) return e;
+    return null;
+  }, [libGroups, libPick]);
+  const libPickT = libEntry ? libEntry.t : null;
+  const valueOf = (e) => {
+    if (!e || !e.t || e.t.value == null) return null;
+    return libValue[e.kind] != null ? libValue[e.kind] : e.t.value;
+  };
+  // Picking up a tool. A combo carries the chosen direction, a value-bearing
+  // tool carries its number, and a primary tool is just a tool.
+  const libTake = (e) => {
+    if (!e) return;
+    if (e.prim) { setTool(e.kind); if (e.kind === 'site' || e.kind === 'obstaclepoly' || e.kind === 'autopark') setDrawing({ points: [] }); clearSel(); }
+    else startAnnot(e.kind, valueOf(e));
+    setLibOpen(false);
+  };
+  // One card, so the infrastructure tab and the assets tab cannot drift apart.
+  const libCard = (e) => html`
+    <div key=${e.k} role="button" tabIndex="0" aria-pressed=${libPick === e.k}
+      className=${'lib-card' + (libPick === e.k ? ' active' : '')}
+      ${/* A card selects; Tekenen in the footer draws. A card can now carry a
+            direction and a value, and picking one up the instant you touch it
+            would slam the dialog shut before you could set either. Double-click
+            is the shortcut for when there is nothing to set. */ ''}
+      onClick=${() => setLibPick(e.k)}
+      onDoubleClick=${() => libTake(e)}
+      onKeyDown=${(ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); libTake(e); }
+        else if (ev.key === ' ') { ev.preventDefault(); setLibPick(e.k); }
+      }}>
+      <${ToolPreview} kind=${e.kind} value=${valueOf(e)} />
+      <span className="lib-card-h">
+        <span className="dot" style=${e.t ? dotStyle(e.t) : { background: e.color }}></span>
+        <span className="lib-card-name">${e.label}</span>
+        <span className="lib-card-gap"></span>
+        ${badgeOf(e) && html`<span className="lib-card-key">${badgeOf(e)}</span>`}
+      </span>
+      <span className="lib-card-desc">${e.desc}</span>
+      ${e.fam && html`
+        <span className="lib-combo">
+          <span className="lib-combo-h">Combinatie</span>
+          <span className="lib-combo-pills">
+            ${e.fam.members.map((m) => html`
+              <button key=${m.kind} type="button"
+                className=${'tag lib-pill' + (e.kind === m.kind ? ' on' : '')}
+                title=${(ANNOT_TYPES[m.kind] || {}).label || m.label}
+                aria-pressed=${e.kind === m.kind}
+                onClick=${(ev) => {
+                  ev.stopPropagation();
+                  setComboPick((c) => ({ ...c, [e.famId]: m.kind }));
+                  setLibPick(e.k);
+                }}>
+                <span className="lib-pill-g">${m.glyph}</span><span>${m.label}</span>
+              </button>`)}
+          </span>
+        </span>`}
+      ${e.t && e.t.value != null && html`
+        <span className="lib-card-val">
+          <input className="input" type="number" aria-label=${e.t.valueLabel || 'Waarde'}
+            min=${e.t.valueMin == null ? 5 : e.t.valueMin}
+            max=${e.t.valueMax == null ? 130 : e.t.valueMax}
+            step=${e.t.valueStep == null ? 5 : e.t.valueStep}
+            value=${valueOf(e)}
+            onClick=${(ev) => ev.stopPropagation()}
+            onChange=${(ev) => {
+              const v = parseFloat(ev.target.value);
+              if (isFinite(v)) setLibValue((s) => ({ ...s, [e.kind]: v }));
+            }} />
+          <span className="lib-card-val-u">${e.t.valueUnit || ''} — aanpasbaar bij plaatsen</span>
+        </span>`}
+      ${e.asset && html`
+        <span className="lib-card-cat">
+          <select className="input" aria-label="Categorie"
+            value=${e.asset.cat || ''}
+            onClick=${(ev) => ev.stopPropagation()}
+            onChange=${(ev) => patchAsset(e.asset.id, { cat: ev.target.value })}>
+            <option value="">${ASSET_CAT_NONE}</option>
+            ${assetCats.map((c) => html`<option key=${c} value=${c}>${c}</option>`)}
+          </select>
+        </span>`}
+      ${e.t && e.t.asset && html`
+        <span className="lib-card-actions">
+          <button className="btn ghost" onClick=${(ev) => { ev.stopPropagation(); removeAsset(assetIdOf(e.kind)); }}>Verwijderen</button>
+        </span>`}
+    </div>`;
+  const libSections = () => libGroups.map(([grp, items]) => html`
+    <section className="lib-sec" key=${grp}>
+      <div className="lib-sec-h">
+        <span className="lib-sec-tick"></span>
+        <h3>${grp}</h3>
+        <span className="lib-sec-n">${items.length}</span>
+        <span className="lib-sec-rule"></span>
+      </div>
+      <div className="lib-grid">${items.map(libCard)}</div>
+    </section>`);
+  const variantsModal = () => {
+    const busy = !!varRun;
+    const fmt1 = (n) => (n == null ? '—' : (+n).toFixed(1).replace('.', ','));
+    const card = (j, i) => {
+      const sc = j.score;
+      const live = isLiveVariant(j);
+      const delta = sc ? sc.total - metrics.total : null;
+      return html`
+        <div key=${j.label + i} className=${'lib-card var-card' + (live ? ' active' : '')}>
+          <${VariantPreview} result=${sc && sc.result} doc=${doc} sitePoly=${sitePoly} heavy=${sc && sc.heavy} />
+          <span className="lib-card-h">
+            <span className="lib-card-name">${j.label}</span>
+            <span className="lib-card-gap"></span>
+            ${live && html`<span className="tag tag-outline">huidig</span>`}
+          </span>
+          ${!sc ? html`<span className="lib-card-desc">${busy ? 'rekenen…' : '—'}</span>` : html`
+            <span className="var-head">
+              <b>${sc.total}</b> plaatsen
+              ${delta !== 0 && html`<span className=${'var-delta ' + (delta > 0 ? 'ok' : 'bad')}>
+                ${(delta > 0 ? '+' : '') + delta}</span>`}
+            </span>
+            <span className="deal-rows">
+              <span className="deal-row"><span>m² per vak</span><b>${fmt1(sc.areaPerStall)}</b></span>
+              <span className="deal-row"><span>Minder-valide</span><b>${sc.adaProvided}/${sc.adaRequired}</b></span>
+              <span className="deal-row"><span>Rijstroken</span><b>${sc.aisleCount}</b></span>
+              <span className="deal-row"><span>Verhard</span><b>${Math.round((sc.imperviousPct || 0) * 100)}%</b></span>
+            </span>
+            ${!sc.plausible && html`<span className="var-warn" title=${sc.stallOverlaps
+              ? sc.stallOverlaps + ' vakken liggen over elkaar'
+              : 'Beslaat ' + Math.round(sc.packedRatio * 100) + '% van de bruikbare grond'}>
+              ⚠ niet haalbaar</span>`}
+            ${sc.heavy && html`<span className="lib-card-desc">Te groot voor een voorbeeld — de cijfers kloppen wel.</span>`}`}
+          <span className="lib-card-actions">
+            <button className="btn ghost" disabled=${busy || live} onClick=${() => adoptVariant(j)}>Toepassen</button>
+            <button className="btn ghost" disabled=${busy} onClick=${() => refineVariant(j)}>Verfijn</button>
+            <button className="btn ghost" disabled=${busy} title="Bewaren bij het plan" onClick=${() => keepVariant(j)}>Bewaar</button>
+          </span>
+        </div>`;
+    };
+
+    return html`
+    <div className="dialog-backdrop" onClick=${() => setVarOpen(false)}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-label="Varianten"
+        onClick=${(e) => e.stopPropagation()}>
+        <header className="dialog-h">
+          <div className="dialog-h-row">
+            <div>
+              <span className="dialog-eyebrow">Schema's</span>
+              <h2 className="dialog-title">Varianten</h2>
+              <p className="dialog-sub">
+                Kies één of twee assen; het plan wordt voor elke combinatie opnieuw
+                opgelost en naast elkaar gezet. Elke plattegrond is met de tekenaars
+                van de app zelf gemaakt — wat je hier ziet, krijg je.
+              </p>
+            </div>
+            <button className="btn ghost dialog-x" aria-label="Sluiten" onClick=${() => setVarOpen(false)}>✕</button>
+          </div>
+          <div className="var-axes">
+            ${[0, 1].map((slot) => html`
+              <label key=${slot} className="var-axis">
+                <span>${slot === 0 ? 'As' : 'Tweede as'}</span>
+                <select className="input" value=${varAxes[slot] || ''} disabled=${busy}
+                  aria-label=${slot === 0 ? 'As' : 'Tweede as'}
+                  onChange=${(e) => setVarAxes((a) => (slot === 0 ? [e.target.value, a[1]] : [a[0], e.target.value]))}>
+                  <option value="">${slot === 0 ? '— kies —' : '— geen —'}</option>
+                  ${VARY_AXES.filter((a) => a.key !== varAxes[1 - slot]).map((a) => html`
+                    <option key=${a.key} value=${a.key}>${a.label}</option>`)}
+                </select>
+              </label>`)}
+            <button className="btn primary" disabled=${busy || !varAxes[0]} onClick=${runSweep}>
+              ${busy ? `Bezig… ${varRun.i}/${varRun.n}` : 'Genereer'}
+            </button>
+            ${busy && html`<button className="btn ghost" onClick=${() => { cancelBatch(); setVarRun(null); }}>Stoppen</button>`}
+            <span className="dialog-tabs-gap"></span>
+            <label className="var-axis">
+              <span>Sorteer</span>
+              <select className="input" value=${varSort} aria-label="Sorteer"
+                onChange=${(e) => setVarSort(e.target.value)}>
+                <option value="total">Meeste plaatsen</option>
+                <option value="area">Laagste m² per vak</option>
+                <option value="name">Naam</option>
+              </select>
+            </label>
+            <label className="toggle var-filter">
+              <span>Verberg onhaalbare</span>
+              <input type="checkbox" checked=${varHidePoor} onChange=${(e) => setVarHidePoor(e.target.checked)} />
+            </label>
+          </div>
+        </header>
+
+        <div className="dialog-body tk-scroll">
+          ${varRun && varRun.dropped > 0 && html`<p className="mix-note" style=${{ marginTop: 0 }}>
+            ${varRun.dropped} combinatie${varRun.dropped > 1 ? 's' : ''} boven de twaalf overgeslagen —
+            kies kortere waardelijsten of één as.
+          </p>`}
+          ${!varJobs.length && html`<p className="mix-note">
+            Kies een as en druk op Genereer. "Huidig" staat altijd als eerste kaart,
+            zodat een variant nooit beter kan lijken dan iets wat je niet ziet.
+          </p>`}
+          ${varRanked.length > 0 && html`<div className="lib-grid">${varRanked.map(card)}</div>`}
+
+          ${(doc.variants || []).length > 0 && html`
+            <section className="lib-sec" style=${{ marginTop: 'var(--space-6)' }}>
+              <div className="lib-sec-h">
+                <span className="lib-sec-tick"></span>
+                <h3>Bewaard bij dit plan</h3>
+                <span className="lib-sec-n">${doc.variants.length}</span>
+                <span className="lib-sec-rule"></span>
+              </div>
+              <div className="var-kept">
+                ${doc.variants.map((v) => html`
+                  <div key=${v.id} className="var-kept-row">
+                    <span className="var-kept-name">${v.label}</span>
+                    <span className="var-kept-gen">${v.gen}</span>
+                    <button className="btn ghost" onClick=${() => adoptVariant(v)}>Toepassen</button>
+                    <button className="btn ghost" title="Verwijderen" aria-label="Verwijderen"
+                      onClick=${() => dropVariant(v.id)}>✕</button>
+                  </div>`)}
+              </div>
+              <div className="mix-note">
+                Bewaarde varianten reizen mee in opslaan en in een deel-link — als
+                parameters, niet als plattegrond, dus ze worden bij het openen
+                opnieuw opgelost.
+              </div>
+            </section>`}
+        </div>
+
+        <footer className="dialog-f">
+          <span className="dialog-f-sel">
+            ${varJobs.length ? `${varJobs.length} varianten` : 'Nog niets gegenereerd'}
+            ${varBest ? html` · beste: <strong>${varBest.label}</strong>` : ''}
+          </span>
+          <span className="dialog-f-gap"></span>
+          <button className="btn ghost" onClick=${() => setVarOpen(false)}>Sluiten</button>
+          <button className="btn primary" disabled=${!varBest || busy || isLiveVariant(varBest)}
+            onClick=${() => { adoptVariant(varBest); setVarOpen(false); }}>Beste toepassen</button>
+        </footer>
+      </div>
+    </div>`;
+  };
+
   const libraryModal = () => html`
     <div className="dialog-backdrop" onClick=${() => setLibOpen(false)}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label="Teken infrastructuur"
@@ -5029,19 +5978,71 @@ function migrateDoc(d) {
           </div>
         </header>
 
-        <div className="dialog-body">
+        <div className="dialog-body tk-scroll">
           ${libTab === 'assets' && html`
-            <div className="lib-assets-head">
-              <label className="btn asset-import">
-                Symbool importeren…
-                <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                  onChange=${importAsset} style=${{ display: 'none' }} />
-              </label>
-              <span className="mix-note" style=${{ margin: 0 }}>
-                PNG, JPG, WebP of SVG — verkleind tot ${ASSET_MAX_PX} px en daarna gewoon een gereedschap.
-              </span>
-            </div>
-            ${assetMsg && html`<div className="asset-msg">${assetMsg}</div>`}`}
+            <div className="lib-assets">
+              <div className="lib-assets-main">
+                ${assetCatList.length > 1 && html`
+                  <div className="lib-chips">
+                    <button type="button" className=${'tag tag-outline' + (assetCatFilter ? '' : ' on')}
+                      aria-pressed=${!assetCatFilter} onClick=${() => setAssetCatFilter('')}>
+                      Alles <span className="lib-chip-n">${assetLib.length}</span>
+                    </button>
+                    ${assetCatList.map((c) => html`
+                      <button key=${c} type="button" className=${'tag tag-outline' + (assetCatFilter === c ? ' on' : '')}
+                        aria-pressed=${assetCatFilter === c}
+                        onClick=${() => setAssetCatFilter(assetCatFilter === c ? '' : c)}>
+                        ${c} <span className="lib-chip-n">${assetCatCount(c)}</span>
+                      </button>`)}
+                  </div>`}
+                ${assetMsg && html`<div className="asset-msg">${assetMsg}</div>`}
+                ${libSections()}
+                ${/* The drop target is a card in the grid rather than a button
+                      above it: importing is the same act as picking something,
+                      and it belongs among the things it produces. */ ''}
+                <label className="lib-drop">
+                  <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    onChange=${importAsset} style=${{ display: 'none' }} />
+                  <span className="lib-drop-plus">+</span>
+                  <span className="lib-drop-h">Asset importeren</span>
+                  <span className="lib-drop-s">
+                    PNG, JPG, WebP of SVG — verkleind tot ${ASSET_MAX_PX} px en daarna gewoon een gereedschap.
+                  </span>
+                </label>
+              </div>
+
+              <aside className="lib-cats">
+                <h4>Eigen categorieën</h4>
+                ${assetCatList.length === 0 && html`<p className="mix-note" style=${{ margin: 0 }}>
+                  Nog geen categorieën. Maak er een en kies hem op een kaart.
+                </p>`}
+                ${assetCatList.map((c) => html`
+                  <div className="lib-cat-row" key=${c}>
+                    <span className="lib-cat-name">${c}</span>
+                    <span className="lib-cat-n">${assetCatCount(c)}</span>
+                    ${c === ASSET_CAT_NONE
+                      ? html`<span className="lib-cat-x-gap"></span>`
+                      : html`<button className="btn ghost lib-cat-x" title=${'"' + c + '" verwijderen'}
+                          aria-label=${'"' + c + '" verwijderen'}
+                          onClick=${() => removeAssetCat(c)}>✕</button>`}
+                  </div>`)}
+                <p className="mix-note">
+                  Een categorie verwijderen laat de symbolen staan; ze vallen terug op
+                  ${' ' + ASSET_CAT_NONE}.
+                </p>
+                <div className="lib-cat-add">
+                  <input className="input" type="text" placeholder="Nieuwe categorie…"
+                    aria-label="Nieuwe categorie" value=${newCat} maxLength="40"
+                    onInput=${(e) => setNewCat(e.target.value)}
+                    onKeyDown=${(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); addAssetCat(newCat); setNewCat(''); }
+                      else if (e.key === 'Escape') { e.stopPropagation(); setNewCat(''); }
+                    }} />
+                  <button className="btn" disabled=${!newCat.trim()}
+                    onClick=${() => { addAssetCat(newCat); setNewCat(''); }}>Voeg toe</button>
+                </div>
+              </aside>
+            </div>`}
           ${libTab === 'build' && html`
             <div className="lib-assets-head">
               <label className="btn asset-import">
@@ -5084,61 +6085,40 @@ function migrateDoc(d) {
                         <span className="lib-card-desc">${u.desc || note}</span>
                         ${u.imported && html`
                           <span className="lib-card-actions">
-                            <span className="tag-imported">geïmporteerd</span>
+                            <span className="tag tag-imported">geïmporteerd</span>
                             <button className="btn ghost" onClick=${(e) => { e.stopPropagation(); dropStyle(u.key); }}>Verwijderen</button>
                           </span>`}
                       </div>`)}
                   </div>
                 </section>`;
             })}`}
-          ${libTab !== 'build' && libGroups.length === 0 && html`<p className="mix-note">
-            ${libQuery
-              ? html`Niets gevonden voor "${libQuery}".`
-              : libTab === 'assets'
-                ? 'Nog geen eigen symbolen geïmporteerd.'
-                : 'Niets in deze categorie.'}
+          ${libTab === 'infra' && libGroups.length === 0 && html`<p className="mix-note">
+            ${libQuery ? html`Niets gevonden voor "${libQuery}".` : 'Niets in deze categorie.'}
           </p>`}
-          ${libTab !== 'build' && libGroups.map(([grp, items]) => html`
-            <section className="lib-sec" key=${grp}>
-              <div className="lib-sec-h">
-                <span className="lib-sec-tick"></span>
-                <h3>${grp}</h3>
-                <span className="lib-sec-n">${items.length}</span>
-                <span className="lib-sec-rule"></span>
-              </div>
-              <div className="lib-grid">
-                ${items.map(([k, t]) => html`
-                  <div key=${k} role="button" tabIndex="0"
-                    className=${'lib-card' + (libPick === k ? ' active' : '')}
-                    ${/* One click picks it up and gets out of the way. Choosing a
-                          tool and then confirming the choice is two steps for one
-                          decision, and nothing here is destructive enough to need
-                          the second. */ ''}
-                    onClick=${() => { startAnnot(k); setLibOpen(false); }}
-                    onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startAnnot(k); setLibOpen(false); } }}>
-                    <${ToolPreview} kind=${k} />
-                    <span className="lib-card-h">
-                      <span className="dot" style=${dotStyle(t)}></span>
-                      <span className="lib-card-name">${t.label}</span>
-                      <span className="lib-card-gap"></span>
-                      <span className="lib-card-key">${drawModeOf(t)}</span>
-                    </span>
-                    <span className="lib-card-desc">${descOf(k)}</span>
-                    ${t.asset && html`
-                      <span className="lib-card-actions">
-                        <button className="btn ghost" onClick=${(e) => { e.stopPropagation(); removeAsset(assetIdOf(k)); }}>Verwijderen</button>
-                      </span>`}
-                  </div>`)}
-              </div>
-            </section>`)}
+          ${libTab === 'infra' && libSections()}
         </div>
 
         <footer className="dialog-f">
-          <span className="dialog-f-sel">Actief: <strong>${libPickT ? libPickT.label : '—'}</strong></span>
-          ${libPickT && html`<span className="dialog-f-hint">${drawModeOf(libPickT)}</span>`}
+          <span className="dialog-f-sel">Geselecteerd: <strong>${libEntry ? libEntry.label : '—'}</strong></span>
+          ${libEntry && badgeOf(libEntry) && html`<span className="dialog-f-hint">${badgeOf(libEntry)}</span>`}
+          ${libEntry && valueOf(libEntry) != null && html`
+            <label className="dialog-f-val">
+              <span>Waarde bij plaatsen</span>
+              <input className="input" type="number" aria-label="Waarde bij plaatsen"
+                min=${libEntry.t.valueMin == null ? 5 : libEntry.t.valueMin}
+                max=${libEntry.t.valueMax == null ? 130 : libEntry.t.valueMax}
+                step=${libEntry.t.valueStep == null ? 5 : libEntry.t.valueStep}
+                value=${valueOf(libEntry)}
+                onChange=${(ev) => {
+                  const v = parseFloat(ev.target.value);
+                  if (isFinite(v)) setLibValue((s) => ({ ...s, [libEntry.kind]: v }));
+                }} />
+              <span className="dialog-f-hint">${libEntry.t.valueUnit || ''}</span>
+            </label>`}
           <span className="dialog-f-gap"></span>
-          <span className="dialog-f-hint">Klik een kaart om ermee te tekenen · Esc sluit</span>
+          <span className="dialog-f-hint">Dubbelklik een kaart om direct te tekenen · Esc sluit</span>
           <button className="btn ghost" onClick=${() => setLibOpen(false)}>Sluiten</button>
+          <button className="btn primary" disabled=${!libEntry} onClick=${() => libTake(libEntry)}>Tekenen</button>
         </footer>
       </div>
     </div>`;
@@ -5157,7 +6137,7 @@ function migrateDoc(d) {
         <button type="submit" className="btn" disabled=${geoBusy}>${geoBusy ? '…' : 'Ga'}</button>
       </form>
       ${geoMsg && html`<div className="geo-msg">${geoMsg}</div>`}
-      <div className="geo-coord">📍 ${doc.geo.lat.toFixed(5)}, ${doc.geo.lon.toFixed(5)}</div>
+      <div className="geo-coord">📍 ${Math.abs(doc.geo.lat).toFixed(4)} ${doc.geo.lat >= 0 ? 'N' : 'Z'} · ${Math.abs(doc.geo.lon).toFixed(4)} ${doc.geo.lon >= 0 ? 'O' : 'W'}${geoPlace ? ' — ' + geoPlace : ''}</div>
       <div className="geo-coord" style=${{ marginTop: '6px' }}>
         ${mbToken ? html`🗺️ Kaart-token ✓ · <a href="#" onClick=${(e) => { e.preventDefault(); clearMbToken(); }} style=${{ color: 'var(--accent)' }}>wijzigen</a>` : '🗺️ Geen kaart-token'}
       </div>
@@ -5187,7 +6167,9 @@ function migrateDoc(d) {
     </div>`;
   const vmLayers = () => html`
     <div className="vm-group vm-wide">
-      <div className="vm-h">Lagen <span className="vm-n">${Object.values(layers).filter(Boolean).length}</span></div>
+      ${/* on/total, as the design has it. The bare on-count read "7" whether that
+            was seven of seven or seven of nine. */ ''}
+      <div className="vm-h">Lagen <span className="vm-n">${Object.values(layers).filter(Boolean).length}/${Object.keys(layers).length}</span></div>
       ${layerRow('grid', 'Raster', '#3b4453', layers, setLayers)}
       ${layerRow('site', 'Site-grens', '#f8b500', layers, setLayers)}
       ${layerRow('setback', 'Setback', '#6ee7ff', layers, setLayers)}
@@ -5202,8 +6184,12 @@ function migrateDoc(d) {
   const vmPreset = () => html`
     <div className="vm-group vm-wide">
       <div className="vm-h">Afmetingen-preset</div>
-      <select className="preset" onChange=${(e) => applyPreset(e.target.value)}>
-        <option value="">— kies afmetingen —</option>
+      ${/* Bound to the dimensions actually in force, so it stops claiming nothing
+            is chosen the moment after you choose. It reads "— aangepast —" once a
+            slider has moved off a preset, which is the honest third state. */ ''}
+      <select className="preset" aria-label="Afmetingen-preset" value=${activePreset}
+        onChange=${(e) => applyPreset(e.target.value)}>
+        <option value="">${activePreset ? '— kies afmetingen —' : '— aangepast —'}</option>
         ${Object.entries(PRESETS).map(([k, p]) => html`<option key=${k} value=${k}>${p.label}</option>`)}
       </select>
     </div>`;
@@ -5211,6 +6197,7 @@ function migrateDoc(d) {
   const viewMenu = () => html`
     <div className="dropdown">
       <button className=${'btn ghost' + (viewMenuOpen ? ' active' : '')} onClick=${() => setViewMenuOpen((o) => !o)}
+        aria-expanded=${viewMenuOpen} aria-haspopup="true"
         title="Locatie, lagen, presets en welke onderdelen zichtbaar zijn">👁 Weergave ▾</button>
       ${viewMenuOpen && html`
         <div className="menu view-menu" onMouseLeave=${() => setViewMenuOpen(false)}>
@@ -5258,6 +6245,9 @@ function migrateDoc(d) {
     obstaclepoly: 'Klik punten voor een gebouw in vrije vorm · Shift = 15° · klik beginpunt of dubbelklik om te sluiten · Esc annuleert',
     pan: 'Sleep om te verschuiven',
     placestall: 'Klik om een parkeervak te plaatsen (snapt aan bestaande vakken) · Esc stopt',
+    autopark: zonePreview && zonePreview.metrics.stalls
+      ? `${zonePreview.metrics.stalls} vakken · ${Math.round(zonePreview.metrics.area)} m² · dubbelklik of klik het beginpunt om vast te leggen`
+      : 'Klik punten om de zone af te bakenen · de parking verschijnt zodra er drie punten staan · Esc annuleert',
     measure: 'Klik punten om af te meten · Shift = 15° · dubbelklik of Esc sluit af · toont lengte, totaal en oppervlak',
     annot: annotKind === 'road' && roadShape === 'rect'
       ? 'Weg-object: sleep een rechthoek · selecteer daarna en sleep de hoeken om te vergroten'
@@ -5290,9 +6280,21 @@ function migrateDoc(d) {
         <div className="brand"><span className="brand-name">ParkPlanner</span></div>
         ${vis('tbProject') && html`
           <div className="tb-project">
-            <input className="proj-name" type="text" value=${doc.name || ''} placeholder="Naamloos plan"
-              title="Naam van dit plan — komt terug in de bestandsnaam bij Opslaan"
-              onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, name: e.target.value.slice(0, 60) }) })} />
+            ${/* A name you read, not a field you might type into by accident. The
+                  always-live input sat one stray click away from the canvas and
+                  looked like somewhere to start typing; the design makes it text
+                  until you ask, which is also how the object list renames. */ ''}
+            ${editingName
+              ? html`<input className="proj-name" type="text" autoFocus aria-label="Projectnaam"
+                  value=${doc.name || ''} placeholder="Naamloos plan"
+                  onChange=${(e) => dispatch({ type: 'COMMIT', updater: (d) => ({ ...d, name: e.target.value.slice(0, 60) }) })}
+                  onBlur=${() => setEditingName(false)}
+                  onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.stopPropagation(); setEditingName(false); e.target.blur(); } }} />`
+              : html`<span className="proj-name-text" tabIndex="0" role="button"
+                  title="Dubbelklik om de projectnaam te wijzigen"
+                  onDoubleClick=${() => setEditingName(true)}
+                  onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); setEditingName(true); } }}
+                  >${doc.name || 'Naamloos plan'}</span>`}
             <span className="proj-meta">
               ${savedAt
                 ? 'Laatst opgeslagen om ' + savedAt.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })
@@ -5300,21 +6302,29 @@ function migrateDoc(d) {
             </span>
           </div>`}
         ${/* The order is the design's: named tools, the measure icon, the library
-              as the one accent button, then a spacer and the view cluster. No
-              rules between groups — the spacer does that work. */ ''}
+              as the one accent button, then a spacer and the view cluster. The
+              design draws two hairlines in this run — after the plan's name and
+              before the library — and they earn their keep: without them the
+              accent button reads as the seventh tool rather than a thing apart. */ ''}
+        <span className="tb-sep"></span>
         ${vis('tbTools') && html`
           ${toolBtn('select', 'Selecteren', 'V', tool, setTool, setDrawing)}
           ${toolBtn('site', 'Site', 'P', tool, setTool, setDrawing)}
           ${toolBtn('obstacle', 'Gebouw ▭', 'B', tool, setTool, setDrawing)}
           ${toolBtn('obstaclepoly', 'Gebouw ⬠', 'N', tool, setTool, setDrawing)}
           ${toolBtn('placestall', 'Vak +', 'K', tool, setTool, setDrawing)}
+          ${toolBtn('autopark', 'Auto-park', 'A', tool, setTool, setDrawing)}
           ${toolBtn('pan', 'Pan', '␣', tool, setTool, setDrawing)}
           <button className=${'btn icon' + (tool === 'measure' ? ' active' : '')} aria-label="Meetlint"
             title="Meetlint (M)"
-            onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>📏</button>`}
+            onClick=${() => { setTool('measure'); setMeasure({ points: [] }); setDrawing(null); }}>${icon('measure')}</button>`}
+        <span className="tb-sep"></span>
+        ${vis('tbVariants') && html`
+          <button className=${'btn icon' + (varOpen ? ' active' : '')} onClick=${() => setVarOpen((o) => !o)}
+            aria-label="Varianten vergelijken" title="Varianten vergelijken — los het plan meerdere keren op en zet de plattegronden naast elkaar">⚖️</button>`}
         ${vis('tbLibrary') && html`
           <button className=${'btn primary icon' + (libOpen ? ' active' : '')} onClick=${() => libOpenRef.current()}
-            aria-label="Teken infrastructuur" title="Teken infrastructuur (T) — alles wat je kunt tekenen, met voorbeeldweergave">▦</button>`}
+            aria-label="Teken infrastructuur" title="Teken infrastructuur (T) — alles wat je kunt tekenen, met voorbeeldweergave">${icon('library', 18)}</button>`}
         <div className="tb-spacer"></div>
         ${vis('tbAxis') && html`
           <button className="btn ghost" onClick=${cycleAxis} title="Wissel rij-oriëntatie">↻ Rij-as${result.orientationCount ? html` <span className="tb-n">${doc.orientationIndex + 1}/${result.orientationCount}</span>` : ''}</button>
@@ -5342,7 +6352,7 @@ function migrateDoc(d) {
         ${vis('tbFile') && html`
         <div className="dropdown">
           <button className=${'btn ghost icon' + (fileOpen ? ' active' : '')} onClick=${() => setFileOpen((o) => !o)}
-            title="Plan — opslaan, laden, delen, nieuw" aria-label="Plan">💾</button>
+            title="Plan — opslaan (⌘S), laden, delen, nieuw" aria-label="Plan">${icon('save')}</button>
           ${fileOpen && html`
             <div className="menu" onMouseLeave=${() => setFileOpen(false)}>
               <button onClick=${() => { saveJSON(); setFileOpen(false); }}>Opslaan als JSON</button>
@@ -5358,7 +6368,7 @@ function migrateDoc(d) {
         ${vis('tbExport') && html`
         <div className="dropdown">
           <button className=${'btn ghost icon' + (exportOpen ? ' active' : '')} onClick=${() => setExportOpen((o) => !o)}
-            title="Export (PNG, GeoJSON, DXF, CSV)" aria-label="Export">⬆</button>
+            title="Export (PNG, JSON, GeoJSON, DXF, CSV)" aria-label="Export">${icon('export')} ▾</button>
           ${exportOpen && html`
             <div className="menu" onMouseLeave=${() => setExportOpen(false)}>
               <button onClick=${() => { exportPNG(); setExportOpen(false); }}>PNG-afbeelding</button>
@@ -5372,7 +6382,7 @@ function migrateDoc(d) {
       </div>
 
       ${vis('panelLeft') && html`
-      <div className="panel left" ref=${leftPanelRef}>
+      <div className="panel left tk-scroll" ref=${leftPanelRef}>
         ${resizer('left')}
         ${panelFold('panelLeft', 'Linkerpaneel')}
         ${/* Options for whatever tool is active, at the very top of the panel.
@@ -5478,10 +6488,10 @@ function migrateDoc(d) {
           ${tool === 'annot' && annotKind === 'road' && roadShape === 'rect' && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>Lengte <span className="val">${annotLength.toFixed(1)} m</span></label>
-              <input type="range" min="3" max="120" step="0.5" value=${annotLength}
+              <input type="range" min="3" max="120" step="0.5" value=${annotLength} aria-label="Lengte"
                 onInput=${(e) => setAnnotLength(+e.target.value)} />
               <label style=${{ marginTop: '8px' }}>Draaiing <span className="val">${annotRot}°</span></label>
-              <input type="range" min="0" max="355" step="5" value=${annotRot}
+              <input type="range" min="0" max="355" step="5" value=${annotRot} aria-label="Draaiing"
                 onInput=${(e) => setAnnotRot(+e.target.value)} />
             </div>`}
           ${tool === 'annot' && ANNOT_TYPES[annotKind].body && !(annotKind === 'road' && roadShape === 'rect') && html`
@@ -5499,7 +6509,7 @@ function migrateDoc(d) {
           ${tool === 'annot' && ANNOT_TYPES[annotKind].mode !== 'area' && ANNOT_TYPES[annotKind].mode !== 'driveway' && !(annotKind === 'road' && roadShape === 'rect') && html`
             <div className="field" style=${{ marginTop: '10px', marginBottom: 0 }}>
               <label>${annotKind === 'tree' ? 'Kroondiameter' : annotKind === 'access' ? 'Poortbreedte' : 'Breedte'}<span className="val">${annotWidth.toFixed(1)} m</span></label>
-              <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth}
+              <input type="range" min=${ANNOT_TYPES[annotKind].mode === 'point' ? 1 : 0.2} max=${ANNOT_TYPES[annotKind].mode === 'point' ? 15 : 12} step="0.1" value=${annotWidth} aria-label="Breedte"
                 onInput=${(e) => setAnnotWidth(parseFloat(e.target.value))} />
               ${ANNOT_TYPES[annotKind].mode === 'line' && html`
                 <label className="toggle" style=${{ marginTop: '8px' }}>
@@ -5508,6 +6518,29 @@ function migrateDoc(d) {
                 </label>`}
             </div>`}
         </div>`}
+        ${tool === 'autopark' && html`
+        <div className="section">
+          <h3>Auto-park genereert</h3>
+          <div className="mix-note" style=${{ marginTop: 0 }}>
+            Vink aan wat er bij de vakken hoort. De tekening volgt meteen.
+          </div>
+          ${DRESS_OPTIONS.map((o) => html`
+            <label className="toggle dress-row" key=${o.id} title=${o.desc}>
+              <span>${o.label}</span>
+              <input type="checkbox" checked=${!!zoneDress[o.id]}
+                onChange=${() => toggleDress(o.id)} />
+            </label>`)}
+          ${zonePreview && zonePreview.metrics.stalls > 0 && html`
+            <div className="deal-rows">
+              <div className="deal-row"><span>Vakken</span><b>${zonePreview.metrics.stalls}</b></div>
+              <div className="deal-row"><span>Oppervlak</span><b>${fmt(zonePreview.metrics.area)} m²</b></div>
+              <div className="deal-row"><span>Objecten</span><b>${zonePreview.annotations.length}</b></div>
+            </div>`}
+          <div className="mix-note">
+            Vastleggen zet site-breed automatisch parkeren uit — je hebt zelf
+            aangewezen waar de parking komt.
+          </div>
+        </div>`}
         ${vis('secDraw') && html`
         <div className="section">
           <h3>Gereedschapslijst</h3>
@@ -5515,11 +6548,12 @@ function migrateDoc(d) {
             ref=${toolSearchRef} value=${toolQuery} onInput=${(e) => setToolQuery(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Escape') { setToolQuery(''); e.target.blur(); } }} />
           ${paletteGroups.length === 0 && html`<div className="mix-note">Niets gevonden voor "${toolQuery}".</div>`}
-          ${paletteGroups.map(([grp, items]) => html`
+          ${paletteGroups.map(([grp, items, total]) => html`
             <div className="tool-group" key=${grp}>
-              <button className="tool-group-h" onClick=${() => toggleGroup(grp)}>
+              <button className="tool-group-h" onClick=${() => toggleGroup(grp)}
+                aria-expanded=${openGroups[grp] !== false || !!toolQuery}>
                 <span>${openGroups[grp] === false && !toolQuery ? '▸' : '▾'} ${grp}</span>
-                <span className="tool-group-n">${items.length}</span>
+                <span className="tool-group-n">${total}</span>
               </button>
               ${(openGroups[grp] !== false || toolQuery) && html`
                 <div className="type-grid">
@@ -5530,6 +6564,10 @@ function migrateDoc(d) {
                       <span className="dot" style=${dotStyle(t)}></span>${t.label}
                     </button>`)}
                 </div>`}
+              ${(openGroups[grp] !== false || toolQuery) && !toolQuery && items.length < total && html`
+                <button className="tool-more" onClick=${() => setPaletteAll((a) => ({ ...a, [grp]: true }))}>
+                  Toon alle ${total}
+                </button>`}
             </div>`)}
         </div>`}
         ${vis('secAssets') && html`
@@ -5570,9 +6608,14 @@ function migrateDoc(d) {
         </div>`}
         ${vis('secObjects') && html`
         <div className="section">
-          <h3>Objecten <span className="obj-count">${objectRows.reduce((n, g) => n + g[1].length, 0)}</span></h3>
+          ${/* The one list in either panel that would not fold, while all eight
+                right-hand sections do. On a laptop it pushed Site-vorm and the
+                footer off the bottom and there was nothing to be done about it. */ ''}
+          ${secHead('secObjects', 'Objecten',
+            html`<span className="obj-count">${objectRows.reduce((n, g) => n + g[1].length, 0)}</span>`)}
+          ${secIsOpen('secObjects') && html`
           <input className="tool-search" type="search" placeholder="Zoek object…"
-            value=${objQuery} onInput=${(e) => setObjQuery(e.target.value)} />
+            aria-label="Zoek object" value=${objQuery} onInput=${(e) => setObjQuery(e.target.value)} />
           ${objectRows.length === 0 && html`<div className="mix-note">Nog niets geplaatst.</div>`}
           ${aislesRemovedCount > 0 && html`
             <div className="mix-note" style=${{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -5611,6 +6654,7 @@ function migrateDoc(d) {
                       onClick=${(e) => { e.stopPropagation(); deleteRow(r); }}>✕</button>`}
                 </div>`))}
             </div>`)}
+          `}
         </div>`}
 
         ${vis('secSiteShape') && html`
@@ -5680,22 +6724,24 @@ function migrateDoc(d) {
           style=${{ pointerEvents: viewMode === '3d' ? 'none' : 'auto', cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }} />
         ${vis('ovHint') && viewMode === '2d' && modeHint && html`<div className="hint">${modeHint}</div>`}
         ${vis('ovHint') && viewMode === '3d' && html`<div className="hint">3D · sleep om te draaien/kantelen · scroll om te zoomen · alleen-lezen</div>`}
-        ${vis('ovHud') && html`<div className="hud" style=${{ bottom: (dealbarOpen ? 96 : 12) + 'px' }}>
+        ${vis('ovHud') && html`<div className="hud" style=${{ bottom: (dealH + 12) + 'px' }}>
           <span><b>${metrics.total}</b> vakken</span>
           <span>·</span>
           <span>schaal <b>${ratioScale(view.scale)}</b></span>
           <span>·</span>
-          <span title=${view.scale.toFixed(2) + ' px/m'}>${view.scale.toFixed(1)} px/m</span>
+          ${/* The design reads "Zoom 62 %". px/m is what the trade says out loud,
+                so it stays — in the tooltip, where it does not cost a column. */ ''}
+          <span title=${view.scale.toFixed(2) + ' px/m'}>zoom <b>${zoomPct == null ? '—' : zoomPct + ' %'}</b></span>
           <span>·</span>
           <span>${solving ? 'rekenen…' : 'live'}</span>
           ${tool === 'placestall' && html`
             <span>·</span>
             <span className="hud-rot">gedraaid <b>${stallRot}°</b>${stallRot ? '' : ' · R draait 15°'}</span>`}
         </div>`}
-        ${vis('ovAttrib') && mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealbarOpen ? 96 : 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
+        ${vis('ovAttrib') && mbToken && mapStyle !== 'none' && !map3dError && html`<div className="attrib" style=${{ bottom: (dealH + 6) + 'px' }}>© Mapbox © OpenStreetMap</div>`}
 
         ${vis('ovDealbar') && html`
-          <div className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
+          <div ref=${dealRef} className=${'dealbar' + (dealbarOpen ? '' : ' closed')}>
             <button className="dealbar-toggle" onClick=${() => setDealbarOpen((o) => !o)}>${dealbarOpen ? '▾ Tabulatie verbergen' : '▴ Tabulatie tonen'}</button>
             ${dealbarOpen && html`
               <div className="dealbar-cols">
@@ -5757,10 +6803,10 @@ function migrateDoc(d) {
       </div>
 
       ${vis('panelRight') && html`
-      <div className="panel right">
+      <div className="panel right tk-scroll">
         ${resizer('right')}
         ${panelFold('panelRight', 'Rechterpaneel', html`
-          <input className="panel-search" type="search" placeholder="Zoek in dit paneel…"
+          <input className="panel-search" type="search" placeholder="Zoek in dit paneel…" aria-label="Zoek in dit paneel"
             value=${panelQuery} onInput=${(e) => setPanelQuery(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); setPanelQuery(''); e.target.blur(); } }} />`)}
         ${panelQuery.trim() && !SEC_ORDER.some((s) => secShow(s[0], s[1])) && html`
@@ -5798,13 +6844,13 @@ function migrateDoc(d) {
             return html`
               <div className="field">
                 <label>Hoek <span className="val">${Math.round(ann.angle || 0)}°</span></label>
-                <input type="range" min="0" max="359" step="5" value=${Math.round(ann.angle || 0)}
+                <input type="range" min="0" max="359" step="5" value=${Math.round(ann.angle || 0)} aria-label="Hoek"
                   onInput=${(e) => updateAnnotation(ai, { angle: +e.target.value })} />
                 <div className="mix-note">R draait 15° · Shift+R terug</div>
               </div>
               <div className="field">
                 <label>Grootte <span className="val">${(ann.width || t.width || 3).toFixed(1)} m</span></label>
-                <input type="range" min="1" max="12" step="0.2" value=${ann.width || t.width || 3}
+                <input type="range" min="1" max="12" step="0.2" value=${ann.width || t.width || 3} aria-label="Grootte"
                   onInput=${(e) => updateAnnotation(ai, { width: +e.target.value })} />
               </div>
               ${t.value != null && html`
@@ -5883,7 +6929,7 @@ function migrateDoc(d) {
               </div>
               <div className="field">
                 <label>Draaiing <span className="val">${deg}°</span></label>
-                <input type="range" min="0" max="355" step="5" value=${deg}
+                <input type="range" min="0" max="355" step="5" value=${deg} aria-label="Draaiing"
                   onInput=${(e) => set({ rot: (+e.target.value * Math.PI) / 180 })} />
                 <div className="mix-note">Of sleep de oranje greep naast de weg; Shift klemt op 15°.</div>
               </div>`;
@@ -5915,7 +6961,7 @@ function migrateDoc(d) {
             return html`
               <div className="field">
                 <label>Breedte <span className="val">${(ann.width || 6).toFixed(1)} m</span></label>
-                <input type="range" min="2" max="20" step="0.1" value=${ann.width || 6}
+                <input type="range" min="2" max="20" step="0.1" value=${ann.width || 6} aria-label="Breedte"
                   onInput=${(e) => updateAnnotation(ai, { width: +e.target.value })} />
               </div>
               <div className="field">
@@ -5976,7 +7022,7 @@ function migrateDoc(d) {
           <div className="field">
             <label>Verdiepingen<span className="val">${floors}</span></label>
             <div className="row">
-              <input type="range" min="1" max="40" step="1" value=${floors}
+              <input type="range" min="1" max="40" step="1" value=${floors} aria-label="Verdiepingen"
                 onInput=${(e) => setObsFloors(selection.index, parseInt(e.target.value, 10))} style=${{ flex: 1 }} />
               <input type="number" min="1" max="200" step="1" value=${floors}
                 onChange=${(e) => setObsFloors(selection.index, Math.max(1, parseInt(e.target.value, 10) || 1))} />
@@ -6087,6 +7133,74 @@ function migrateDoc(d) {
           `}
         </div>`}
 
+        ${secShow('secStallAisle', 'Vak & rijstrook') && html`
+        <div className="section">
+          ${secHead('secStallAisle', 'Vak & rijstrook')}
+          ${secIsOpen('secStallAisle') && html`
+          <div className="toggle" style=${{ marginBottom: '10px' }}>
+            <span>Automatisch parkeren</span>
+            <input type="checkbox" checked=${doc.autoParking !== false} onChange=${(e) => setAutoParking(e.target.checked)} />
+          </div>
+          ${doc.autoParking === false && html`<div className="mix-note" style=${{ marginTop: 0, marginBottom: '10px' }}>Uit — teken je site vrij; plaats vakken met de Vak-tool (K).</div>`}
+          <div className="field">
+            <label>Layout</label>
+            <div className="seg">
+              <button className=${(doc.params.layout || 'strip') === 'strip' ? 'active' : ''} onClick=${() => setParam('layout', 'strip')} title="Rechte rijen">Recht</button>
+              <button className=${doc.params.layout === 'hybrid' ? 'active' : ''} onClick=${() => setParam('layout', 'hybrid')} title="Rand volgt de curve + recht in het midden">Rand+midden</button>
+              <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')} title="Volledig concentrisch, volgt de rand">Concentrisch</button>
+            </div>
+          </div>
+          <div className="toggle">
+            <span>Lijn rijen uit met langste rand</span>
+            <input type="checkbox" checked=${!!doc.params.alignLongestEdge} onChange=${(e) => setParam('alignLongestEdge', e.target.checked)} />
+          </div>
+          ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
+          ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
+          ${slider('Rijstrook', 'aisleWidth', doc.params.aisleWidth, 5, 8, 0.1, 'm', setParam)}
+          <div className="field">
+            <label>Parkeerhoek<span className="val">${doc.params.angle}°</span></label>
+            <div className="seg" style=${{ marginBottom: '6px' }}>
+              ${[30, 45, 60, 75, 90].map((a) => html`<button key=${a} className=${doc.params.angle === a ? 'active' : ''} onClick=${() => setParam('angle', a)}>${a}°</button>`)}
+            </div>
+            <div className="row">
+              <input type="range" min="30" max="90" step="1" value=${doc.params.angle} aria-label="Parkeerhoek"
+                onInput=${(e) => setParam('angle', parseInt(e.target.value, 10), false)}
+                onChange=${(e) => setParam('angle', parseInt(e.target.value, 10), true)}
+                style=${{ flex: 1 }} />
+              <input type="number" min="30" max="90" step="1" value=${doc.params.angle}
+                onChange=${(e) => { const v = Math.max(30, Math.min(90, parseInt(e.target.value, 10) || 90)); setParam('angle', v); }}
+                style=${{ width: '58px' }} />
+            </div>
+          </div>
+          ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
+          ${slider('Padding (buffer)', 'padding', doc.params.padding, 0, 3, 0.1, 'm', setParam)}
+          ${slider('Max. rijlengte', 'maxRun', doc.params.maxRun, 0, 30, 1, 'vak', setParam)}
+          ${slider('Groeneilanden (breedte)', 'islandWidth', doc.params.islandWidth, 0, 6, 0.5, 'm', setParam, (v) => v > 0 ? `${(+v).toFixed(1)} m` : 'uit')}
+          <div className="toggle">
+            <span>Single-loaded reststroken</span>
+            <input type="checkbox" checked=${!!doc.params.singleLoaded} onChange=${(e) => setParam('singleLoaded', e.target.checked)} />
+          </div>
+          <div className="toggle">
+            <span>Dead-end turnarounds</span>
+            <input type="checkbox" checked=${!!doc.params.deadEndTurnaround} onChange=${(e) => setParam('deadEndTurnaround', e.target.checked)} />
+          </div>
+          ${doc.params.deadEndTurnaround && slider('Turnaround-ruimte', 'turnaround', doc.params.turnaround, 4, 12, 0.5, 'm', setParam)}
+          <div className="field">
+            <label>Kopse rijbaan</label>
+            <div className="seg">
+              ${[['none', 'Geen'], ['one', 'Eén kant'], ['both', 'Beide']].map(([v, lab]) => html`
+                <button key=${v}
+                  className=${(doc.params.endAisles || 'one') === v ? 'active' : ''}
+                  title=${v === 'none' ? 'Geen verbinding tussen de rijen — teken die zelf'
+                    : v === 'one' ? 'Eén dwarsrijbaan verbindt alle rijen'
+                    : 'Aan beide uiteinden, dus een lus zonder doodlopende rijen'}
+                  onClick=${() => setParam('endAisles', v)}>${lab}</button>`)}
+            </div>
+            <div className="mix-note">Verbindt de rijen met elkaar en met je in/uitrit. Kost vakken — zonder is het terrein niet berijdbaar.</div>
+          </div>
+          `}
+        </div>`}
+
         ${secShow('secDrive', 'Bereikbaarheid') && html`
         <div className="section">
           ${secHead('secDrive', 'Bereikbaarheid', html`
@@ -6128,11 +7242,57 @@ function migrateDoc(d) {
           })()}
           <div className="field" style=${{ marginTop: 8 }}>
             <label>Brandweer max. afstand tot gevel <span className="val">${fireMaxDist} m</span></label>
-            <input type="range" min="20" max="120" step="5" value=${fireMaxDist}
+            <input type="range" min="20" max="120" step="5" value=${fireMaxDist} aria-label="Max. afstand tot gevel"
               onInput=${(e) => setParam('fireMaxDist', +e.target.value, false)}
               onChange=${(e) => setParam('fireMaxDist', +e.target.value)} />
           </div>
           <div className="mix-note">Gangbare ontwerpwaarden, geen normcitaat — maten verschillen per gemeente en per brandweerzone.</div>
+          `}
+        </div>`}
+
+        ${secShow('secMix', 'Vaktypes (mix)') && html`
+        <div className="section">
+          ${secHead('secMix', 'Vaktypes (mix)')}
+          ${secIsOpen('secMix') && html`
+          ${(() => {
+            const keys = ['compact', 'ev', 'staff', 'visitor', 'reserved'];
+            const mix = doc.params.mix || { compact: doc.params.compactRatio || 0, ev: doc.params.evRatio || 0 };
+            const sum = keys.reduce((s, k) => s + (mix[k] || 0), 0);
+            return html`
+              <table className="mix-table">
+                <thead><tr><th>Type</th><th>Aandeel</th><th>Aantal</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.standard.color }}></span>Standaard</td>
+                    <td className="mix-rem">${Math.max(0, Math.round((1 - sum) * 100))}%</td>
+                    <td>${metrics.counts.standard || 0}</td>
+                  </tr>
+                  ${keys.map((k) => html`
+                    <tr key=${k}>
+                      <td><span className="dot" style=${{ background: STALL_TYPES[k].color }}></span>${STALL_TYPES[k].label}</td>
+                      <td><input className="mix-in" type="number" min="0" max="100" step="5" value=${Math.round((mix[k] || 0) * 100)}
+                        onChange=${(e) => setMix(k, Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) / 100)} />%</td>
+                      <td>${metrics.counts[k] || 0}</td>
+                    </tr>`)}
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.ada.color }}></span>Minder-valide</td>
+                    <td>auto</td>
+                    <td>${metrics.counts.ada || 0}</td>
+                  </tr>
+                  <tr>
+                    <td><span className="dot" style=${{ background: STALL_TYPES.motorcycle.color }}></span>Motor</td>
+                    <td>handmatig</td>
+                    <td>${metrics.counts.motorcycle || 0}</td>
+                  </tr>
+                </tbody>
+              </table>
+              ${sum > 1 ? html`<div className="mix-warn">Totaal ${Math.round(sum * 100)}% &gt; 100% — er blijft geen standaard over.</div>` : ''}
+              <div className="toggle">
+                <span>Minder-valide (ADA) automatisch</span>
+                <input type="checkbox" checked=${doc.params.ada} onChange=${(e) => setParam('ada', e.target.checked)} />
+              </div>
+              <div className="mix-note">Motor markeer je handmatig op een vak (telt als 3 plaatsen).</div>`;
+          })()}
           `}
         </div>`}
 
@@ -6145,17 +7305,33 @@ function migrateDoc(d) {
             </label>
           `)}
           ${secIsOpen('secSun') && html`
-          <div className="field">
-            <label>Datum</label>
-            <input type="date" value=${doc.params.sunDate || '2026-06-21'}
+          ${/* Date and time side by side, as the design has them. The hour was a
+                0-23.5 range slider, which is a poor control for a clock: you
+                cannot type 14:30 into it, and dragging past the hour you want is
+                the normal case. A time input is the thing browsers already have. */ ''}
+          <div className="field sun-when">
+            <label htmlFor="sun-date">Datum</label>
+            <label htmlFor="sun-time">Tijd</label>
+            <input id="sun-date" className="input" type="date" aria-label="Datum"
+              value=${doc.params.sunDate || '2026-06-21'}
               onChange=${(e) => setParam('sunDate', e.target.value)} />
+            <input id="sun-time" className="input" type="time" aria-label="Tijd" step="1800"
+              value=${hoursToClock(doc.params.sunHour == null ? 15 : doc.params.sunHour)}
+              onChange=${(e) => { const h = clockToHours(e.target.value); if (h != null) setParam('sunHour', h); }} />
           </div>
-          ${slider('Tijd', 'sunHour', doc.params.sunHour == null ? 15 : doc.params.sunHour, 0, 23.5, 0.5, 'u', setParam)}
           <div className="mix-note">
             ${sun.altitude > 0
               ? `Zon staat ${sun.altitude.toFixed(0)}° hoog, azimut ${sun.azimuth.toFixed(0)}°.`
               : 'De zon staat onder de horizon — alles ligt in de schaduw.'}
-            ${layers.shadow ? ` ${shadedStalls.length} van ${deco.stalls.length} vakken in de schaduw.` : ''}
+          </div>
+          ${/* Its own labelled row rather than a clause in the note above, and no
+                longer conditional on the layer being on: the count is the answer
+                this section exists to give. */ ''}
+          <div className="deal-rows">
+            <div className="deal-row">
+              <span>Vakken in schaduw</span>
+              <b>${shadedStalls.length} / ${deco.stalls.length}</b>
+            </div>
           </div>
           <div className="mix-note">Klok is zonnetijd voor deze lengtegraad (UTC${zoneOffsetHours((doc.geo || {}).lon) >= 0 ? '+' : ''}${zoneOffsetHours((doc.geo || {}).lon)}); geen zomertijd.</div>
           `}
@@ -6257,176 +7433,66 @@ function migrateDoc(d) {
           `}
         </div>`}
 
-        ${secShow('secStallAisle', 'Vak & rijstrook') && html`
-        <div className="section">
-          ${secHead('secStallAisle', 'Vak & rijstrook')}
-          ${secIsOpen('secStallAisle') && html`
-          <div className="toggle" style=${{ marginBottom: '10px' }}>
-            <span>Automatisch parkeren</span>
-            <input type="checkbox" checked=${doc.autoParking !== false} onChange=${(e) => setAutoParking(e.target.checked)} />
-          </div>
-          ${doc.autoParking === false && html`<div className="mix-note" style=${{ marginTop: 0, marginBottom: '10px' }}>Uit — teken je site vrij; plaats vakken met de Vak-tool (K).</div>`}
-          <div className="field">
-            <label>Layout</label>
-            <div className="seg">
-              <button className=${(doc.params.layout || 'strip') === 'strip' ? 'active' : ''} onClick=${() => setParam('layout', 'strip')} title="Rechte rijen">Recht</button>
-              <button className=${doc.params.layout === 'hybrid' ? 'active' : ''} onClick=${() => setParam('layout', 'hybrid')} title="Rand volgt de curve + recht in het midden">Rand+midden</button>
-              <button className=${doc.params.layout === 'perimeter' ? 'active' : ''} onClick=${() => setParam('layout', 'perimeter')} title="Volledig concentrisch, volgt de rand">Concentrisch</button>
-            </div>
-          </div>
-          <div className="toggle">
-            <span>Lijn rijen uit met langste rand</span>
-            <input type="checkbox" checked=${!!doc.params.alignLongestEdge} onChange=${(e) => setParam('alignLongestEdge', e.target.checked)} />
-          </div>
-          <div className="field" style=${{ display: 'flex', gap: '6px' }}>
-            <button className="btn ghost" style=${{ flex: 1, justifyContent: 'center' }} onClick=${genSchemes}>⚖️ Vergelijk</button>
-            <button className="btn" style=${{ flex: 1, justifyContent: 'center' }} disabled=${!!(optState && optState.running)} onClick=${autoOptimize}>
-              ${optState && optState.running ? `Bezig… ${optState.i}/${optState.n}` : '✨ Optimaliseer'}
-            </button>
-          </div>
-          ${optState && optState.done && html`
-            <div className="opt-result">
-              Beste layout: <b>${optState.label}</b> —
-              ${optState.after} plaatsen${optState.after > optState.before ? html` <span className="opt-up">(+${optState.after - optState.before})</span>`
-                : optState.after < optState.before ? ` (${optState.after - optState.before})` : ' — al optimaal'}
-            </div>`}
-          ${schemes && html`
-            <div className="schemes">
-              ${schemes.length === 0 ? html`<div className="scheme-empty">Teken eerst een site.</div>` : ''}
-              ${schemes.map((s) => html`
-                <div key=${s.label} className=${'scheme-row' + (s.best ? ' best' : '')}>
-                  <div className="scheme-info">
-                    <span className="scheme-label">${s.label}${s.best ? ' ★' : ''}</span>
-                    <span className="scheme-count">${s.physical} vakken · ${Math.round(s.density)} m²/vak</span>
-                  </div>
-                  <button className="btn ghost" onClick=${() => applyScheme(s.patch)}>Toepassen</button>
-                </div>`)}
-            </div>`}
-          ${slider('Vakbreedte', 'stallWidth', doc.params.stallWidth, 2.2, 3.5, 0.1, 'm', setParam)}
-          ${slider('Vakdiepte', 'stallDepth', doc.params.stallDepth, 4.5, 6.5, 0.1, 'm', setParam)}
-          ${slider('Rijstrook', 'aisleWidth', doc.params.aisleWidth, 5, 8, 0.1, 'm', setParam)}
-          <div className="field">
-            <label>Parkeerhoek<span className="val">${doc.params.angle}°</span></label>
-            <div className="seg" style=${{ marginBottom: '6px' }}>
-              ${[30, 45, 60, 75, 90].map((a) => html`<button key=${a} className=${doc.params.angle === a ? 'active' : ''} onClick=${() => setParam('angle', a)}>${a}°</button>`)}
-            </div>
-            <div className="row">
-              <input type="range" min="30" max="90" step="1" value=${doc.params.angle}
-                onInput=${(e) => setParam('angle', parseInt(e.target.value, 10), false)}
-                onChange=${(e) => setParam('angle', parseInt(e.target.value, 10), true)}
-                style=${{ flex: 1 }} />
-              <input type="number" min="30" max="90" step="1" value=${doc.params.angle}
-                onChange=${(e) => { const v = Math.max(30, Math.min(90, parseInt(e.target.value, 10) || 90)); setParam('angle', v); }}
-                style=${{ width: '58px' }} />
-            </div>
-          </div>
-          `}
-        </div>`}
-
-        ${secShow('secConstraints', 'Site-constraints') && html`
-        <div className="section">
-          ${secHead('secConstraints', 'Site-constraints')}
-          ${secIsOpen('secConstraints') && html`
-          ${slider('Setback', 'setback', doc.params.setback, 0, 20, 0.5, 'm', setParam)}
-          ${slider('Padding (buffer)', 'padding', doc.params.padding, 0, 3, 0.1, 'm', setParam)}
-          ${slider('Max. rijlengte', 'maxRun', doc.params.maxRun, 0, 30, 1, 'vak', setParam)}
-          ${slider('Groeneilanden (breedte)', 'islandWidth', doc.params.islandWidth, 0, 6, 0.5, 'm', setParam, (v) => v > 0 ? `${(+v).toFixed(1)} m` : 'uit')}
-          <div className="toggle">
-            <span>Single-loaded reststroken</span>
-            <input type="checkbox" checked=${!!doc.params.singleLoaded} onChange=${(e) => setParam('singleLoaded', e.target.checked)} />
-          </div>
-          <div className="toggle">
-            <span>Dead-end turnarounds</span>
-            <input type="checkbox" checked=${!!doc.params.deadEndTurnaround} onChange=${(e) => setParam('deadEndTurnaround', e.target.checked)} />
-          </div>
-          ${doc.params.deadEndTurnaround && slider('Turnaround-ruimte', 'turnaround', doc.params.turnaround, 4, 12, 0.5, 'm', setParam)}
-          <div className="field">
-            <label>Kopse rijbaan</label>
-            <div className="seg">
-              ${[['none', 'Geen'], ['one', 'Eén kant'], ['both', 'Beide']].map(([v, lab]) => html`
-                <button key=${v}
-                  className=${(doc.params.endAisles || 'one') === v ? 'active' : ''}
-                  title=${v === 'none' ? 'Geen verbinding tussen de rijen — teken die zelf'
-                    : v === 'one' ? 'Eén dwarsrijbaan verbindt alle rijen'
-                    : 'Aan beide uiteinden, dus een lus zonder doodlopende rijen'}
-                  onClick=${() => setParam('endAisles', v)}>${lab}</button>`)}
-            </div>
-            <div className="mix-note">Verbindt de rijen met elkaar en met je in/uitrit. Kost vakken — zonder is het terrein niet berijdbaar.</div>
-          </div>
-          `}
-        </div>`}
-
-        ${secShow('secMix', 'Vaktypes (mix)') && html`
-        <div className="section">
-          ${secHead('secMix', 'Vaktypes (mix)')}
-          ${secIsOpen('secMix') && html`
-          ${(() => {
-            const keys = ['compact', 'ev', 'staff', 'visitor', 'reserved'];
-            const mix = doc.params.mix || { compact: doc.params.compactRatio || 0, ev: doc.params.evRatio || 0 };
-            const sum = keys.reduce((s, k) => s + (mix[k] || 0), 0);
-            return html`
-              <table className="mix-table">
-                <thead><tr><th>Type</th><th>Aandeel</th><th>Aantal</th></tr></thead>
-                <tbody>
-                  <tr>
-                    <td><span className="dot" style=${{ background: STALL_TYPES.standard.color }}></span>Standaard</td>
-                    <td className="mix-rem">${Math.max(0, Math.round((1 - sum) * 100))}%</td>
-                    <td>${metrics.counts.standard || 0}</td>
-                  </tr>
-                  ${keys.map((k) => html`
-                    <tr key=${k}>
-                      <td><span className="dot" style=${{ background: STALL_TYPES[k].color }}></span>${STALL_TYPES[k].label}</td>
-                      <td><input className="mix-in" type="number" min="0" max="100" step="5" value=${Math.round((mix[k] || 0) * 100)}
-                        onChange=${(e) => setMix(k, Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) / 100)} />%</td>
-                      <td>${metrics.counts[k] || 0}</td>
-                    </tr>`)}
-                  <tr>
-                    <td><span className="dot" style=${{ background: STALL_TYPES.ada.color }}></span>Minder-valide</td>
-                    <td>auto</td>
-                    <td>${metrics.counts.ada || 0}</td>
-                  </tr>
-                  <tr>
-                    <td><span className="dot" style=${{ background: STALL_TYPES.motorcycle.color }}></span>Motor</td>
-                    <td>handmatig</td>
-                    <td>${metrics.counts.motorcycle || 0}</td>
-                  </tr>
-                </tbody>
-              </table>
-              ${sum > 1 ? html`<div className="mix-warn">Totaal ${Math.round(sum * 100)}% &gt; 100% — er blijft geen standaard over.</div>` : ''}
-              <div className="toggle">
-                <span>Minder-valide (ADA) automatisch</span>
-                <input type="checkbox" checked=${doc.params.ada} onChange=${(e) => setParam('ada', e.target.checked)} />
-              </div>
-              <div className="mix-note">Motor markeer je handmatig op een vak (telt als 3 plaatsen).</div>`;
-          })()}
-          `}
-        </div>`}
-
         ${secShow('secProgram', 'Programma & parkeer­ratio') && html`
         <div className="section">
           ${secHead('secProgram', 'Programma & parkeer­ratio')}
           ${secIsOpen('secProgram') && html`
           <div className="field">
             <label>Gebouw-GLA<span className="val">${doc.params.buildingGLA || 0} m²</span></label>
-            <input type="number" min="0" step="50" value=${doc.params.buildingGLA || 0}
+            <input type="number" min="0" step="50" aria-label="Gebouw-GLA (m²)" value=${doc.params.buildingGLA || 0}
               onChange=${(e) => setParam('buildingGLA', Math.max(0, parseFloat(e.target.value) || 0))} />
           </div>
           <div className="field">
             <label>Ratio<span className="val">${doc.params.parkingRatio || 0} / 100 m²</span></label>
-            <input type="number" min="0" step="0.1" value=${doc.params.parkingRatio || 0}
+            <input type="number" min="0" step="0.1" aria-label="Parkeerratio per 100 m²" value=${doc.params.parkingRatio || 0}
               onChange=${(e) => setParam('parkingRatio', Math.max(0, parseFloat(e.target.value) || 0))} />
           </div>
+          ${/* Vereist, Geleverd and Saldo as three rows, as the design has them and
+                as the tabulatiebalk already reads. It was one run-on sentence, so
+                the number that actually decides whether the plan passes had to be
+                parsed out of prose. */ ''}
           ${metrics.requiredStalls != null
-            ? html`<div style=${{ fontSize: '12px', marginTop: '2px' }}>
-                <b style=${{ color: metrics.total >= metrics.requiredStalls ? '#22c55e' : '#f59e0b' }}>${metrics.total}</b>
-                <span style=${{ color: 'var(--muted)' }}> / ${metrics.requiredStalls} vereist — ${metrics.total >= metrics.requiredStalls ? 'voldoet ✓' : (metrics.requiredStalls - metrics.total) + ' tekort'}</span>
+            ? html`<div className="deal-rows">
+                <div className="deal-row"><span>Vereist</span><b>${metrics.requiredStalls}</b></div>
+                <div className="deal-row"><span>Geleverd</span><b>${metrics.total}</b></div>
+                <div className="deal-row"><span>Saldo</span>
+                  <b className=${metrics.total >= metrics.requiredStalls ? 'ok' : 'bad'}>
+                    ${(metrics.total - metrics.requiredStalls > 0 ? '+' : '') + (metrics.total - metrics.requiredStalls)}
+                  </b>
+                </div>
               </div>`
             : html`<div style=${{ fontSize: '11.5px', color: 'var(--muted)' }}>Vul GLA en ratio in voor een zoning-check.</div>`}
           `}
         </div>`}
+        ${secShow('secSchemes', "Schema's") && html`
+        <div className="section">
+          ${secHead('secSchemes', "Schema's")}
+          ${secIsOpen('secSchemes') && html`
+          <div className="mix-note" style=${{ marginTop: 0 }}>
+            Los het plan een aantal keer op met andere parameters en zet de
+            plattegronden naast elkaar.
+          </div>
+          <div className="field">
+            <button className="btn primary" style=${{ width: '100%', justifyContent: 'center' }}
+              onClick=${() => setVarOpen(true)}>⚖️ Varianten vergelijken</button>
+          </div>
+          ${varJobs.length > 0 && html`
+            <div className="deal-rows">
+              <div className="deal-row"><span>Gegenereerd</span><b>${varJobs.length}</b></div>
+              ${varBest && html`<div className="deal-row"><span>Beste</span><b>${varBest.label}</b></div>`}
+              ${varBest && varBest.score && html`
+                <div className="deal-row"><span>Plaatsen</span>
+                  <b className=${varBest.score.total >= metrics.total ? 'ok' : ''}>${varBest.score.total}</b></div>`}
+            </div>`}
+          ${(doc.variants || []).length > 0 && html`
+            <div className="mix-note">${doc.variants.length} bewaard bij dit plan.</div>`}
+          `}
+        </div>`}
+
       </div>`}
 
       ${libOpen && libraryModal()}
+      ${varOpen && variantsModal()}
       ${keysOpen && keysModal()}
       ${summaryOpen && html`
         <div className="modal-backdrop" onClick=${() => setSummaryOpen(false)}>
@@ -6545,11 +7611,17 @@ function layerRow(id, label, color, layers, setLayers) {
   </label>`;
 }
 
+// Fifteen call sites, so the label association lives here rather than at each of
+// them. The visible <label> was not tied to its input by `for`/`id`, which meant
+// a screen reader announced every one of these as an unnamed slider — and the
+// value span sits inside that label, so the name carries the reading too.
 function slider(label, key, value, min, max, step, unit, setParam, format) {
   const shown = format ? format(value) : `${(+value).toFixed(step < 1 ? 1 : 0)}${unit ? ' ' + unit : ''}`;
+  const id = 'sl-' + key;
   return html`<div className="field">
-    <label>${label}<span className="val">${shown}</span></label>
-    <input type="range" min=${min} max=${max} step=${step} value=${value}
+    <label htmlFor=${id}>${label}<span className="val">${shown}</span></label>
+    <input id=${id} type="range" min=${min} max=${max} step=${step} value=${value}
+      aria-label=${label} aria-valuetext=${shown}
       onInput=${(e) => setParam(key, parseFloat(e.target.value), false)}
       onChange=${(e) => setParam(key, parseFloat(e.target.value), true)} />
   </div>`;
@@ -6558,7 +7630,32 @@ function slider(label, key, value, min, max, step, unit, setParam, format) {
 function rectFrom(a, b) {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
 }
-function fmt(n) { return n >= 10000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toLocaleString('nl-NL'); }
+// The sun panel keeps its hour as a fractional number (15.5 = half past three),
+// because that is what the almanac maths wants. <input type="time"> speaks
+// "HH:MM". These two are the only translation between them.
+function hoursToClock(h) {
+  const t = Math.max(0, Math.min(23.999, +h || 0));
+  const hh = Math.floor(t);
+  const mm = Math.round((t - hh) * 60);
+  // 59.7 minutes rounds to 60, which is not a minute of any hour.
+  const [H, M] = mm === 60 ? [hh + 1, 0] : [hh, mm];
+  return String(H % 24).padStart(2, '0') + ':' + String(M).padStart(2, '0');
+}
+function clockToHours(v) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(v || ''));
+  if (!m) return null;                       // an empty field must not read as midnight
+  const h = +m[1], mi = +m[2];
+  if (h > 23 || mi > 59) return null;
+  return h + mi / 60;
+}
+// Grouped, not abbreviated: the design prints 18.640 m². `18.6k` dropped three
+// digits off an area on a screen whose entire job is the figures, and there was
+// room for them. Anything past a million keeps the short form — that is a
+// takeoff error rather than a site, and it should look like one.
+function fmt(n) {
+  const v = Math.round(+n || 0);
+  return Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v.toLocaleString('nl-NL');
+}
 
 // px/m as the drawing scale everyone in the trade actually says out loud.
 //

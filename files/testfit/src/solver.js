@@ -15,8 +15,8 @@ import {
   offsetPolygon, boundingBox, rotatePolygon, rotatePoint,
   quadInsidePolygon, quadIntersectsPolygon, edgeAngles, polygonArea, polygonCentroid,
   pointInPolygon, distPointToPolygonBoundary, polyOf,
-} from './geometry.js?v=d4f790f9';
-import { ANNOT_TYPES, runoffOf } from './annots.js?v=d4f790f9';
+} from './geometry.js?v=c398da1a';
+import { ANNOT_TYPES, runoffOf } from './annots.js?v=c398da1a';
 
 // Contiguous x-spans where the point (x, y) lies inside `poly`.
 function insideSpans(poly, y, xMin, xMax, step) {
@@ -571,6 +571,278 @@ function assignStallTypes(stalls, params) {
     }
     for (let k = 0; k < Math.min(required, n); k++) stalls[order ? order[k] : k].type = 'ada';
   }
+}
+
+// ============================================================
+// One definition of "what the solver is asked", and one of "how good was it".
+//
+// Two features scored layouts before this — the compare table and the
+// auto-optimiser — and each assembled its own solve arguments. They disagreed:
+// one passed the road blockers and the other did not, neither passed the
+// entrance hint the live solve passes, both hard-coded orientation 0, and both
+// aligned to the tessellated ring rather than the control points the live solve
+// uses. A variant that scores differently from the plan you get when you adopt
+// it is worse than no variant at all, so the assembly lives here now and every
+// caller goes through it.
+// ============================================================
+
+/** The params keys a layout variant is allowed to touch. */
+export const VARY_KEYS = [
+  'stallWidth', 'stallDepth', 'aisleWidth', 'angle', 'setback', 'padding',
+  'maxRun', 'islandWidth', 'singleLoaded', 'deadEndTurnaround', 'turnaround',
+  'layout', 'endAisles', 'alignLongestEdge', 'ada', 'mix', 'compactRatio', 'evRatio',
+];
+
+/**
+ * Merge a patch over params. Shallow, except `mix`, which is a nested object:
+ * every other patch path in this app spreads it and would silently replace the
+ * whole table when a patch mentions one type.
+ */
+export function applyPatch(params, patch) {
+  if (!patch) return params;
+  const next = { ...params, ...patch };
+  if (patch.mix) next.mix = { ...(params.mix || {}), ...patch.mix };
+  return next;
+}
+
+/** Drop anything from a patch that is not a layout key (see VARY_KEYS). */
+export function sanitizePatch(patch) {
+  const out = {};
+  if (!patch || typeof patch !== 'object') return out;
+  for (const k of VARY_KEYS) if (patch[k] !== undefined) out[k] = patch[k];
+  return out;
+}
+
+/**
+ * Everything the solver needs, assembled once.
+ *
+ * `alignAngle` comes from the *control points* (`site`), not the tessellated
+ * ring (`sitePoly`): on a curved boundary the tessellation's longest edge is an
+ * arbitrary 1/14th of an arc, which is not an edge anybody drew.
+ */
+export function buildSolveInput({ site, sitePoly, obstacles, roadBlockers, params, orientationIndex, entries, patch }) {
+  const p = applyPatch(params, patch ? sanitizePatch(patch) : null);
+  const solveP = { ...p };
+  if (p.alignLongestEdge && site && site.length >= 2) solveP.alignAngle = longestEdgeAngle(site);
+  if (entries && entries.length) solveP.entries = entries;
+  return {
+    site: sitePoly,
+    // What the solver must drive around...
+    obstacles: roadBlockers && roadBlockers.length ? [...(obstacles || []), ...roadBlockers] : (obstacles || []),
+    // ...but roads are not buildings, so the coverage and FAR figures see only
+    // the real ones. Keeping the split here is what stops a variant card and the
+    // dealbar disagreeing for reasons that have nothing to do with the variant.
+    metricObstacles: obstacles || [],
+    params: solveP,
+    orientationIndex: orientationIndex || 0,
+  };
+}
+
+/**
+ * Layer the document's manual decisions over a raw solve, exactly as the live
+ * plan does. Metrics are computed on the result of this, so a variant's numbers
+ * and the plan's numbers come from the same function rather than from two
+ * definitions that drift.
+ */
+export function decorate(result, { overrides, manualStalls, params } = {}) {
+  const ov = overrides || {};
+  const ovStalls = ov.stalls || {}, ovAisles = ov.aisles || {}, ovAngles = ov.angles || {};
+  const locks = ov.locks || {}, lockS = locks.stalls || {}, lockA = locks.aisles || {};
+  const removed = ov.removed || {};
+  const w = (params || {}).stallWidth, d = (params || {}).stallDepth;
+  const reangle = (poly, key) => {
+    const deg = ovAngles[key];
+    if (deg == null) return poly;
+    const c = polygonCentroid(poly), th = (deg * Math.PI) / 180;
+    const ux = Math.cos(th), uy = Math.sin(th), vx = -Math.sin(th), vy = Math.cos(th), hw = w / 2, hd = d / 2;
+    return [
+      { x: c.x - ux * hw - vx * hd, y: c.y - uy * hw - vy * hd },
+      { x: c.x + ux * hw - vx * hd, y: c.y + uy * hw - vy * hd },
+      { x: c.x + ux * hw + vx * hd, y: c.y + uy * hw + vy * hd },
+      { x: c.x - ux * hw + vx * hd, y: c.y - uy * hw + vy * hd },
+    ];
+  };
+  const stalls = (result.stalls || []).map((st) => {
+    const key = stallKey(st.poly);
+    return { ...st, key, poly: reangle(st.poly, key), type: ovStalls[key] || st.type, locked: !!lockS[key], angle: ovAngles[key], manual: false };
+  }).filter((st) => !removed[st.key]);
+  for (const ms of manualStalls || []) {
+    const key = stallKey(ms.poly);
+    stalls.push({ poly: reangle(ms.poly, key), key, type: ovStalls[key] || ms.type || 'standard', locked: !!lockS[key], angle: ovAngles[key], manual: true });
+  }
+  const gone = ov.aislesRemoved || {};
+  const aisles = (result.aisles || []).map((q) => {
+    const key = aisleKey(q);
+    const o = ovAisles[key] || {};
+    return { poly: q, key, oneway: !!o.oneway, dir: o.dir || 1, locked: !!lockA[key] };
+  }).filter((a) => !gone[a.key]);
+  return { stalls, aisles, islands: result.islands || [], turnarounds: result.turnarounds || [], orientationCount: result.orientationCount };
+}
+
+/**
+ * Is this layout physically possible?
+ *
+ * The old test was "at least 20 m² of site per stall", a threshold on a
+ * dimensioned quantity with no basis behind it. Measured on the demo site, the
+ * concentric layout passes it at 21.7 m²/stall while overlapping 43 pairs of
+ * stalls and covering 1.80× the ground that exists; on a curved site the
+ * optimiser picked the hybrid layout at 1.12× and applied it without asking.
+ *
+ *  - `stallOverlaps` — a stall on a stall is never acceptable. Hard reject.
+ *  - `packedRatio`   — paved area over buildable area. Dimensionless, so it does
+ *                      not care how big the site is.
+ *
+ * The 1.05 tolerance is empirical rather than principled, and the number matters:
+ * a clean strip pack on a 16-gon measures 1.02, because `computeBuildable` is a
+ * polygon offset and the offset of a many-sided near-circle is slightly generous.
+ * Anything under that is noise; 1.12 is a layout claiming ground it does not have.
+ *
+ * Known bias, stated rather than hidden: the denominator does not subtract
+ * building footprints, because `computeBuildable` does not either and this
+ * project deliberately carries no boolean polygon clipping. A site with a large
+ * building therefore reads lower than the truth — the check under-flags, which
+ * is the safe direction for a test that demotes candidates.
+ */
+export const PACKED_LIMIT = 1.05;
+
+export function plausibility(decorated, site, params) {
+  const buildable = computeBuildable(site, params.setback);
+  const bArea = buildable ? polygonArea(buildable) : 0;
+  let paved = 0;
+  for (const s of decorated.stalls) paved += polygonArea(s.poly);
+  for (const a of decorated.aisles || []) paved += polygonArea(a.poly || a);
+  for (const t of decorated.turnarounds || []) paved += polygonArea(t.poly || t);
+
+  // Stall-on-stall, via a grid bucket so this stays linear on a 7000-stall plan.
+  const lim = 0.75 * Math.min(params.stallWidth, params.stallDepth);
+  const cell = Math.max(lim, 1e-6);
+  const grid = new Map();
+  let stallOverlaps = 0;
+  for (const s of decorated.stalls) {
+    const c = polygonCentroid(s.poly);
+    const gx = Math.floor(c.x / cell), gy = Math.floor(c.y / cell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const bucket = grid.get((gx + dx) + ':' + (gy + dy));
+        if (!bucket) continue;
+        for (const o of bucket) if (Math.hypot(o.x - c.x, o.y - c.y) < lim) stallOverlaps++;
+      }
+    }
+    const k = gx + ':' + gy;
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(c);
+  }
+  const packedRatio = bArea > 0 ? paved / bArea : 0;
+  return { packedRatio, stallOverlaps, plausible: stallOverlaps === 0 && packedRatio <= PACKED_LIMIT };
+}
+
+/**
+ * The axes a sweep may vary, as a table rather than a comment so it cannot rot.
+ * The same list gates what a patch is allowed to contain (VARY_KEYS above), so
+ * the generator and the file validator cannot drift apart.
+ *
+ * `@orientationIndex` is prefixed because it is a solve *input*, not a params
+ * key — it picks among the ranked row directions rather than changing any
+ * dimension. Both of the features this replaces hard-coded it to 0, which is
+ * why the row axis you had chosen was silently ignored by every comparison.
+ */
+export const VARY_AXES = [
+  { key: 'angle', label: 'Parkeerhoek', unit: '°', values: [30, 45, 60, 75, 90] },
+  { key: 'layout', label: 'Layout', values: ['strip', 'hybrid', 'perimeter'],
+    labels: { strip: 'Recht', hybrid: 'Rand+midden', perimeter: 'Concentrisch' } },
+  { key: 'alignLongestEdge', label: 'Uitlijnen op rand', values: [false, true],
+    labels: { false: 'vrij', true: 'uitgelijnd' } },
+  { key: 'stallWidth', label: 'Vakbreedte', unit: 'm', values: [2.4, 2.5, 2.7, 3.0] },
+  { key: 'stallDepth', label: 'Vakdiepte', unit: 'm', values: [4.9, 5.0, 5.5, 6.0] },
+  { key: 'aisleWidth', label: 'Rijstrook', unit: 'm', values: [6.0, 6.5, 7.3, 8.0] },
+  { key: 'setback', label: 'Setback', unit: 'm', values: [0, 3, 6, 10] },
+  { key: 'maxRun', label: 'Max. rijlengte', unit: 'vak', values: [8, 12, 20, 0] },
+  { key: 'islandWidth', label: 'Groeneilanden', unit: 'm', values: [0, 1.5, 3] },
+  { key: 'endAisles', label: 'Kopse rijbaan', values: ['none', 'one', 'both'],
+    labels: { none: 'geen', one: 'één kant', both: 'beide' } },
+  { key: 'singleLoaded', label: 'Single-loaded', values: [false, true],
+    labels: { false: 'uit', true: 'aan' } },
+  { key: 'deadEndTurnaround', label: 'Keerruimte', values: [false, true],
+    labels: { false: 'uit', true: 'aan' } },
+  { key: '@orientationIndex', label: 'Rij-as', values: [0, 1, 2],
+    labels: { 0: '1e', 1: '2e', 2: '3e' } },
+];
+export const ORIENT_KEY = '@orientationIndex';
+export const axisOf = (key) => VARY_AXES.find((a) => a.key === key) || null;
+
+/** How one axis value reads on a card. */
+export function axisValueLabel(axis, v) {
+  if (!axis) return String(v);
+  if (axis.labels && axis.labels[String(v)] != null) return axis.labels[String(v)];
+  const n = typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+  if (!axis.unit) return n;
+  // Degrees close up against the number; every other unit takes a space.
+  return axis.unit === '°' ? n + '°' : n + ' ' + axis.unit;
+}
+
+/**
+ * Turn one or two chosen axes into the candidates to solve.
+ *
+ * The seed — the parameters exactly as they are — is always first and always
+ * present, so the comparison can never tell you that something is better than
+ * what you have without showing you what you have. That was `autoOptimize`'s one
+ * good invariant; it was just invisible.
+ *
+ * Duplicates are removed by patch identity rather than by label, because two
+ * axes can legitimately produce the same combination (aligning a concentric
+ * layout changes nothing), and solving it twice would put the same plan on two
+ * cards with two different names.
+ */
+export function expandSweep(chosen, cap = 12) {
+  const axes = (chosen || []).filter((c) => c && c.key && (c.values || []).length).slice(0, 2);
+  const out = [{ patch: {}, orient: null, label: 'Huidig', gen: 'seed' }];
+  const seen = new Set(['{}|null']);
+  if (!axes.length) return { jobs: out, dropped: 0 };
+
+  const combos = axes.length === 1
+    ? axes[0].values.map((v) => [[axes[0].key, v]])
+    : axes[0].values.flatMap((a) => axes[1].values.map((b) => [[axes[0].key, a], [axes[1].key, b]]));
+
+  let dropped = 0;
+  for (const combo of combos) {
+    const patch = {};
+    let orient = null;
+    for (const [key, v] of combo) {
+      if (key === ORIENT_KEY) orient = v; else patch[key] = v;
+    }
+    const id = stableStringify(patch) + '|' + orient;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (out.length >= cap) { dropped++; continue; }
+    out.push({
+      patch, orient, gen: 'sweep:' + axes.map((a) => a.key).join('×'),
+      label: combo.map(([key, v]) => axisValueLabel(axisOf(key), v)).join(' · '),
+    });
+  }
+  return { jobs: out, dropped };
+}
+
+/**
+ * JSON with the keys in a fixed order, so two objects that mean the same thing
+ * hash the same. Insertion order is not meaning: `applyPatch` adding a key puts
+ * it at the end, and without this that would read as a different plan and throw
+ * away a perfectly good cached score.
+ */
+export function stableStringify(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(v).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+}
+
+/** FNV-1a, 32-bit. Short, fast, and good enough to key a cache on. */
+export function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
 }
 
 /** Aggregate live metrics for the dashboard. */

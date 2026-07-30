@@ -35,6 +35,25 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   the rows to the longest site edge.
 - **Presets** — US standard, US SUV, EU metric, compact.
 
+### Auto-park: draw a zone, get a car park
+
+- **Pick Auto-park (`A`), click an outline, and the parking appears while you
+  are still drawing** — the outline closes through the cursor, so the bays, the
+  greenery and the markings inside it follow the mouse. Double-click, or click
+  the first point, to keep it.
+- Underneath it is the same solver: the zone is handed to it as if it were the
+  site, so your angles, bay sizes, layout and accessible-bay rules apply, and
+  buildings and drawn roads are still avoided. The setback becomes the verge.
+- **A tick list says what comes with the bays** — trees and grass, lighting,
+  markings and pictograms, a way in, and optionally bike parking, solar carports
+  and a crossing. Untick one and it leaves the drawing while you are still
+  drawing it.
+- Everything it makes is an **ordinary object**: a generated tree is a tree,
+  selectable, movable, exported, extruded in 3D and counted in the metrics. One
+  Cmd+Z takes the whole zone back out again.
+- Keeping a zone switches site-wide automatic parking off — you have just said
+  where the parking goes.
+
 ### Editing what the solver produced
 
 - **Mark stalls** — click one, or drag a marquee over many, and tag them EV,
@@ -150,6 +169,24 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   specific yield and the shading loss your own buildings cost. Buildings block
   the canopy only where they rise above it. A carport adds **no** impervious
   area: it stands over paving that is already counted.
+### Comparing layouts
+
+- **Variants** (⚖️) — pick one or two axes (angle, layout, bay width, setback,
+  row axis, …) and the plan is re-solved for every combination and laid out side
+  by side, each with a real plan thumbnail painted by the app's own drawing code.
+  *Huidig* is always the first card, so a candidate can never look better than
+  something you cannot see.
+- The solves run **off the main thread** in their own worker, streamed one card
+  at a time and cancellable, so the canvas stays live while a sweep runs.
+- A candidate is judged on whether it is **physically possible**, not on a
+  threshold: a bay on top of another bay is rejected outright, and a layout
+  covering more ground than exists is badged and never wins. The previous rule —
+  at least 20 m² of site per bay — passed the concentric layout on the demo site
+  while it overlapped 43 pairs of bays and claimed 1.8× the available ground.
+- Adopt one and it is a single undo step. Keep one and it travels with the plan,
+  in saves and in a shared link — as parameters, not as a drawing, so it is
+  re-solved on arrival.
+
 - **Metrics** — stall count, site area, built %, m²/stall, impervious %, FAR,
   per-type counts, an automatic accessible-stall table (2010 ADA Standards,
   Table 208.2 plus the 1-in-6 van rule), and a programme/parking-ratio panel
@@ -163,8 +200,22 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
 - **Drawing library** (`T`) — the whole catalogue as browsable cards, each with a
   one-line description and a thumbnail painted by the app's own drawing code, so
   a preview can never show something the plan would not draw. Grouped by
-  category, searchable, and one click picks a tool up and gets out of the way.
-  Three tabs: infrastructure, your imported symbols, and building styles.
+  category and searchable. A card selects and **Tekenen** draws; double-click
+  does both at once. Three tabs: infrastructure, your imported symbols, and
+  building styles — and the first of those now opens with **Site & gebouw**, the
+  four tools that draw the parcel and the buildings themselves, which a library
+  promising "everything you can draw here" had no business omitting.
+- **A card can carry a choice.** Eight arrow directions are eight kinds but one
+  decision — which movements a lane permits — so they ride on a single
+  *Richtingpijl* card as a row of **Combinatie** pills, three of which the app
+  could not draw at all before: links + rechts, alle richtingen, and keren. And
+  a tool with a number — a speed marking, a lamp post's mounting height — sets
+  it **before** it is placed, with the thumbnail repainting as you change it,
+  rather than being corrected thirty times afterwards.
+- **File your own symbols the way you want them.** The assets tab groups by
+  categories you name, with filter chips, a category on every card, and a column
+  to add and remove them. Removing a category keeps its symbols; they fall back
+  to *Ongecategoriseerd*.
 - **Ten building styles** over three generators — one volume (retail, big box,
   warehouse, bare shed), rows of houses (with gardens, with deep gardens, a
   closed terrace with none), and a block (office, office without a forecourt,
@@ -208,12 +259,23 @@ Everything runs client-side. There is no backend, no build step, and no bundler.
   with one line saying what the tool is for and the snapping switch, and the
   object list. Locatie, Lagen and the dimension preset moved into the Weergave
   menu — they answer "what am I looking at", not "what am I drawing", and in the
-  panel they pushed the other two below the fold. The tool palette and the asset
-  importer are off by default, both being fully covered by the library; they stay
-  switchable, since typing a name in the side list is still the fastest route
-  once you know it.
+  panel they pushed the other two below the fold. The asset importer stays off,
+  being fully covered by the library's own assets tab. The **tool palette is
+  back**, as a shortlist: each group shows its first few tools with the group's
+  real count beside it, *Toon alle N* reveals the rest, and a search shows
+  everything it matched. That is what makes it affordable again — the long tails
+  (thirteen markings, eight signs) are what pushed everything below the fold, not
+  the palette itself.
+- **The object list folds** like every section in the right panel, and the
+  right panel is in the design's order: Metrics, Vak & rijstrook, Bereikbaarheid,
+  Vaktypes, Zon, Licht, Programma, Schema's. Setback and the green islands sit
+  with the sliders they constrain rather than in a section of their own.
 - Undo/redo, save/load, layers, and hideable/resizable UI parts you can save as
   a workspace.
+- **It says what it is.** Every slider carries a name a screen reader can read —
+  the visible label was never tied to its input, so twelve of them announced as
+  nothing at all. The overlays measure the tabulatiebalk rather than assuming it
+  is 96 px tall, which it is not.
 
 ## The solver pipeline
 
@@ -257,6 +319,8 @@ files/testfit/
     ├── importers.js      # GeoJSON/KML parcel rings + simplification
     ├── exporters.js      # GeoJSON, DXF, CSV
     ├── share.js          # a plan in a URL: gzip + base64url (pure)
+    ├── autopark.js       # draw a zone, get a car park (pure)
+    ├── variants.worker.js # N solves off the main thread, streamed
     ├── build.js          # the build stamp the app checks itself against
     └── app.js            # React UI (htm) + imperative canvas rendering
 ```
@@ -280,7 +344,10 @@ against the optimum tilt for the latitude, which is a fact and not an opinion.
 | `P` | Draw site | `M` | Measure |
 | `B` | Draw building | `N` | Draw building (polygon) |
 | `Del` | Delete selection | `Esc` | Cancel |
-| `K` | Place stall | `/` | Focus the tool search |
+| `K` | Place stall | `A` | Auto-park zone |
+| `/` | Focus the tool search | | |
+| `W` | Road | `I` | Driveway |
+| `D` | Drive-thru | `Ctrl/⌘+S` | Save the plan |
 | `R` / `Shift+R` | Rotate in 15° steps | `?` | Shortcut list |
 | `S` | Snapping on/off | `T` | Drawing library |
 | `Ctrl/⌘+Z` / `+Shift` | Undo / Redo | | |
@@ -298,6 +365,19 @@ There is nothing to install. Serve the folder and open it:
 ```sh
 python3 -m http.server 8199        # from files/testfit/
 ```
+
+```sh
+node tools/selftest.js            # assertions for the pure modules, no deps
+```
+
+`selftest.js` is not coverage — it pins the things that have been wrong, or that
+would be expensive to get wrong later: the nested-`mix` merge, the patch
+allowlist that stops a layout variant changing the drivability settings, the two
+different definitions of m² per stall, the plausibility gate that used to pass
+layouts covering 1.8× the available ground, the share budget that decides whether
+a variant may carry geometry, and the zone verge that vanished on any outline
+`offsetPolygon` reshaped. `tools/` is outside the stamp hash, so it perturbs no
+cache stamps.
 
 `src/*.js` are imported with a `?v=<hash>` query so a stale browser cache can
 never serve a half-updated app. **Run `node tools/stamp.js` before every
