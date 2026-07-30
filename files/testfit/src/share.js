@@ -19,6 +19,10 @@ export const SHARE_KEY = 'p';
 const DOC_FIELDS = [
   'name', 'site', 'siteCurved', 'obstacles', 'geo', 'params', 'orientationIndex',
   'autoParking', 'overrides', 'annotations', 'junctions', 'manualStalls',
+  // Imported building styles are small parameter sets, unlike the symbol library
+  // — a few hundred bytes each — so they can travel, and without them a shared
+  // plan would silently redraw its warehouses as the default shed.
+  'buildingStyles',
 ];
 
 /**

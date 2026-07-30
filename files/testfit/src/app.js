@@ -4,23 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=e42d847c';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=d4f790f9';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=e42d847c';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=e42d847c';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=e42d847c';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=e42d847c';
-import { parseParcel, simplifyRing } from './importers.js?v=e42d847c';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=e42d847c';
-import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES } from './buildings.js?v=e42d847c';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=e42d847c';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=e42d847c';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=e42d847c';
-import { BUILD_ID } from './build.js?v=e42d847c';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=e42d847c';
+} from './geometry.js?v=d4f790f9';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=d4f790f9';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=d4f790f9';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=d4f790f9';
+import { parseParcel, simplifyRing } from './importers.js?v=d4f790f9';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=d4f790f9';
+import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=d4f790f9';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=d4f790f9';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=d4f790f9';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=d4f790f9';
+import { BUILD_ID } from './build.js?v=d4f790f9';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=d4f790f9';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -243,6 +244,7 @@ const initialDoc = {
   junctions: {}, // crossing key -> { mode: 'merged'|'break'|'none', dir? }; absent = undecided
   manualStalls: [], // hand-placed stalls: { poly, type }
   assets: [], // imported symbols used by this plan: { id, name, src, w, h, height }
+  buildingStyles: [], // imported building styles used by this plan (see buildings.js)
 };
 
 // Simple history wrapper: { past[], present, future[] }.
@@ -377,6 +379,19 @@ const PANEL_W = { left: { min: 170, max: 420, def: 210 }, right: { min: 240, max
 // One line per tool for the options panel, so it says something even when the
 // active tool has nothing to set. The canvas hint says what to *do*; this says
 // what the tool *is*.
+// The three generator families, with the one sentence each needs. A style card
+// says what it builds; the family says what kind of thing it is.
+const BUILD_FAMILIES = [
+  ['shed', 'Één volume', 'Eén hal. Optioneel een luifel aan de voorkant en een laadkade aan de achterkant.'],
+  ['rows', 'Rijen woningen', 'Herhaalde eenheden langs de lange as, met of zonder voor- en achtertuin.'],
+  ['block', 'Blok', 'Eén volume met eventueel een voorplein en een terugliggende bovenste laag.'],
+];
+
+// A document can always name a style this browser has not got: a plan shared
+// without its styles, or one whose style was deleted since. Every lookup goes
+// through here, because the one that did not crashed the whole canvas.
+const styleOf = (key) => BUILDING_USES[key] || BUILDING_USES[DEFAULT_USE];
+
 const TOOL_HELP = {
   select: 'Klik iets aan om het te bewerken, of sleep een kader voor meerdere objecten. Kies een gereedschap in de bibliotheek.',
   site: 'Teken de kavelgrens. De solver vult alleen wat binnen deze grens ligt.',
@@ -594,7 +609,7 @@ function draw(ctx, opts) {
       // Type + floor badge when zoomed in.
       if (view.scale >= 4 && op.length >= 3) {
         const c = w2s(polygonCentroid(op));
-        const use = BUILDING_USES[(o && o.use) || DEFAULT_USE];
+        const use = BUILDING_USES[(o && o.use) || DEFAULT_USE] || BUILDING_USES[DEFAULT_USE];
         const label = use.label + ' · ' + floors + ' verd.' + (design.units > 1 ? ' · ' + design.units + '×' : '');
         ctx.font = '11px system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1028,6 +1043,62 @@ function drawToolPreview(ctx, kind, w, h) {
     }
   }
   ctx.restore();
+}
+
+/**
+ * A thumbnail of a building style, drawn by the same generator the plan uses.
+ *
+ * A sample footprint through `buildingDesign`, painted with the shared part
+ * colours — so a card cannot promise a canopy the plan would not build, and an
+ * imported style gets a picture without shipping one.
+ */
+function drawBuildStyle(ctx, key, w, h) {
+  const u = BUILDING_USES[key] || BUILDING_USES[DEFAULT_USE];
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#e9ebf3';
+  ctx.fillRect(0, 0, w, h);
+  // 60 x 34 m of ground, seen from above, with the car park to the south — the
+  // same "toward" the plan passes, so the entrance faces the viewer.
+  const FW = 60, FD = 34, pad = 6;
+  const k = Math.min((w - pad * 2) / FW, (h - pad * 2) / FD);
+  const ox = (w - FW * k) / 2, oy = (h - FD * k) / 2;
+  const poly = [{ x: 0, y: 0 }, { x: FW, y: 0 }, { x: FW, y: FD }, { x: 0, y: FD }];
+  let d;
+  try { d = buildingDesign(poly, u.key, u.floors, { x: FW / 2, y: FD * 3 }); } catch (e) { ctx.restore(); return; }
+  const mat = MATERIALS[u.material] || MATERIALS.render;
+  for (const a of d.areas) {
+    ctx.beginPath();
+    a.poly.forEach((p, i) => { const X = ox + p.x * k, Y = oy + p.y * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+    ctx.closePath();
+    // Wall roles take the style's own facade colour; everything else is the
+    // shared part colour, exactly as the canvas does it.
+    ctx.fillStyle = WALL_ROLES[a.role] ? mat.tint : (PART_COLORS[a.role] || '#c3c8d0');
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(28,29,41,0.22)'; ctx.lineWidth = 0.7; ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(28,29,41,0.5)'; ctx.lineWidth = 1;
+  for (const l of d.lines) {
+    ctx.beginPath();
+    ctx.moveTo(ox + l.a.x * k, oy + l.a.y * k);
+    ctx.lineTo(ox + l.b.x * k, oy + l.b.y * k);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function BuildPreview({ styleKey }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth || 240, h = c.clientHeight || 74;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    try { drawBuildStyle(ctx, styleKey, w, h); } catch (e) {}
+  }, [styleKey]);
+  return html`<canvas ref=${ref} className="lib-prev"></canvas>`;
 }
 
 // A canvas that paints itself once from drawToolPreview, at device resolution.
@@ -1882,6 +1953,14 @@ function App() {
   // Imported symbols. The library is per-browser; a document carries its own
   // copies so a shared plan is not full of holes.
   const [assetLib, setAssetLib] = useState(() => readAssetLib());
+  // Imported building styles. Same shape as the symbol library: kept per browser
+  // so they are there for the next plan, and copied into the document so a saved
+  // or shared plan renders its buildings even for someone who never imported
+  // them. buildings.js does the clamping; nothing unvalidated reaches geometry.
+  const [styleLib, setStyleLib] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pp_build_styles') || '[]') || []; } catch (e) { return []; }
+  });
+  const [styleMsg, setStyleMsg] = useState('');
   const [assetMsg, setAssetMsg] = useState('');
   // Saved layout. Absent id => visible, so a part added later is on by default
   // rather than silently missing for everyone who already saved a layout.
@@ -2051,7 +2130,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=e42d847c', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=d4f790f9', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2394,6 +2473,24 @@ function App() {
     renderRef.current();
   }, [assetLib, doc.assets]);
 
+  // The same for building styles: this browser's imports first, then anything a
+  // document brought with it. Without the second half a shared plan draws its
+  // warehouses as the default retail shed and nothing says why.
+  useEffect(() => {
+    styleLib.forEach((s) => registerBuildingStyle(s));
+    (doc.buildingStyles || []).forEach((s) => { if (!BUILDING_USES[s.key]) registerBuildingStyle(s); });
+    renderRef.current();
+  }, [styleLib, doc.buildingStyles]);
+
+  // A plan records the imported styles it actually uses, so it travels complete.
+  useEffect(() => {
+    const used = new Set((doc.obstacles || []).map((o) => (o && o.use) || DEFAULT_USE));
+    const want = [...used].filter((k) => (BUILDING_USES[k] || {}).imported).map((k) => styleSpec(BUILDING_USES[k]));
+    const cur = doc.buildingStyles || [];
+    if (JSON.stringify(want.map((s) => s.key).sort()) === JSON.stringify(cur.map((s) => s.key).sort())) return;
+    dispatch({ type: 'LIVE', updater: (d) => ({ ...d, buildingStyles: want }) });
+  }, [doc.obstacles, styleLib]);
+
   // Snapshot of everything the 3D view draws.
   // Islands and turnarounds belong here too. They were drawn on the canvas and
   // in no export at all — a rebuilt literal that quietly dropped a field, the
@@ -2418,7 +2515,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=e42d847c').then(async (m) => {
+    import('./map3d.js?v=d4f790f9').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -4393,6 +4490,10 @@ function migrateDoc(d) {
     // visible holes in it.
     const lib = new Set(assetLib.map((a) => a.id));
     (merged.assets || []).forEach((a) => installAsset(a, lib.has(a.id)));
+    // Same for its building styles, and for the same reason: the effect would
+    // catch up a frame later, and that frame draws a building whose style does
+    // not exist yet.
+    (merged.buildingStyles || []).forEach((s) => { if (!BUILDING_USES[s.key]) registerBuildingStyle(s); });
     dispatch({ type: 'RESET', doc: merged });
     // Restore the exact camera if it was saved; otherwise fit to the loaded
     // site (computed from the loaded polygon, not the stale sitePoly memo).
@@ -4451,6 +4552,52 @@ function migrateDoc(d) {
     if (fv) setView(fv);
     setOnboardOpen(false);
   };
+  // ---------- Building styles ----------
+  const saveStyleLib = (list) => {
+    setStyleLib(list);
+    try { localStorage.setItem('pp_build_styles', JSON.stringify(list)); return true; }
+    catch (e) { setStyleMsg('Opslaan in deze browser lukte niet — de stijl werkt wel deze sessie.'); return false; }
+  };
+  const importStyle = (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setStyleMsg('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      let raw;
+      try { raw = JSON.parse(reader.result); }
+      catch (err) { setStyleMsg('Dit is geen JSON-bestand.'); return; }
+      // One style or a whole exported set — both are what someone would send.
+      const list = Array.isArray(raw) ? raw : (Array.isArray(raw.styles) ? raw.styles : [raw]);
+      const added = [];
+      for (const spec of list) {
+        const key = registerBuildingStyle(spec);
+        if (key) added.push(styleSpec(BUILDING_USES[key]));
+      }
+      if (!added.length) { setStyleMsg('Geen bruikbare stijl gevonden — een stijl heeft minstens een "key" nodig.'); return; }
+      const keys = new Set(added.map((s) => s.key));
+      saveStyleLib([...styleLib.filter((s) => !keys.has(s.key)), ...added]);
+      setStyleMsg(added.length + ' stijl' + (added.length > 1 ? 'en' : '') + ' geïmporteerd: ' + added.map((s) => s.label).join(', '));
+      setBuildUse(added[0].key);
+      setTool('obstacle');
+    };
+    reader.readAsText(file);
+  };
+  const exportStyles = () => {
+    // Every style, built-in included: someone who wants to tweak "Magazijn"
+    // should not have to retype it from a screenshot.
+    const styles = Object.values(BUILDING_USES).map(styleSpec);
+    downloadBlob(new Blob([JSON.stringify({ _ppStyles: 1, styles }, null, 2)], { type: 'application/json' }),
+      'parkplanner-gebouwstijlen.json');
+  };
+  const dropStyle = (key) => {
+    if (!removeBuildingStyle(key)) return;
+    saveStyleLib(styleLib.filter((s) => s.key !== key));
+    if (buildUse === key) setBuildUse(DEFAULT_USE);
+    renderRef.current();
+  };
+
   // ---------- Asset library ----------
   const saveAssetLib = (list) => {
     setAssetLib(list);
@@ -4832,6 +4979,9 @@ function migrateDoc(d) {
   // tool actually draws. The palette stays: it is the fast path once you know
   // the name. This is the path for when you do not.
   const openLib = (tab) => {
+    // A search from last time is why the dialog would open showing nothing —
+    // especially on a tab the old query cannot match.
+    setLibQuery('');
     setLibTab(tab || 'infra');
     setLibPick(tool === 'annot' ? annotKind : '');
     setLibOpen(true);
@@ -4870,6 +5020,8 @@ function migrateDoc(d) {
               onClick=${() => setLibTab('infra')}>Infrastructuur <span>${libCounts.infra}</span></button>
             <button className=${'dialog-tab' + (libTab === 'assets' ? ' active' : '')}
               onClick=${() => setLibTab('assets')}>Eigen assets <span>${libCounts.assets}</span></button>
+            <button className=${'dialog-tab' + (libTab === 'build' ? ' active' : '')}
+              onClick=${() => setLibTab('build')}>Gebouwstijlen <span>${Object.keys(BUILDING_USES).length}</span></button>
             <span className="dialog-tabs-gap"></span>
             <input className="lib-search" type="search" placeholder="Zoeken in bibliotheek…"
               value=${libQuery} onInput=${(e) => setLibQuery(e.target.value)}
@@ -4890,14 +5042,63 @@ function migrateDoc(d) {
               </span>
             </div>
             ${assetMsg && html`<div className="asset-msg">${assetMsg}</div>`}`}
-          ${libGroups.length === 0 && html`<p className="mix-note">
+          ${libTab === 'build' && html`
+            <div className="lib-assets-head">
+              <label className="btn asset-import">
+                Stijl importeren…
+                <input type="file" accept="application/json,.json" onChange=${importStyle} style=${{ display: 'none' }} />
+              </label>
+              <button className="btn ghost" onClick=${exportStyles}>Alle stijlen exporteren</button>
+              <span className="mix-note" style=${{ margin: 0 }}>
+                Een stijl is een parameterset — verdiepingen, gevel, luifel, laadkade, tuin —
+                geen model. Exporteer, pas de getallen aan, importeer terug.
+              </span>
+            </div>
+            ${styleMsg && html`<div className="asset-msg">${styleMsg}</div>`}
+            ${BUILD_FAMILIES.map(([gen, title, note]) => {
+              const q = libQuery.trim().toLowerCase();
+              const items = Object.values(BUILDING_USES).filter((u) => u.gen === gen
+                && (!q || (u.label + ' ' + u.key + ' ' + (u.keywords || '')).toLowerCase().includes(q)));
+              if (!items.length) return '';
+              return html`
+                <section className="lib-sec" key=${gen}>
+                  <div className="lib-sec-h">
+                    <span className="lib-sec-tick"></span>
+                    <h3>${title}</h3>
+                    <span className="lib-sec-n">${items.length}</span>
+                    <span className="lib-sec-rule"></span>
+                  </div>
+                  <div className="lib-grid">
+                    ${items.map((u) => html`
+                      <div key=${u.key} role="button" tabIndex="0"
+                        className=${'lib-card' + (buildUse === u.key ? ' active' : '')}
+                        onClick=${() => { setBuildUse(u.key); setBuildMat(''); setTool('obstacle'); setLibOpen(false); }}
+                        onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setBuildUse(u.key); setBuildMat(''); setTool('obstacle'); setLibOpen(false); } }}>
+                        <${BuildPreview} styleKey=${u.key} />
+                        <span className="lib-card-h">
+                          <span className="dot" style=${{ background: (MATERIALS[u.material] || MATERIALS.render).tint }}></span>
+                          <span className="lib-card-name">${u.label}</span>
+                          <span className="lib-card-gap"></span>
+                          <span className="lib-card-key">${u.floors}×${u.floorH} m</span>
+                        </span>
+                        <span className="lib-card-desc">${u.desc || note}</span>
+                        ${u.imported && html`
+                          <span className="lib-card-actions">
+                            <span className="tag-imported">geïmporteerd</span>
+                            <button className="btn ghost" onClick=${(e) => { e.stopPropagation(); dropStyle(u.key); }}>Verwijderen</button>
+                          </span>`}
+                      </div>`)}
+                  </div>
+                </section>`;
+            })}`}
+          ${libTab !== 'build' && libGroups.length === 0 && html`<p className="mix-note">
             ${libQuery
               ? html`Niets gevonden voor "${libQuery}".`
               : libTab === 'assets'
                 ? 'Nog geen eigen symbolen geïmporteerd.'
                 : 'Niets in deze categorie.'}
           </p>`}
-          ${libGroups.map(([grp, items]) => html`
+          ${libTab !== 'build' && libGroups.map(([grp, items]) => html`
             <section className="lib-sec" key=${grp}>
               <div className="lib-sec-h">
                 <span className="lib-sec-tick"></span>
@@ -4909,8 +5110,11 @@ function migrateDoc(d) {
                 ${items.map(([k, t]) => html`
                   <div key=${k} role="button" tabIndex="0"
                     className=${'lib-card' + (libPick === k ? ' active' : '')}
-                    onClick=${() => setLibPick(k)}
-                    onDblClick=${() => { startAnnot(k); setLibOpen(false); }}
+                    ${/* One click picks it up and gets out of the way. Choosing a
+                          tool and then confirming the choice is two steps for one
+                          decision, and nothing here is destructive enough to need
+                          the second. */ ''}
+                    onClick=${() => { startAnnot(k); setLibOpen(false); }}
                     onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startAnnot(k); setLibOpen(false); } }}>
                     <${ToolPreview} kind=${k} />
                     <span className="lib-card-h">
@@ -4930,12 +5134,11 @@ function migrateDoc(d) {
         </div>
 
         <footer className="dialog-f">
-          <span className="dialog-f-sel">Geselecteerd: <strong>${libPickT ? libPickT.label : '—'}</strong></span>
-          ${libPickT && html`<span className="dialog-f-hint">${drawModeOf(libPickT)} · dubbelklik een kaart om direct te tekenen</span>`}
+          <span className="dialog-f-sel">Actief: <strong>${libPickT ? libPickT.label : '—'}</strong></span>
+          ${libPickT && html`<span className="dialog-f-hint">${drawModeOf(libPickT)}</span>`}
           <span className="dialog-f-gap"></span>
+          <span className="dialog-f-hint">Klik een kaart om ermee te tekenen · Esc sluit</span>
           <button className="btn ghost" onClick=${() => setLibOpen(false)}>Sluiten</button>
-          <button className="btn primary" disabled=${!libPickT}
-            onClick=${() => { if (libPick) { startAnnot(libPick); setLibOpen(false); } }}>Tekenen</button>
         </footer>
       </div>
     </div>`;
@@ -5198,10 +5401,17 @@ function migrateDoc(d) {
           </div>
           ${(tool === 'obstacle' || tool === 'obstaclepoly') && html`
             <div>
-          <div className="seg">
+          ${/* Ten styles will not fit a segmented control, so this is the same
+                grid the materials use, grouped by family. */ ''}
+          <button className="btn primary lib-open" onClick=${() => openLib('build')}
+            title="Alle gebouwstijlen, met voorbeeldweergave">▦ Gebouwstijlen</button>
+          <div className="type-grid">
             ${Object.values(BUILDING_USES).map((u) => html`
-              <button key=${u.key} className=${buildUse === u.key ? 'active' : ''}
-                title=${u.keywords} onClick=${() => setBuildUse(u.key)}>${u.label}</button>`)}
+              <button key=${u.key} className=${'type-btn' + (buildUse === u.key ? ' active' : '')}
+                title=${(u.keywords || '') + ' · ' + u.floors + ' verd. × ' + u.floorH + ' m'}
+                onClick=${() => setBuildUse(u.key)}>
+                <span className="dot" style=${{ background: (MATERIALS[u.material] || MATERIALS.render).tint }}></span>${u.label}
+              </button>`)}
           </div>
           <label style=${{ display: 'block', marginTop: '10px' }}>Gevel</label>
           <div className="type-grid">
@@ -5212,7 +5422,7 @@ function migrateDoc(d) {
               </button>`)}
           </div>
           <div className="mix-note">
-            ${BUILDING_USES[buildUse].floors} verdieping${BUILDING_USES[buildUse].floors > 1 ? 'en' : ''} standaard ·
+            ${styleOf(buildUse).floors} verdieping${styleOf(buildUse).floors > 1 ? 'en' : ''} × ${styleOf(buildUse).floorH} m standaard ·
             het exterieur volgt de vorm, dus een hoek verslepen hertekent het.
           </div>
             </div>`}
@@ -5740,15 +5950,18 @@ function migrateDoc(d) {
           const footprint = polygonArea(polyOf(o));
           return html`
         <div className="section sel-section">
-          <h3>${BUILDING_USES[(o && o.use) || DEFAULT_USE].label} geselecteerd</h3>
+          <h3>${styleOf((o && o.use) || DEFAULT_USE).label} geselecteerd</h3>
           <div className="field">
             <label>Type</label>
-            <div className="seg">
+            <div className="type-grid">
               ${Object.values(BUILDING_USES).map((u) => html`
-                <button key=${u.key} className=${((o && o.use) || DEFAULT_USE) === u.key ? 'active' : ''}
-                  onClick=${() => setObsUse(selection.index, u.key)}>${u.label}</button>`)}
+                <button key=${u.key} className=${'type-btn' + (((o && o.use) || DEFAULT_USE) === u.key ? ' active' : '')}
+                  title=${(u.keywords || '') + ' · ' + u.floors + ' verd. × ' + u.floorH + ' m'}
+                  onClick=${() => setObsUse(selection.index, u.key)}>
+                  <span className="dot" style=${{ background: (MATERIALS[u.material] || MATERIALS.render).tint }}></span>${u.label}
+                </button>`)}
             </div>
-            <div className="mix-note">Wisselen zet ook de standaard verdiepingen en gevel van dat type.</div>
+            <div className="mix-note">Wisselen zet ook de standaard verdiepingen en gevel van die stijl.</div>
           </div>
           <div className="field">
             <label>Gevel</label>

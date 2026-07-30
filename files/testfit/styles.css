@@ -1394,3 +1394,15 @@ body.resizing .panel-resize { pointer-events: auto; }
   font-size: 12px;
 }
 .obj-name::placeholder { color: var(--muted); }
+
+/* An imported building style says so on its card, so a set someone sent you is
+   distinguishable from what the app shipped with. */
+.tag-imported {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: var(--color-accent-900);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.lib-card-actions { align-items: center; }
