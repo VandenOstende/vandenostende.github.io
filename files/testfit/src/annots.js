@@ -50,9 +50,12 @@ export const ANNOT_TYPES = {
   arrowRight:  MARK('Pijl rechts', 'arrowRight', 'pijl afslaan rechts richting'),
   arrowAheadL: MARK('Pijl recht + links', 'arrowAheadL', 'pijl gecombineerd links rechtdoor'),
   arrowAheadR: MARK('Pijl recht + rechts', 'arrowAheadR', 'pijl gecombineerd rechts rechtdoor'),
+  arrowLeftRight: MARK('Pijl links + rechts', 'arrowLeftRight', 'pijl links rechts beide splitsing rechtdoor verboden'),
+  arrowAll: MARK('Pijl alle richtingen', 'arrowAll', 'pijl alle richtingen vrij rechtdoor links rechts'),
+  arrowUturn: MARK('Pijl keren', 'arrowUturn', 'pijl keren omkeren u-turn terugdraaien'),
   sharkTeeth:  { label: 'Haaientanden', color: '#f8fafc', width: 2.5, mode: 'line', curved: false, group: 'Markeringen', keywords: 'voorrang verlenen driehoek b1 tanden' },
   stopLine:    { label: 'Stopstreep', color: '#f8fafc', width: 0.4, mode: 'line', curved: false, group: 'Markeringen', keywords: 'stop streep b5 wachtlijn' },
-  speedMark:   MARK('Snelheid (grond)', 'speed', 'snelheid km/u 20 30 cijfer zone', { width: 4, value: 20 }),
+  speedMark:   MARK('Snelheid (grond)', 'speed', 'snelheid km/u 20 30 cijfer zone', { width: 4, value: 20, valueUnit: 'km/u' }),
   hatchZone:   { label: 'Kruisarcering', color: '#f8fafc', width: 0, mode: 'area', group: 'Markeringen', keywords: 'arcering verboden zone schuine strepen uitsluiting' },
   bayLines:    { label: 'Vakbelijning', color: '#f8fafc', width: 0, mode: 'area', group: 'Markeringen', keywords: 'parkeervak belijning wit vakken lijnen' },
 
@@ -66,7 +69,7 @@ export const ANNOT_TYPES = {
   // ---- Verticale signalisatie (Belgische codes) ----
   signYield:   SIGN('B1 voorrang verlenen', 'signYield', 'b1 driehoek voorrang haaientand bord'),
   signStop:    SIGN('B5 stop', 'signStop', 'b5 stop achthoek bord'),
-  signSpeed:   SIGN('C43 snelheid', 'signSpeed', 'c43 snelheidsbeperking bord rond', { value: 20 }),
+  signSpeed:   SIGN('C43 snelheid', 'signSpeed', 'c43 snelheidsbeperking bord rond', { value: 20, valueUnit: 'km/u' }),
   signNoEntry: SIGN('C1 verboden richting', 'signNoEntry', 'c1 verboden inrit eenrichting bord'),
   signParking: SIGN('E9a parkeren', 'signParking', 'e9a parkeren blauw bord p'),
   signOneWay:  SIGN('F19 eenrichting', 'signOneWay', 'f19 eenrichtingsverkeer pijl bord'),
@@ -84,7 +87,7 @@ export const ANNOT_TYPES = {
   // thing that differs from post to post on a site is how high the light hangs;
   // the luminaire's output is a document parameter.
   lightPole:   { label: 'Lichtmast', color: '#fcd34d', width: 1.2, mode: 'point', group: 'Licht',
-                 value: 6, valueLabel: 'Lichtpunthoogte (m)', valueMin: 3, valueMax: 16, valueStep: 0.5,
+                 value: 6, valueLabel: 'Lichtpunthoogte (m)', valueUnit: 'm', valueMin: 3, valueMax: 16, valueStep: 0.5,
                  keywords: 'verlichting lamp mast paal armatuur straatlantaarn lantaarn licht lux' },
   // A carport roofs over parking that is already paved, so it adds no impervious
   // surface of its own — see NON_PAVED in solver.js.
@@ -114,6 +117,9 @@ export const TOOL_DESC = {
   arrowRight: 'Pijl rechtsaf.',
   arrowAheadL: 'Pijl rechtdoor of linksaf.',
   arrowAheadR: 'Pijl rechtdoor of rechtsaf.',
+  arrowLeftRight: 'Pijl linksaf of rechtsaf; rechtdoor mag hier niet.',
+  arrowAll: 'Pijl rechtdoor, linksaf of rechtsaf.',
+  arrowUturn: 'Pijl keren: omkeren op deze strook.',
   sharkTeeth: 'Haaientanden: voorrang verlenen zonder verplicht te stoppen.',
   stopLine: 'Stopstreep, hoort bij een B5-bord.',
   speedMark: 'Snelheidscijfer op het wegdek; de waarde stel je per stuk in.',
@@ -140,6 +146,38 @@ export const TOOL_DESC = {
   carport: 'Overkapping met zonnepanelen. Levert kWp en kWh per jaar.',
 };
 export const descOf = (kind) => TOOL_DESC[kind] || (isAssetKind(kind) ? 'Je eigen symbool, op ware grootte.' : '');
+
+// ---------- Combinations ----------
+// Eight direction arrows are eight kinds, but they are one *decision*: which
+// movements this lane permits. The library shows them as one card with a row of
+// pills rather than eight cards you have to tell apart by their thumbnails.
+//
+// A family lists its members; it does not replace them. Every kind keeps its own
+// entry in ANNOT_TYPES, so a saved plan or a shared link that names `arrowAhead`
+// still draws an arrow — folding them into one kind plus a variant field would
+// have invalidated every file anyone has.
+export const COMBOS = {
+  arrow: {
+    label: 'Richtingpijl',
+    group: 'Markeringen',
+    desc: 'Pijlmarkering per strook — kies de combinatie van toegestane richtingen.',
+    members: [
+      { kind: 'arrowAhead', label: 'Rechtdoor', glyph: '↑' },
+      { kind: 'arrowLeft', label: 'Links', glyph: '←' },
+      { kind: 'arrowRight', label: 'Rechts', glyph: '→' },
+      { kind: 'arrowAheadL', label: 'Rechtdoor + links', glyph: '↰' },
+      { kind: 'arrowAheadR', label: 'Rechtdoor + rechts', glyph: '↱' },
+      { kind: 'arrowLeftRight', label: 'Links + rechts', glyph: '↔' },
+      { kind: 'arrowAll', label: 'Alle richtingen', glyph: '⇅' },
+      { kind: 'arrowUturn', label: 'Keren', glyph: '↺' },
+    ],
+  },
+};
+// kind → the family it belongs to, or null. Built once from COMBOS so the two
+// can never disagree about who is a member.
+const COMBO_OF = {};
+for (const [id, fam] of Object.entries(COMBOS)) for (const m of fam.members) COMBO_OF[m.kind] = { id, ...m };
+export const comboOf = (kind) => COMBO_OF[kind] || null;
 
 // ---------- Surface materials ----------
 // What a surface is made of, and how much rain runs off it rather than soaking

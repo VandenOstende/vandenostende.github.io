@@ -1294,6 +1294,34 @@ body.resizing .panel-resize { pointer-events: auto; }
 .lib-card-actions { display: flex; gap: 6px; }
 .lib-card-actions .btn { padding: 3px 8px; font-size: 11.5px; }
 
+/* ---- Combination pills ----
+   Eight direction arrows are one decision, not eight tools, so they ride on a
+   single card as a row of pills. `.tag` gives them their shape; this gives them
+   the layout and the lit state. */
+.lib-combo { display: block; }
+.lib-combo-h {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.lib-combo-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.lib-pill { border-color: var(--border); color: var(--muted); background: var(--panel-2); }
+.lib-pill:hover { border-color: var(--accent); color: var(--accent); }
+.lib-pill.on {
+  color: var(--accent);
+  background: var(--color-accent-900);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.lib-pill-g { font-size: 12.5px; line-height: 1; }
+
+/* A number a tool carries, editable before the thing is placed. */
+.lib-card-val { display: flex; align-items: center; gap: 7px; }
+.lib-card-val .input { width: 78px; text-align: right; font-variant-numeric: tabular-nums; }
+.lib-card-val-u { font-size: 11.5px; color: var(--muted); }
+
 .dialog-f {
   display: flex;
   align-items: center;
@@ -1305,6 +1333,8 @@ body.resizing .panel-resize { pointer-events: auto; }
 .dialog-f-sel strong { font-weight: 500; color: var(--text); }
 .dialog-f-hint { font-size: 11.5px; color: var(--muted); }
 .dialog-f-gap { flex: 1; }
+.dialog-f-val { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.dialog-f-val .input { width: 74px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---- The plan's name, in the bar --------------------------------------------
    An input that does not look like one until you reach for it: the name is

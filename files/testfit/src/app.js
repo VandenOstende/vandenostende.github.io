@@ -4,24 +4,24 @@
 import React, { useReducer, useRef, useState, useEffect, useCallback, useMemo } from '../vendor/react.mjs';
 import { createRoot } from '../vendor/react-dom-client.mjs';
 import htm from '../vendor/htm.mjs';
-import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=978eaca4';
+import { solveParking, computeMetrics, computeBuildable, STALL_TYPES, stallKey, aisleKey, aisleAxis, longestEdgeAngle } from './solver.js?v=c8e60896';
 import {
   offsetPolygon, boundingBox, polygonCentroid, polygonArea, dist, distPointSegment,
   pointInPolygon, rectPoly, tessellateClosed, polyOf, ribbonPoly, segmentCross,
   tessellateOpen, polylineCum, polylineAt, nearestOnPolyline, zebraQuads, hatchQuads, STRIPE_SPEC,
-} from './geometry.js?v=978eaca4';
-import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=978eaca4';
-import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=978eaca4';
-import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=978eaca4';
-import { parseParcel, simplifyRing } from './importers.js?v=978eaca4';
-import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf } from './annots.js?v=978eaca4';
+} from './geometry.js?v=c8e60896';
+import { PICTOS, pathFrom, glyph, plate } from './pictos.js?v=c8e60896';
+import { geocode, latLonToLocal, localToLatLon } from './basemap.js?v=c8e60896';
+import { toGeoJSON, toDXF, toCSV } from './exporters.js?v=c8e60896';
+import { parseParcel, simplifyRing } from './importers.js?v=c8e60896';
+import { ANNOT_TYPES, ANNOT_GROUPS, SURFACES, surfaceOf, descOf, registerAsset, hideAsset, assetKindOf, assetIdOf, COMBOS, comboOf } from './annots.js?v=c8e60896';
 import { buildingDesign, BUILDING_USES, DEFAULT_USE, PART_COLORS, MATERIALS, DEFAULT_MATERIAL, materialOf, WALL_ROLES,
-  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=978eaca4';
-import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=978eaca4';
-import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=978eaca4';
-import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=978eaca4';
-import { BUILD_ID } from './build.js?v=978eaca4';
-import { shareURL, decodeShare, shareCodeOf } from './share.js?v=978eaca4';
+  registerBuildingStyle, removeBuildingStyle, styleSpec, BUILDING_GENERATORS } from './buildings.js?v=c8e60896';
+import { junctionKey, findCrossings, branchHeading, analysePlan, centrelineOf, junctionArms, armMouth, VEHICLES, DEFAULT_VEHICLE, vehicleOf } from './drive.js?v=c8e60896';
+import { sunPosition, shadowPolys, stallsInShadow, momentUTC, zoneOffsetHours } from './sun.js?v=c8e60896';
+import { sampleGrid, illuminance, sunSteps, annualIrradiance, canopyYield, gridStats, DEFAULT_POLE_H } from './light.js?v=c8e60896';
+import { BUILD_ID } from './build.js?v=c8e60896';
+import { shareURL, decodeShare, shareCodeOf } from './share.js?v=c8e60896';
 
 const html = htm.bind(React.createElement);
 const ANGLE_SNAP = Math.PI / 12; // 15° increments for hold-to-align drawing
@@ -401,6 +401,28 @@ const TOOL_HELP = {
   measure: 'Meet een afstand of een reeks afstanden op de plattegrond.',
   pan: 'Sleep om de plattegrond te verschuiven.',
 };
+
+// The four tools the toolbar has and the catalogue does not: they draw the site
+// and the buildings themselves rather than something laid on top. The library
+// opens with the promise "alles wat je op het kavel kunt tekenen", and left
+// these out — so the four things a new plan needs first were the only ones the
+// dialog would not show. They are `tool` values, not annotation kinds, hence a
+// list of their own rather than an ANNOT_TYPES group.
+const PRIMARY_GROUP = 'Site & gebouw';
+const PRIMARY_TOOLS = [
+  { id: 'site', label: 'Site tekenen', key: 'P', color: '#b8860b',
+    desc: 'Klik punten voor de siterand; dubbelklik of het beginpunt sluit de vorm.' },
+  { id: 'obstacle', label: 'Gebouw (rechthoek)', key: 'B', color: '#64748b',
+    desc: 'Sleep een rechthoek voor een gebouw of uitsluitingszone.' },
+  { id: 'obstaclepoly', label: 'Gebouw (vrije vorm)', key: 'N', color: '#94a3b8',
+    desc: 'Klik punten; dubbelklik sluit. Een hoek verslepen hertekent het exterieur.' },
+  { id: 'placestall', label: 'Parkeervak plaatsen', key: 'K', color: '#2563eb',
+    desc: 'Losse vakken plaatsen; ze snappen aan bestaande vakken en aan wegen.' },
+];
+// The keyboard letters that really exist, for the card badges. Only these three
+// annotations have one; the rest of the catalogue has none, and the design
+// leaves that badge empty for them.
+const ANNOT_KEYS = { road: 'W', driveway: 'I', drivethru: 'D' };
 
 // ---------- Canvas theme ----------
 // Only the colours that actually break when the backdrop flips. Meaning-bearing
@@ -964,7 +986,50 @@ function drawRotGrip(ctx, s) {
  * library can never show something the canvas would not draw, and it costs no
  * second set of artwork to keep in step.
  */
-function drawToolPreview(ctx, kind, w, h) {
+// The four primary tools have no ANNOT_TYPES entry to paint from, so each gets
+// its own thumbnail. Same rule as the rest of the library: what the card shows
+// is the shape the tool actually leaves on the plan.
+function drawPrimaryPreview(ctx, id, w, h) {
+  const pad = Math.min(w, h) * 0.16;
+  if (id === 'site') {
+    ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+    ctx.strokeRect(pad, pad, w - pad * 2, h - pad * 2);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(184,134,11,0.10)';
+    ctx.fillRect(pad, pad, w - pad * 2, h - pad * 2);
+    for (const [x, y] of [[pad, pad], [w - pad, pad], [w - pad, h - pad], [pad, h - pad]]) {
+      ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    return;
+  }
+  if (id === 'obstacle' || id === 'obstaclepoly') {
+    const pts = id === 'obstacle'
+      ? [[pad * 1.6, pad * 1.3], [w - pad * 1.6, pad * 1.3], [w - pad * 1.6, h - pad * 1.3], [pad * 1.6, h - pad * 1.3]]
+      : [[pad * 1.4, pad * 2], [w * 0.46, pad * 1.1], [w - pad * 1.3, pad * 1.8],
+         [w - pad * 1.8, h - pad * 1.2], [pad * 2.2, h - pad * 1.5]];
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(100,116,139,0.42)'; ctx.fill();
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1.6; ctx.stroke();
+    return;
+  }
+  // placestall — a short run of bays off an aisle, which is what one click gives
+  // you: the stall, snapped to whatever is already there.
+  ctx.fillStyle = 'rgba(111,114,133,0.30)';
+  ctx.fillRect(0, h * 0.62, w, h * 0.38);
+  const bw = w / 5.5;
+  for (let i = 0; i < 5; i++) {
+    const x = bw * 0.35 + i * bw;
+    ctx.fillStyle = i === 2 ? '#2563eb' : 'rgba(37,99,235,0.28)';
+    ctx.fillRect(x, h * 0.2, bw * 0.78, h * 0.42);
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1;
+    ctx.strokeRect(x, h * 0.2, bw * 0.78, h * 0.42);
+  }
+}
+
+function drawToolPreview(ctx, kind, w, h, value) {
   const t = ANNOT_TYPES[kind] || {};
   ctx.save();
   ctx.clearRect(0, 0, w, h);
@@ -977,6 +1042,11 @@ function drawToolPreview(ctx, kind, w, h) {
     || t.group === 'Markeringen' || kind === 'hatchZone' || kind === 'bayLines';
   ctx.fillStyle = onTarmac ? '#2e3140' : '#e9ebf3';
   ctx.fillRect(0, 0, w, h);
+  if (PRIMARY_TOOLS.some((p) => p.id === kind)) {
+    drawPrimaryPreview(ctx, kind, w, h);
+    ctx.restore();
+    return;
+  }
   const cx = w / 2, cy = h / 2;
 
   if (t.mode === 'point' && t.picto && PICTOS[t.picto]) {
@@ -985,7 +1055,7 @@ function drawToolPreview(ctx, kind, w, h) {
     const r = Math.min(w, h) * 0.34;
     ctx.scale(r, r);
     ctx.shadowColor = 'rgba(15,23,42,0.6)'; ctx.shadowBlur = 0.22;
-    PICTOS[t.picto](ctx, { value: t.value });
+    PICTOS[t.picto](ctx, { value: value != null ? value : t.value });
     ctx.restore();
   } else if (t.mode === 'point') {
     ctx.beginPath(); ctx.arc(cx, cy, Math.min(w, h) * 0.22, 0, Math.PI * 2);
@@ -1102,7 +1172,9 @@ function BuildPreview({ styleKey }) {
 }
 
 // A canvas that paints itself once from drawToolPreview, at device resolution.
-function ToolPreview({ kind }) {
+// `value` repaints it when the number on the card changes, so a speed marking
+// set to 30 shows a 30 rather than the catalogue's default.
+function ToolPreview({ kind, value }) {
   const ref = useRef(null);
   useEffect(() => {
     const c = ref.current;
@@ -1112,8 +1184,8 @@ function ToolPreview({ kind }) {
     c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
     const ctx = c.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    try { drawToolPreview(ctx, kind, w, h); } catch (e) {}
-  }, [kind]);
+    try { drawToolPreview(ctx, kind, w, h, value); } catch (e) {}
+  }, [kind, value]);
   return html`<canvas ref=${ref} className="lib-prev"></canvas>`;
 }
 
@@ -1911,6 +1983,10 @@ function App() {
   const [layers, setLayers] = useState({ grid: true, site: true, setback: true, building: true, parking: true, infra: true, context: true, shadow: false, lightmap: false });
   const [annotKind, setAnnotKind] = useState('road'); // active infra kind when drawing
   const [annotWidth, setAnnotWidth] = useState(6);
+  // The editable number a speed marking or a lamp post carries, chosen before
+  // the thing is placed rather than corrected afterwards. Null for the tools
+  // that have no such number.
+  const [annotValue, setAnnotValue] = useState(null);
   const [areaShape, setAreaShape] = useState('poly'); // 'rect' | 'poly' | 'circle' for area infra
   const [roadShape, setRoadShape] = useState('line'); // 'line' | 'rect' (object) | 'multi'
   const [annotLength, setAnnotLength] = useState(20); // m — the road object's length
@@ -1942,6 +2018,11 @@ function App() {
   const [libTab, setLibTab] = useState('infra');   // 'infra' | 'assets'
   const [libQuery, setLibQuery] = useState('');
   const [libPick, setLibPick] = useState(''); // the kind the dialog has highlighted
+  // Which member of each combo family is chosen, family id → kind. Remembered
+  // across opens: having to re-pick "keren" every time would defeat the card.
+  const [comboPick, setComboPick] = useState({});
+  // The value the next placement carries, edited on the card before drawing.
+  const [libValue, setLibValue] = useState({}); // kind → number
   // When the plan was last written to a file. Not stored in the document: it is
   // a fact about this session's browser, and a loaded file's own timestamp
   // would say "saved" about a plan you have since changed.
@@ -2130,7 +2211,7 @@ function App() {
   // the UI. Falls back to an inline solve if workers aren't available.
   useEffect(() => {
     let w;
-    try { w = new Worker(new URL('./solver.worker.js?v=978eaca4', import.meta.url), { type: 'module' }); }
+    try { w = new Worker(new URL('./solver.worker.js?v=c8e60896', import.meta.url), { type: 'module' }); }
     catch (e) { w = null; }
     if (w) {
       w.onmessage = (e) => {
@@ -2515,7 +2596,7 @@ function App() {
     setMap3dError(''); setMapErrHidden(false);
     const container = document.getElementById('pp-map');
     if (!container) return;
-    import('./map3d.js?v=978eaca4').then(async (m) => {
+    import('./map3d.js?v=c8e60896').then(async (m) => {
       if (cancelled) return;
       const onDiag = (d) => setMapDiag((prev) => ({ ...prev, ...d }));
       const ctrl = await m.initMap(container, mbToken, doc.geo, buildPlan(), (msg) => { setMap3dError(msg); if (msg) setMapErrHidden(false); }, MAP_STYLES[mapStyle], onDiag, mapCamRef.current);
@@ -2914,11 +2995,12 @@ function App() {
     anns[index] = { ...anns[index], turnR: R };
     return { ...d, annotations: anns };
   } });
-  const startAnnot = (kind) => {
+  const startAnnot = (kind, value) => {
     const t = ANNOT_TYPES[kind];
     setAnnotKind(kind);
     setAnnotWidth(t.width || 2);
     setAnnotCurved(!!t.curved);
+    setAnnotValue(t.value == null ? null : (value == null ? t.value : value));
     setTool('annot'); setDrawing(null); clearSel();
   };
   const finishAnnotLine = (points, closed = false) => {
@@ -3342,6 +3424,9 @@ function App() {
       if (t.mode === 'point') {
         const at = annotKind === 'access' ? nearestOnSiteEdge(wp) : snap;
         const ann = { kind: annotKind, points: [at], width: annotWidth };
+        // Carry the number chosen in the library, so a run of 30-signs does not
+        // have to be corrected one at a time after the fact.
+        if (t.value != null && annotValue != null) ann.value = annotValue;
         // Markings and signs read along the road they belong to, so line them
         // up with the nearest one. R adjusts from there.
         if (t.picto) ann.angle = (roadAngleAt(wp) + stallRot) % 360;
@@ -4229,6 +4314,12 @@ function App() {
         case 'n': setTool('obstaclepoly'); setDrawing({ points: [] }); break;
         case 'k': setTool('placestall'); break;
         case 'm': setTool('measure'); setMeasure({ points: [] }); setDrawing(null); break;
+        // The three ways in and out. The design puts a letter on these cards, so
+        // the letter has to do something — a badge for a key that does not exist
+        // is worse than no badge. They are the only annotations with one.
+        case 'w': startAnnot('road'); break;
+        case 'i': startAnnot('driveway'); break;
+        case 'd': startAnnot('drivethru'); break;
         // Hold to pan, release to go back. Without preventDefault the browser
         // also "clicks" whatever toolbar button still has focus, which set the
         // tool straight back and made Space-to-pan do nothing at all after you
@@ -4720,21 +4811,61 @@ function migrateDoc(d) {
   // every matching group open, so results are never hidden behind a collapse.
   // The library's own grouping. Same catalogue as the palette — one source of
   // truth for what exists — but split by tab and filtered by the dialog's search.
+  // Every card is normalised to one shape here — a plain annotation, a combo
+  // family, or one of the four primary tools — so the render loop below has a
+  // single kind of thing to draw instead of three branches per card.
   const libGroups = useMemo(() => {
     const q = libQuery.trim().toLowerCase();
-    const want = (k, t) => (libTab === 'assets') === !!t.asset;
+    const hay = (k, t) => (t.label + ' ' + k + ' ' + (t.keywords || '') + ' ' + descOf(k)).toLowerCase();
     const out = [];
+    if (libTab === 'infra') {
+      const prims = PRIMARY_TOOLS
+        .filter((p) => !q || (p.label + ' ' + p.id + ' ' + p.desc).toLowerCase().includes(q))
+        .map((p) => ({ k: p.id, kind: p.id, t: null, prim: true, fam: null,
+          label: p.label, desc: p.desc, color: p.color, key: p.key }));
+      if (prims.length) out.push([PRIMARY_GROUP, prims]);
+    }
     for (const grp of ANNOT_GROUPS) {
-      const items = Object.entries(ANNOT_TYPES).filter(([k, t]) => (t.group || 'Overig') === grp && !t.hidden && want(k, t)
-        && (!q || (t.label + ' ' + k + ' ' + (t.keywords || '') + ' ' + descOf(k)).toLowerCase().includes(q)));
+      const items = [], famSeen = new Set();
+      for (const [k, t] of Object.entries(ANNOT_TYPES)) {
+        if ((t.group || 'Overig') !== grp || t.hidden) continue;
+        if ((libTab === 'assets') !== !!t.asset) continue;
+        const member = comboOf(k);
+        if (member) {
+          if (famSeen.has(member.id)) continue;
+          const fam = COMBOS[member.id];
+          // A family answers to any of its members, so "keren" finds the arrow
+          // card rather than nothing at all.
+          if (q && !(fam.label + ' ' + fam.desc).toLowerCase().includes(q)
+            && !fam.members.some((m) => hay(m.kind, ANNOT_TYPES[m.kind]).includes(q))) continue;
+          famSeen.add(member.id);
+          const pick = comboPick[member.id] || fam.members[0].kind;
+          items.push({ k: 'combo:' + member.id, kind: pick, t: ANNOT_TYPES[pick], prim: false,
+            fam, famId: member.id, label: fam.label, desc: fam.desc,
+            color: ANNOT_TYPES[pick].color, key: '' });
+          continue;
+        }
+        if (q && !hay(k, t).includes(q)) continue;
+        items.push({ k, kind: k, t, prim: false, fam: null,
+          label: t.label, desc: descOf(k), color: t.color, key: ANNOT_KEYS[k] || '' });
+      }
       if (items.length) out.push([grp, items]);
     }
     return out;
-  }, [libQuery, libTab, assetLib]);
+  }, [libQuery, libTab, assetLib, comboPick]);
+  // Cards, not kinds — a combo folds eight arrows onto one, and a tab total that
+  // did not agree with the group counts beside it would just look like a bug.
   const libCounts = useMemo(() => {
-    let infra = 0, assets = 0;
-    for (const t of Object.values(ANNOT_TYPES)) { if (t.hidden) continue; t.asset ? assets++ : infra++; }
-    return { infra, assets };
+    let infra = PRIMARY_TOOLS.length, assets = 0;
+    const fams = new Set();
+    for (const [k, t] of Object.entries(ANNOT_TYPES)) {
+      if (t.hidden) continue;
+      if (t.asset) { assets++; continue; }
+      const member = comboOf(k);
+      if (member) { fams.add(member.id); continue; }
+      infra++;
+    }
+    return { infra: infra + fams.size, assets };
   }, [assetLib]);
 
   const paletteGroups = useMemo(() => {
@@ -4951,6 +5082,7 @@ function migrateDoc(d) {
   // nothing on screen mentioned G, R, Esc, Delete or Cmd+D.
   const SHORTCUTS = [
     ['Gereedschap', [['V', 'Selecteren'], ['P', 'Site tekenen'], ['B', 'Gebouw (rechthoek)'], ['N', 'Gebouw (vrije vorm)'], ['K', 'Parkeervak plaatsen'], ['M', 'Meetlint'], ['T', 'Bibliotheek'], ['Spatie', 'Pannen']]],
+    ['Infrastructuur', [['W', 'Weg'], ['I', 'In/uitrit'], ['D', 'Drive-thru']]],
     ['Bewerken', [['Alt + slepen', 'Weg mét alles erop verplaatsen'], ['Cmd/Ctrl + Z', 'Ongedaan maken'], ['Shift + Cmd/Ctrl + Z', 'Opnieuw'], ['Cmd/Ctrl + D', 'Dupliceren'], ['Delete', 'Verwijderen'], ['Esc', 'Annuleren / deselecteren']]],
     ['Tekenen', [['Shift (slepen)', 'Uitlijnen per 15 graden'], ['R', 'Draai 15 graden'], ['Shift + R', 'Draai terug'], ['Dubbelklik op weg', 'Punt toevoegen'], ['Rechtsklik op rand', 'Punt toevoegen aan site']]],
     ['Pannen & zoomen', [['Rechtermuis slepen', 'Pannen'], ['Middelste muisknop', 'Pannen'], ['Spatie ingedrukt', 'Pannen'], ['Muiswiel', 'In- en uitzoomen'], ['Trackpad (2 vingers)', 'Pannen'], ['Shift + scrollen', 'Pannen'], ['Ctrl + scrollen / knijpen', 'In- en uitzoomen'], ['+ / -', 'In- en uitzoomen']]],
@@ -4983,7 +5115,13 @@ function migrateDoc(d) {
     // especially on a tab the old query cannot match.
     setLibQuery('');
     setLibTab(tab || 'infra');
-    setLibPick(tool === 'annot' ? annotKind : '');
+    // Open on whatever is in your hand. A folded arrow is highlighted through
+    // its family, since that is the card the grid actually draws.
+    const mem = tool === 'annot' ? comboOf(annotKind) : null;
+    setLibPick(mem ? 'combo:' + mem.id
+      : tool === 'annot' ? annotKind
+      : PRIMARY_TOOLS.some((p) => p.id === tool) ? tool : '');
+    if (mem) setComboPick((c) => ({ ...c, [mem.id]: annotKind }));
     setLibOpen(true);
   };
   // Through a ref, because the key listener is only re-registered on selection
@@ -4991,14 +5129,35 @@ function migrateDoc(d) {
   // Assigned on every render, so it always closes over the current tool. T
   // toggles: the same key gets you out again.
   libOpenRef.current = () => { if (libOpen) setLibOpen(false); else openLib(); };
-  // No annotation has a key of its own — V/P/B/N/K/M are the tools, not the
-  // catalogue — so the badge slot carries the honest thing instead: how you
-  // draw it. Inventing letters here would put a lie on 40 cards.
+  // The badge slot. The design puts a keyboard letter there, and where one
+  // exists that is what it shows — the four primary tools, and W/I/D on the
+  // three ways in and out. The rest of the catalogue has no key (the design
+  // leaves those blank), and the draw mode is more use to a reader than an empty
+  // box, so it fills in.
   const drawModeOf = (t) => (t.mode === 'point' ? 'punt'
     : t.mode === 'area' ? 'vlak'
     : t.mode === 'cross' ? 'zebra'
     : t.body ? 'weg' : 'lijn');
-  const libPickT = ANNOT_TYPES[libPick];
+  const badgeOf = (e) => e.key || (e.t ? drawModeOf(e.t) : '');
+  // What the footer and the Tekenen button act on. A combo resolves to the
+  // member whose pill is lit; a primary tool has no ANNOT_TYPES entry at all.
+  const libEntry = useMemo(() => {
+    for (const [, items] of libGroups) for (const e of items) if (e.k === libPick) return e;
+    return null;
+  }, [libGroups, libPick]);
+  const libPickT = libEntry ? libEntry.t : null;
+  const valueOf = (e) => {
+    if (!e || !e.t || e.t.value == null) return null;
+    return libValue[e.kind] != null ? libValue[e.kind] : e.t.value;
+  };
+  // Picking up a tool. A combo carries the chosen direction, a value-bearing
+  // tool carries its number, and a primary tool is just a tool.
+  const libTake = (e) => {
+    if (!e) return;
+    if (e.prim) { setTool(e.kind); if (e.kind === 'site' || e.kind === 'obstaclepoly') setDrawing({ points: [] }); clearSel(); }
+    else startAnnot(e.kind, valueOf(e));
+    setLibOpen(false);
+  };
   const libraryModal = () => html`
     <div className="dialog-backdrop" onClick=${() => setLibOpen(false)}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label="Teken infrastructuur"
@@ -5107,26 +5266,63 @@ function migrateDoc(d) {
                 <span className="lib-sec-rule"></span>
               </div>
               <div className="lib-grid">
-                ${items.map(([k, t]) => html`
-                  <div key=${k} role="button" tabIndex="0"
-                    className=${'lib-card' + (libPick === k ? ' active' : '')}
-                    ${/* One click picks it up and gets out of the way. Choosing a
-                          tool and then confirming the choice is two steps for one
-                          decision, and nothing here is destructive enough to need
-                          the second. */ ''}
-                    onClick=${() => { startAnnot(k); setLibOpen(false); }}
-                    onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startAnnot(k); setLibOpen(false); } }}>
-                    <${ToolPreview} kind=${k} />
+                ${items.map((e) => html`
+                  <div key=${e.k} role="button" tabIndex="0" aria-pressed=${libPick === e.k}
+                    className=${'lib-card' + (libPick === e.k ? ' active' : '')}
+                    ${/* A card selects; Tekenen in the footer draws. A card can
+                          now carry a direction and a value, and picking one up
+                          the instant you touch it would slam the dialog shut
+                          before you could set either. Double-click is the
+                          shortcut for when there is nothing to set. */ ''}
+                    onClick=${() => setLibPick(e.k)}
+                    onDblClick=${() => libTake(e)}
+                    onKeyDown=${(ev) => {
+                      if (ev.key === 'Enter') { ev.preventDefault(); libTake(e); }
+                      else if (ev.key === ' ') { ev.preventDefault(); setLibPick(e.k); }
+                    }}>
+                    <${ToolPreview} kind=${e.kind} value=${valueOf(e)} />
                     <span className="lib-card-h">
-                      <span className="dot" style=${dotStyle(t)}></span>
-                      <span className="lib-card-name">${t.label}</span>
+                      <span className="dot" style=${e.t ? dotStyle(e.t) : { background: e.color }}></span>
+                      <span className="lib-card-name">${e.label}</span>
                       <span className="lib-card-gap"></span>
-                      <span className="lib-card-key">${drawModeOf(t)}</span>
+                      ${badgeOf(e) && html`<span className="lib-card-key">${badgeOf(e)}</span>`}
                     </span>
-                    <span className="lib-card-desc">${descOf(k)}</span>
-                    ${t.asset && html`
+                    <span className="lib-card-desc">${e.desc}</span>
+                    ${e.fam && html`
+                      <span className="lib-combo">
+                        <span className="lib-combo-h">Combinatie</span>
+                        <span className="lib-combo-pills">
+                          ${e.fam.members.map((m) => html`
+                            <button key=${m.kind} type="button"
+                              className=${'tag lib-pill' + (e.kind === m.kind ? ' on' : '')}
+                              title=${(ANNOT_TYPES[m.kind] || {}).label || m.label}
+                              aria-pressed=${e.kind === m.kind}
+                              onClick=${(ev) => {
+                                ev.stopPropagation();
+                                setComboPick((c) => ({ ...c, [e.famId]: m.kind }));
+                                setLibPick(e.k);
+                              }}>
+                              <span className="lib-pill-g">${m.glyph}</span><span>${m.label}</span>
+                            </button>`)}
+                        </span>
+                      </span>`}
+                    ${e.t && e.t.value != null && html`
+                      <span className="lib-card-val">
+                        <input className="input" type="number" aria-label=${e.t.valueLabel || 'Waarde'}
+                          min=${e.t.valueMin == null ? 5 : e.t.valueMin}
+                          max=${e.t.valueMax == null ? 130 : e.t.valueMax}
+                          step=${e.t.valueStep == null ? 5 : e.t.valueStep}
+                          value=${valueOf(e)}
+                          onClick=${(ev) => ev.stopPropagation()}
+                          onChange=${(ev) => {
+                            const v = parseFloat(ev.target.value);
+                            if (isFinite(v)) setLibValue((s) => ({ ...s, [e.kind]: v }));
+                          }} />
+                        <span className="lib-card-val-u">${e.t.valueUnit || ''} — aanpasbaar bij plaatsen</span>
+                      </span>`}
+                    ${e.t && e.t.asset && html`
                       <span className="lib-card-actions">
-                        <button className="btn ghost" onClick=${(e) => { e.stopPropagation(); removeAsset(assetIdOf(k)); }}>Verwijderen</button>
+                        <button className="btn ghost" onClick=${(ev) => { ev.stopPropagation(); removeAsset(assetIdOf(e.kind)); }}>Verwijderen</button>
                       </span>`}
                   </div>`)}
               </div>
@@ -5134,11 +5330,26 @@ function migrateDoc(d) {
         </div>
 
         <footer className="dialog-f">
-          <span className="dialog-f-sel">Actief: <strong>${libPickT ? libPickT.label : '—'}</strong></span>
-          ${libPickT && html`<span className="dialog-f-hint">${drawModeOf(libPickT)}</span>`}
+          <span className="dialog-f-sel">Geselecteerd: <strong>${libEntry ? libEntry.label : '—'}</strong></span>
+          ${libEntry && badgeOf(libEntry) && html`<span className="dialog-f-hint">${badgeOf(libEntry)}</span>`}
+          ${libEntry && valueOf(libEntry) != null && html`
+            <label className="dialog-f-val">
+              <span>Waarde bij plaatsen</span>
+              <input className="input" type="number" aria-label="Waarde bij plaatsen"
+                min=${libEntry.t.valueMin == null ? 5 : libEntry.t.valueMin}
+                max=${libEntry.t.valueMax == null ? 130 : libEntry.t.valueMax}
+                step=${libEntry.t.valueStep == null ? 5 : libEntry.t.valueStep}
+                value=${valueOf(libEntry)}
+                onChange=${(ev) => {
+                  const v = parseFloat(ev.target.value);
+                  if (isFinite(v)) setLibValue((s) => ({ ...s, [libEntry.kind]: v }));
+                }} />
+              <span className="dialog-f-hint">${libEntry.t.valueUnit || ''}</span>
+            </label>`}
           <span className="dialog-f-gap"></span>
-          <span className="dialog-f-hint">Klik een kaart om ermee te tekenen · Esc sluit</span>
+          <span className="dialog-f-hint">Dubbelklik een kaart om direct te tekenen · Esc sluit</span>
           <button className="btn ghost" onClick=${() => setLibOpen(false)}>Sluiten</button>
+          <button className="btn primary" disabled=${!libEntry} onClick=${() => libTake(libEntry)}>Tekenen</button>
         </footer>
       </div>
     </div>`;
